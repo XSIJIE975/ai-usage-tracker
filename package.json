@@ -8,7 +8,9 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "test": "vitest run"
+    "test": "vitest run",
+    "changeset": "changeset",
+    "version:packages": "changeset version && node scripts/sync-version.mjs"
   },
   "dependencies": {
     "@radix-ui/react-label": "^2.1.15",
@@ -27,6 +29,7 @@
     "zustand": "^5.0.14"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.31.1",
     "@tauri-apps/cli": "^2",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",

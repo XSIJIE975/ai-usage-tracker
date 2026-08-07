@@ -10,6 +10,8 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+release-body.md
+.omx/
 *.local
 
 # Editor directories and files

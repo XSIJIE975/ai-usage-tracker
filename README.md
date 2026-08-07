@@ -35,7 +35,17 @@ Windows 本地如果 NSIS 下载超时，可以先生成 MSI：
 pnpm tauri build --bundles msi
 ```
 
-GitHub Actions 会为 Windows、macOS、Linux 分别构建安装包。
+## 版本与发布流程
+
+项目使用 Changesets 管理版本。日常开发不触发打包：
+
+1. 功能或修复改动在 `dev` 分支开发，并为用户可见变更执行 `pnpm changeset` 添加变更说明。
+2. 通过 PR 将代码合入 `main`，基础 CI 只运行前端测试、前端构建和 Rust 测试。
+3. Changesets 检测到变更说明后自动创建或更新 Version Packages PR。
+4. 合并 Version Packages PR 后，GitHub Actions 才会在 Windows、macOS、Linux 上执行 Tauri 打包。
+5. 发布 workflow 会生成 `vX.Y.Z` draft release，安装包上传后由你在 GitHub 网页手动发布。
+
+发布 workflow 使用 `package.json` 作为版本源，并自动同步 `src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 和 `src-tauri/tauri.conf.json`。
 
 ## 使用
 
