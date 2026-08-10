@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { RefreshCw, Settings, LayoutGrid } from "lucide-react";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useAppStore } from "../store/useAppStore";
 import { Button } from "../components/ui/button";
 import { ProviderCard } from "../components/ProviderCard";
@@ -18,22 +19,54 @@ export function Dashboard() {
     loading,
     error,
     clearError,
+    lastRefreshedAt: storeLastRefreshedAt,
   } = useAppStore();
   const [view, setView] = useState<"overview" | "settings">("overview");
+  const [remoteRefreshedAt, setRemoteRefreshedAt] = useState(0);
 
   useEffect(() => {
-    if (vaultStatus?.unlocked) {
+    let disposed = false;
+    let stopListening: UnlistenFn | undefined;
+
+    void listen<{ refreshedAt: number }>("refresh-completed", (event) => {
+      if (disposed) return;
+      setRemoteRefreshedAt((current) => Math.max(current, event.payload.refreshedAt));
+    })
+      .then((unlisten) => {
+        if (disposed) unlisten();
+        else stopListening = unlisten;
+      })
+      .catch(() => undefined);
+
+    return () => {
+      disposed = true;
+      stopListening?.();
+    };
+  }, []);
+
+  const lastRefreshedAt = Math.max(storeLastRefreshedAt, remoteRefreshedAt);
+
+  useEffect(() => {
+    if (!vaultStatus?.unlocked) return;
+    if (lastRefreshedAt === 0) {
       void refreshAll(false);
+      return;
     }
-  }, [vaultStatus?.unlocked]);
+    if (!settings.refreshEnabled || settings.refreshIntervalMinutes <= 0) return;
 
-  useEffect(() => {
-    if (!vaultStatus?.unlocked || !settings.refreshEnabled) return;
-    const timer = window.setInterval(() => {
+    const elapsed = Date.now() - lastRefreshedAt;
+    const delay = Math.max(0, settings.refreshIntervalMinutes * 60_000 - elapsed);
+    const timer = window.setTimeout(() => {
       void refreshAll(false);
-    }, settings.refreshIntervalMinutes * 60_000);
-    return () => window.clearInterval(timer);
-  }, [vaultStatus?.unlocked, settings.refreshEnabled, settings.refreshIntervalMinutes, refreshAll]);
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [
+    vaultStatus?.unlocked,
+    settings.refreshEnabled,
+    settings.refreshIntervalMinutes,
+    lastRefreshedAt,
+    refreshAll,
+  ]);
 
   const latest = snapshots.length > 0 ? Math.max(...snapshots.map((item) => item.updatedAt)) : null;
   const anyProviderRefreshing = Object.values(refreshingProviders).some(Boolean);

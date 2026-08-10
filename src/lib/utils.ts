@@ -49,7 +49,7 @@ export function formatReset(iso?: string | null, now = Date.now()) {
   const diff = new Date(iso).getTime() - now;
   if (!Number.isFinite(diff)) return "重置时间未知";
   if (diff <= 0) return "即将重置";
-  const totalMinutes = Math.max(1, Math.ceil(diff / 60_000));
+  const totalMinutes = Math.max(1, Math.floor(diff / 60_000));
   const days = Math.floor(totalMinutes / 1_440);
   const hours = Math.floor((totalMinutes % 1_440) / 60);
   const minutes = totalMinutes % 60;

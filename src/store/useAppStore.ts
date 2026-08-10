@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
+import { emit } from "@tauri-apps/api/event";
 import type { AppSettings, ProviderSnapshot, StoredSnapshot, VaultStatus } from "../types/ipc";
 import { providerModules } from "../providers";
 
@@ -27,6 +28,10 @@ function waitForTauriRuntime(timeoutMs = 5_000) {
     };
     check();
   });
+}
+
+function emitRefreshCompleted(refreshedAt: number) {
+  void emit("refresh-completed", { refreshedAt }).catch(() => undefined);
 }
 
 async function invokeWithTimeout<T>(command: string, timeoutMs: number): Promise<T> {
@@ -69,6 +74,7 @@ interface AppStore {
   loading: boolean;
   refreshingProviders: Record<string, boolean>;
   error: string | null;
+  lastRefreshedAt: number;
   loadInitial: () => Promise<void>;
   refreshAll: (showLoading?: boolean) => Promise<void>;
   refreshProvider: (providerId: string) => Promise<void>;
@@ -88,6 +94,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   loading: false,
   refreshingProviders: {},
   error: null,
+  lastRefreshedAt: 0,
 
   loadInitial: async () => {
     try {
@@ -147,20 +154,26 @@ export const useAppStore = create<AppStore>((set, get) => ({
       }
     }
 
+    let refreshedAt = Date.now();
     try {
       const stored = await invoke<StoredSnapshot[]>("get_latest_snapshots");
+      refreshedAt = Date.now();
       set({
         snapshots: stored.map((item) => toProviderSnapshot(item.payload)),
         loading: false,
         error: null,
+        lastRefreshedAt: refreshedAt,
       });
     } catch (error) {
+      refreshedAt = Date.now();
       set({
         snapshots: results,
         loading: false,
         error: error instanceof Error ? error.message : String(error),
+        lastRefreshedAt: refreshedAt,
       });
     }
+    emitRefreshCompleted(refreshedAt);
   },
 
   refreshProvider: async (providerId) => {
@@ -190,22 +203,28 @@ export const useAppStore = create<AppStore>((set, get) => ({
       };
     }
 
+    let refreshedAt = Date.now();
     try {
       await invoke("save_snapshot", { providerId, payload: result });
       const stored = await invoke<StoredSnapshot[]>("get_latest_snapshots");
+      refreshedAt = Date.now();
       set({
         snapshots: stored.map((item) => toProviderSnapshot(item.payload)),
         error: null,
+        lastRefreshedAt: refreshedAt,
       });
     } catch (error) {
+      refreshedAt = Date.now();
       set({
         snapshots: [...get().snapshots.filter((item) => item.providerId !== providerId), result],
         error: error instanceof Error ? error.message : String(error),
+        lastRefreshedAt: refreshedAt,
       });
     } finally {
       set((state) => ({
         refreshingProviders: { ...state.refreshingProviders, [providerId]: false },
       }));
+      emitRefreshCompleted(refreshedAt);
     }
   },
 
