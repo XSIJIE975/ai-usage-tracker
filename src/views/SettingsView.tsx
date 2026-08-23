@@ -1,15 +1,19 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { Check, Eye, EyeOff, RefreshCw, Save, X } from "lucide-react";
+import { Check, CheckCircle2, Eye, EyeOff, Monitor, Moon, RefreshCw, Save, Sun, X } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Switch } from "../components/ui/switch";
+import { Badge } from "../components/ui/badge";
+import { Separator } from "../components/ui/separator";
+import { Segmented } from "../components/ui/segmented";
 import type { CredentialStatus, CredentialsInput, VaultCredentials } from "../types/ipc";
 import { formatRefreshLabel, normalizeOpenCodeAuthCookie } from "../lib/utils";
+import { useThemeMode, setThemeMode, type ThemeMode } from "../lib/theme";
 
 interface SecretFieldProps {
   id: string;
@@ -37,14 +41,14 @@ function SecretField({
         type={visible ? "text" : "password"}
         value={value}
         autoComplete="off"
-        className="pr-16 font-mono"
+        className="pr-16 font-mono text-[13px]"
         placeholder={placeholder}
         onChange={(event) => onChange(event.currentTarget.value)}
       />
       <button
         type="button"
         onClick={() => setVisible((current) => !current)}
-        className="absolute right-8 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+        className="absolute right-8 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-surface-2 hover:text-fg"
         title={visible ? "隐藏" : "显示"}
         aria-label={visible ? "隐藏" : "显示"}
       >
@@ -54,13 +58,49 @@ function SecretField({
         type="button"
         onClick={onClear}
         disabled={clearDisabled}
-        className="absolute right-1 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:pointer-events-none disabled:opacity-40"
+        className="absolute right-1 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-danger-soft hover:text-danger-soft-fg disabled:pointer-events-none disabled:opacity-40"
         title="清除"
         aria-label="清除"
       >
         <X className="h-4 w-4" />
       </button>
     </div>
+  );
+}
+
+function statusBadge(configured: boolean) {
+  return configured ? (
+    <Badge variant="success">
+      <Check className="h-3 w-3" /> 已配置
+    </Badge>
+  ) : (
+    <Badge variant="neutral">未配置</Badge>
+  );
+}
+
+function AppearanceCard() {
+  const mode = useThemeMode();
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>外观</CardTitle>
+        <CardDescription>主题偏好仅保存在本机浏览器存储中。</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="flex items-center justify-between gap-4">
+          <Label>主题模式</Label>
+          <Segmented<ThemeMode>
+            value={mode}
+            onChange={setThemeMode}
+            options={[
+              { value: "system", label: "跟随系统", icon: <Monitor className="h-3.5 w-3.5" /> },
+              { value: "light", label: "浅色", icon: <Sun className="h-3.5 w-3.5" /> },
+              { value: "dark", label: "深色", icon: <Moon className="h-3.5 w-3.5" /> },
+            ]}
+          />
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -160,20 +200,13 @@ export function SettingsView() {
     setMessage("刷新设置已保存");
   }
 
-  function statusBadge(configured: boolean) {
-    return configured ? (
-      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700">
-        <Check className="h-3 w-3" /> 已配置
-      </span>
-    ) : (
-      <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">未配置</span>
-    );
-  }
-
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {message && (
-        <p className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{message}</p>
+        <p className="flex items-center gap-2 rounded-md border border-success/20 bg-success-soft px-3 py-2 text-[13px] text-success-soft-fg">
+          <CheckCircle2 className="h-4 w-4 shrink-0" />
+          {message}
+        </p>
       )}
 
       <Card>
@@ -183,8 +216,8 @@ export function SettingsView() {
             已保存的凭据会回填到输入框；清空请使用输入框右侧的清除按钮。
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-6">
-          <div className="space-y-3">
+        <CardContent className="space-y-5">
+          <div className="space-y-2.5">
             <div className="flex items-center justify-between">
               <Label htmlFor="deepseekKey">DeepSeek API Key</Label>
               {statusBadge(Boolean(credentialStatus?.deepseekApiKey))}
@@ -199,9 +232,9 @@ export function SettingsView() {
             />
           </div>
 
-          <div className="h-px bg-slate-100" />
+          <Separator />
 
-          <div className="space-y-3">
+          <div className="space-y-2.5">
             <div className="flex items-center justify-between">
               <Label htmlFor="workspaceId">OpenCode Go Workspace ID</Label>
               {statusBadge(Boolean(credentialStatus?.opencodeGoWorkspaceId))}
@@ -216,7 +249,7 @@ export function SettingsView() {
             />
           </div>
 
-          <div className="space-y-3">
+          <div className="space-y-2.5">
             <div className="flex items-center justify-between">
               <Label htmlFor="authCookie">OpenCode Auth Cookie</Label>
               {statusBadge(Boolean(credentialStatus?.opencodeGoAuthCookie))}
@@ -229,12 +262,12 @@ export function SettingsView() {
               onClear={() => void clearCredential("opencodeGoAuthCookie")}
               clearDisabled={!authCookie}
             />
-            <p className="text-xs text-slate-400">
+            <p className="text-xs leading-relaxed text-fg-muted">
               获取方式：打开 opencode.ai 后台，按 F12 → Application → Cookies → opencode.ai，复制名为 auth 的 Value；不要带 Cookie: 或 auth= 前缀。
             </p>
           </div>
 
-          <div className="space-y-3">
+          <div className="space-y-2.5">
             <div className="flex items-center justify-between">
               <Label htmlFor="apiKey">OpenCode Go API Key（可选）</Label>
               {statusBadge(Boolean(credentialStatus?.opencodeGoApiKey))}
@@ -260,16 +293,18 @@ export function SettingsView() {
           <CardTitle>刷新与 Provider</CardTitle>
           <CardDescription>当前策略：{formatRefreshLabel(refreshEnabled ? Number(interval) || 0 : 0)}。</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-6">
+        <CardContent className="space-y-5">
           <div className="flex items-center justify-between gap-4">
             <div>
               <Label>自动刷新</Label>
-              <p className="mt-1 text-sm text-slate-500">关闭后仅手动刷新。</p>
+              <p className="mt-1 text-[13px] text-fg-muted">关闭后仅手动刷新。</p>
             </div>
             <Switch checked={refreshEnabled} onCheckedChange={setRefreshEnabled} />
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2">
+          <Separator />
+
+          <div className="grid gap-5 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="interval">刷新间隔（分钟）</Label>
               <Input
@@ -281,12 +316,12 @@ export function SettingsView() {
                 disabled={!refreshEnabled}
                 onChange={(event) => setInterval(event.currentTarget.value)}
               />
-              <p className="text-xs text-slate-400">最大 120 分钟，超过 60 分钟自动按小时显示。</p>
+              <p className="text-xs text-fg-muted">最大 120 分钟，超过 60 分钟自动按小时显示。</p>
             </div>
             <div className="space-y-3">
               {Object.entries(providers).map(([id, enabled]) => (
                 <div key={id} className="flex items-center justify-between">
-                  <span className="text-sm text-slate-700">{id === "opencode-go" ? "OpenCode Go" : "DeepSeek"}</span>
+                  <span className="text-[13px] text-fg">{id === "opencode-go" ? "OpenCode Go" : "DeepSeek"}</span>
                   <Switch
                     checked={enabled}
                     onCheckedChange={(value) => setProviders((prev) => ({ ...prev, [id]: value }))}
@@ -301,6 +336,8 @@ export function SettingsView() {
           </Button>
         </CardContent>
       </Card>
+
+      <AppearanceCard />
     </div>
   );
 }

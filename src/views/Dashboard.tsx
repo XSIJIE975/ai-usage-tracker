@@ -1,12 +1,18 @@
 import { useEffect, useState } from "react";
-import { RefreshCw, Settings, LayoutGrid } from "lucide-react";
+import { AlertCircle, Gauge, LayoutGrid, PieChart, RefreshCw, Settings, X } from "lucide-react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useAppStore } from "../store/useAppStore";
 import { Button } from "../components/ui/button";
+import { Segmented } from "../components/ui/segmented";
+import { EmptyState } from "../components/ui/empty-state";
+import { BrandIcon } from "../components/BrandIcon";
 import { ProviderCard } from "../components/ProviderCard";
 import { SettingsView } from "./SettingsView";
+import { StatsView } from "./stats/StatsView";
 import { formatClock } from "../lib/utils";
 import { cn } from "../lib/utils";
+
+type ViewKey = "overview" | "stats" | "settings";
 
 export function Dashboard() {
   const {
@@ -21,7 +27,7 @@ export function Dashboard() {
     clearError,
     lastRefreshedAt: storeLastRefreshedAt,
   } = useAppStore();
-  const [view, setView] = useState<"overview" | "settings">("overview");
+  const [view, setView] = useState<ViewKey>("overview");
   const [remoteRefreshedAt, setRemoteRefreshedAt] = useState(0);
 
   useEffect(() => {
@@ -70,74 +76,92 @@ export function Dashboard() {
 
   const latest = snapshots.length > 0 ? Math.max(...snapshots.map((item) => item.updatedAt)) : null;
   const anyProviderRefreshing = Object.values(refreshingProviders).some(Boolean);
+  const refreshing = loading || anyProviderRefreshing;
 
   return (
-    <div className="flex h-full flex-col">
-      <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4">
-        <div>
-          <h1 className="text-lg font-semibold text-slate-900">AI 用量助手</h1>
-          <p className="mt-0.5 text-xs text-slate-400">
-            {latest ? `最近更新 ${formatClock(latest)}` : "等待刷新"}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="flex rounded-md border border-slate-200 bg-slate-50 p-0.5">
-            <button
-              type="button"
-              onClick={() => setView("overview")}
-              className={cn(
-                "inline-flex items-center gap-1 rounded px-2.5 py-1.5 text-xs font-medium",
-                view === "overview" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500",
-              )}
-            >
-              <LayoutGrid className="h-3.5 w-3.5" /> 总览
-            </button>
-            <button
-              type="button"
-              onClick={() => setView("settings")}
-              className={cn(
-                "inline-flex items-center gap-1 rounded px-2.5 py-1.5 text-xs font-medium",
-                view === "settings" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500",
-              )}
-            >
-              <Settings className="h-3.5 w-3.5" /> 设置
-            </button>
+    <div className="flex h-full flex-col bg-canvas">
+      <header className="flex items-center justify-between border-b border-line bg-surface px-6 py-3.5">
+        <div className="flex items-center gap-3">
+          <BrandIcon size={32} className="rounded-md shadow-sm" />
+          <div>
+            <h1 className="text-[15px] font-semibold tracking-tight text-fg">AI 用量助手</h1>
+            <p className="mt-px flex items-center gap-1.5 text-xs text-fg-muted">
+              <span
+                className={cn(
+                  "inline-block h-1.5 w-1.5 rounded-full",
+                  latest ? "bg-success" : "bg-line-strong",
+                )}
+              />
+              {latest ? `最近更新 ${formatClock(latest)}` : "等待刷新"}
+            </p>
           </div>
-          <Button size="sm" variant="secondary" onClick={() => void refreshAll(true)} disabled={loading || anyProviderRefreshing}>
-            <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} /> 刷新
+        </div>
+        <div className="flex items-center gap-2.5">
+          <Segmented<ViewKey>
+            value={view}
+            onChange={setView}
+            options={[
+              { value: "overview", label: "总览", icon: <LayoutGrid className="h-3.5 w-3.5" /> },
+              { value: "stats", label: "统计", icon: <PieChart className="h-3.5 w-3.5" /> },
+              { value: "settings", label: "设置", icon: <Settings className="h-3.5 w-3.5" /> },
+            ]}
+          />
+          <Button size="sm" variant="outline" onClick={() => void refreshAll(true)} disabled={refreshing}>
+            <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} /> 刷新
           </Button>
         </div>
       </header>
 
       <main className="flex-1 overflow-y-auto p-6">
-        {error && (
-          <div className="mb-4 flex items-center justify-between rounded-md bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            <span>{error}</span>
-            <button type="button" onClick={clearError} className="text-xs underline">
-              关闭
-            </button>
-          </div>
-        )}
-        {view === "overview" ? (
-          <div className="grid gap-4 lg:grid-cols-2">
-            {snapshots.length > 0 ? (
-              snapshots.map((snapshot) => (
-                <ProviderCard
-                  key={snapshot.providerId}
-                  snapshot={snapshot}
-                  refreshing={loading || refreshingProviders[snapshot.providerId]}
-                  onRefresh={() => void refreshProvider(snapshot.providerId)}
-                />
-              ))
-            ) : (
-              <div className="rounded-lg border border-dashed border-slate-300 p-10 text-center text-sm text-slate-400">
-                还没有用量数据，请先刷新。
-              </div>
-            )}
-          </div>
-        ) : (
-          <SettingsView />
-        )}
+        <div className="mx-auto max-w-4xl">
+          {error && (
+            <div className="mb-4 flex items-center justify-between gap-3 rounded-md border border-danger/20 bg-danger-soft px-4 py-2.5 text-[13px] text-danger-soft-fg">
+              <span className="flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0" />
+                {error}
+              </span>
+              <button
+                type="button"
+                onClick={clearError}
+                className="rounded p-0.5 opacity-70 transition-opacity hover:opacity-100"
+                aria-label="关闭"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
+          {view === "overview" ? (
+            <div className="grid gap-4 lg:grid-cols-2">
+              {snapshots.length > 0 ? (
+                snapshots.map((snapshot) => (
+                  <ProviderCard
+                    key={snapshot.providerId}
+                    snapshot={snapshot}
+                    refreshing={loading || refreshingProviders[snapshot.providerId]}
+                    onRefresh={() => void refreshProvider(snapshot.providerId)}
+                  />
+                ))
+              ) : (
+                <div className="lg:col-span-2">
+                  <EmptyState
+                    icon={<Gauge className="h-5 w-5" />}
+                    title="还没有用量数据"
+                    description="点击右上角「刷新」获取各 Provider 的最新用量。"
+                    action={
+                      <Button size="sm" onClick={() => void refreshAll(true)} disabled={refreshing}>
+                        <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} /> 立即刷新
+                      </Button>
+                    }
+                  />
+                </div>
+              )}
+            </div>
+          ) : view === "stats" ? (
+            <StatsView />
+          ) : (
+            <SettingsView />
+          )}
+        </div>
       </main>
     </div>
   );
