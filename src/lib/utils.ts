@@ -44,6 +44,21 @@ export function formatClock(ts: number | string | null | undefined) {
   }).format(date);
 }
 
+/** 紧凑数字格式：1234 → 1,234；1520704 → 1.5M（图表轴与统计卡使用） */
+export function formatCompact(value: number) {
+  if (!Number.isFinite(value)) return "-";
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (abs >= 10_000) return `${(value / 1_000).toFixed(0)}K`;
+  if (abs >= 1_000) return `${(value / 1_000).toFixed(1).replace(/\.0$/, "")}K`;
+  return String(Math.round(value));
+}
+
+/** 千分位整数：152704 → 152,704 */
+export function formatInt(value: number) {
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
+}
+
 export function formatReset(iso?: string | null, now = Date.now()) {
   if (!iso) return "重置时间未知";
   const diff = new Date(iso).getTime() - now;

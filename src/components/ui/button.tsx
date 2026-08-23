@@ -3,26 +3,32 @@ import { Slot } from "@radix-ui/react-slot";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "../../lib/utils";
 
+/**
+ * 按钮规范（docs/DESIGN.md#按钮）：
+ * - primary 用于主操作，一个视口最多一个
+ * - secondary 用于次操作；ghost 用于低密度工具区；destructive 仅危险操作
+ */
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 disabled:pointer-events-none disabled:opacity-50",
+  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md text-sm font-medium transition-all duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-1 focus-visible:ring-offset-surface disabled:pointer-events-none disabled:opacity-50 active:scale-[0.98]",
   {
     variants: {
       variant: {
-        default: "bg-slate-900 text-white hover:bg-slate-700",
-        secondary: "bg-slate-100 text-slate-900 hover:bg-slate-200",
-        outline: "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
-        ghost: "text-slate-600 hover:bg-slate-100",
-        destructive: "bg-red-600 text-white hover:bg-red-500",
+        primary: "bg-brand text-brand-fg shadow-sm hover:bg-brand-hover active:bg-brand-active",
+        secondary: "bg-surface-2 text-fg hover:bg-line active:bg-line-strong",
+        outline: "border border-line bg-surface text-fg-secondary hover:bg-surface-2 hover:text-fg",
+        ghost: "text-fg-secondary hover:bg-surface-2 hover:text-fg",
+        destructive: "bg-danger text-white hover:opacity-90",
       },
       size: {
-        default: "h-9 px-4 py-2",
-        sm: "h-8 rounded-md px-3 text-xs",
-        lg: "h-10 rounded-md px-6",
+        default: "h-9 px-4",
+        sm: "h-8 px-3 text-xs",
+        lg: "h-10 px-5",
         icon: "h-9 w-9",
+        "icon-sm": "h-7 w-7",
       },
     },
     defaultVariants: {
-      variant: "default",
+      variant: "primary",
       size: "default",
     },
   },
