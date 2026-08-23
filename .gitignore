@@ -24,3 +24,7 @@ release-body.md
 *.njsproj
 *.sln
 *.sw?
+
+# WorkBuddy / OMO 本地数据
+.workbuddy/
+.omo/
