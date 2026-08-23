@@ -8,8 +8,9 @@ import { StatCard } from "../../components/ui/stat-card";
 import { DataTable, THead, TBody, Th, Tr, Td } from "../../components/ui/data-table";
 import { StackedBars } from "../../components/charts/StackedBars";
 import { Donut } from "../../components/charts/Donut";
+import { CHART_BGS, modelColorIndex } from "../../components/charts/palette";
 import { deepseekApiKeys, getDeepSeekSeries } from "../../data/mockStats";
-import { formatCompact, formatInt } from "../../lib/utils";
+import { formatCompact, formatInt, cn } from "../../lib/utils";
 
 type TimeRange = "today" | "yesterday" | "7d" | "30d" | "month" | "lastMonth" | "custom";
 
@@ -121,7 +122,7 @@ export function DeepSeekStats() {
           </div>
 
           <div className="space-y-1.5">
-            <Label>统计指标</Label>
+            <Label className="flex items-center gap-1">统计指标</Label>
             <Segmented
               value={metric}
               onChange={setMetric}
@@ -197,16 +198,30 @@ export function DeepSeekStats() {
               {aggregates.perModel.map((m) => {
                 const total = m.tokensIn + m.tokensOut;
                 const share = aggregates.totalTokens > 0 ? (total / aggregates.totalTokens) * 100 : 0;
+                const colorIdx = modelColorIndex(m.model);
                 return (
                   <Tr key={m.model}>
                     <Td>
-                      <span className="font-mono text-xs">{m.model}</span>
+                      <span className="inline-flex items-center gap-2">
+                        <span className={cn("h-2.5 w-2.5 shrink-0 rounded-[3px]", CHART_BGS[colorIdx])} />
+                        <span className="font-mono text-xs">{m.model}</span>
+                      </span>
                     </Td>
                     <Td align="right">{formatInt(m.tokensIn)}</Td>
                     <Td align="right">{formatInt(m.tokensOut)}</Td>
                     <Td align="right" className="font-medium">{formatInt(total)}</Td>
                     <Td align="right">{formatInt(m.requests)}</Td>
-                    <Td align="right" className="text-fg-muted">{share.toFixed(1)}%</Td>
+                    <Td align="right">
+                      <span className="inline-flex items-center justify-end gap-2">
+                        <span className="h-1.5 w-16 overflow-hidden rounded-full bg-surface-2">
+                          <span
+                            className={cn("block h-full rounded-full", CHART_BGS[colorIdx])}
+                            style={{ width: `${Math.max(share, 2)}%` }}
+                          />
+                        </span>
+                        <span className="tnum w-12 text-fg-muted">{share.toFixed(1)}%</span>
+                      </span>
+                    </Td>
                   </Tr>
                 );
               })}

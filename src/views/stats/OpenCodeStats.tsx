@@ -3,11 +3,11 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import { Select } from "../../components/ui/select";
 import { IconButton } from "../../components/ui/icon-button";
-import { Badge } from "../../components/ui/badge";
 import { DataTable, THead, TBody, Th, Tr, Td } from "../../components/ui/data-table";
 import { StackedBars } from "../../components/charts/StackedBars";
+import { CHART_BGS, modelColorIndex } from "../../components/charts/palette";
 import { getOpenCodeCosts, getOpenCodeHistory, opencodeKeys, opencodeModels } from "../../data/mockStats";
-import { formatInt } from "../../lib/utils";
+import { formatInt, cn } from "../../lib/utils";
 
 /** 表格内 token 数前的迷你柱状 glyph（参照产品截图形态） */
 function InlineBars() {
@@ -62,14 +62,11 @@ export function OpenCodeStats() {
     <div className="space-y-4">
       {/* 成本图表 */}
       <Card>
-        <CardHeader className="flex-row items-start justify-between space-y-0">
-          <div>
-            <CardTitle>成本</CardTitle>
-            <CardDescription>
-              按模型细分的使用成本，本月合计 <span className="tnum font-medium text-fg">${monthTotal.toFixed(2)}</span>。
-            </CardDescription>
-          </div>
-          <Badge variant="brand">占位数据</Badge>
+        <CardHeader>
+          <CardTitle>成本</CardTitle>
+          <CardDescription>
+            按模型细分的使用成本，本月合计 <span className="tnum font-medium text-fg">${monthTotal.toFixed(2)}</span>。
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex flex-wrap items-center gap-2">
@@ -128,7 +125,12 @@ export function OpenCodeStats() {
                 <Tr key={`${row.time}-${i}`}>
                   <Td className="whitespace-nowrap text-fg-secondary">{row.time}</Td>
                   <Td>
-                    <span className="font-mono text-xs">{row.model}</span>
+                    <span className="inline-flex items-center gap-2">
+                      <span
+                        className={cn("h-2.5 w-2.5 shrink-0 rounded-[3px]", CHART_BGS[modelColorIndex(row.model)])}
+                      />
+                      <span className="font-mono text-xs">{row.model}</span>
+                    </span>
                   </Td>
                   <Td align="right">
                     <span className="inline-flex items-center gap-1.5">
