@@ -1,17 +1,18 @@
+import { CHART_BGS, CHART_STROKES, modelColorIndex } from "./palette";
 import { cn } from "../../lib/utils";
 
 export interface DonutSegment {
   name: string;
   value: number;
+  /** 颜色索引（0..5 对应 chart-1..6），缺省按模型名全局映射 */
+  color?: number;
 }
 
-const CHART_CLASS_COUNT = 6;
-const chartStroke = (i: number) => `stroke-chart-${(i % CHART_CLASS_COUNT) + 1}`;
-const chartBg = (i: number) => `bg-chart-${(i % CHART_CLASS_COUNT) + 1}`;
+const colorOf = (s: DonutSegment, fallback: number) => s.color ?? modelColorIndex(s.name) ?? fallback;
 
 /**
  * 环形占比图规范（docs/DESIGN.md#图表）：
- * 中心显示合计，右侧图例带数值与百分比。
+ * 中心显示合计，右侧图例带数值与百分比；扇区与图例颜色严格一致。
  */
 export function Donut({
   segments,
@@ -57,7 +58,7 @@ export function Donut({
                 strokeWidth={strokeW}
                 strokeDasharray={dash}
                 transform={`rotate(${rotation} ${cx} ${cy})`}
-                className={cn(chartStroke(i), "transition-opacity duration-fast hover:opacity-80")}
+                className={cn(CHART_STROKES[colorOf(seg, i)], "transition-opacity duration-fast hover:opacity-80")}
               >
                 <title>{`${seg.name}: ${format(seg.value)}（${(ratio * 100).toFixed(1)}%）`}</title>
               </circle>
@@ -75,7 +76,7 @@ export function Donut({
           const ratio = total > 0 ? (seg.value / total) * 100 : 0;
           return (
             <li key={seg.name} className="flex items-center gap-2 text-[13px]">
-              <span className={cn("h-2.5 w-2.5 shrink-0 rounded-[3px]", chartBg(i))} />
+              <span className={cn("h-2.5 w-2.5 shrink-0 rounded-[3px]", CHART_BGS[colorOf(seg, i)])} />
               <span className="min-w-0 flex-1 truncate text-fg-secondary">{seg.name}</span>
               <span className="tnum text-fg-muted">{ratio.toFixed(1)}%</span>
               <span className="tnum w-16 text-right font-medium text-fg">{format(seg.value)}</span>

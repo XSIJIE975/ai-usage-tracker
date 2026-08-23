@@ -1,15 +1,14 @@
+import { CHART_BGS, CHART_FILLS, modelColorIndex } from "./palette";
 import { cn } from "../../lib/utils";
 
 export interface StackedSeries {
   name: string;
   values: number[];
+  /** 颜色索引（0..5 对应 chart-1..6），缺省按模型名全局映射 */
+  color?: number;
 }
 
-/** 图表序列取色规范：按 chart-1..6 循环，不另造颜色 */
-export const CHART_CLASS_COUNT = 6;
-
-const chartFill = (i: number) => `fill-chart-${(i % CHART_CLASS_COUNT) + 1}`;
-const chartBg = (i: number) => `bg-chart-${(i % CHART_CLASS_COUNT) + 1}`;
+const colorOf = (s: StackedSeries, fallback: number) => s.color ?? modelColorIndex(s.name) ?? fallback;
 
 function niceCeil(value: number): number {
   if (value <= 0) return 1;
@@ -27,7 +26,8 @@ function topRoundedRect(x: number, y: number, w: number, h: number, r: number) {
 
 /**
  * 堆叠柱状图规范（docs/DESIGN.md#图表）：
- * 纯 SVG 实现，y 轴 5 档网格线，图例在下方，hover 显示明细。
+ * 纯 SVG 实现，y 轴 5 档网格线，图例在下方，hover 显示明细；
+ * 柱体与图例颜色严格一致，由 palette.ts 静态类名驱动。
  */
 export function StackedBars({
   labels,
@@ -61,6 +61,7 @@ export function StackedBars({
 
   return (
     <figure className={cn("m-0", className)}>
+      <div className="rounded-lg border border-line/60 bg-canvas/50 px-3 pt-3">
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="堆叠柱状图">
         {/* 网格线与 y 轴刻度 */}
         {ticks.map((tick) => {
@@ -91,8 +92,10 @@ export function StackedBars({
         {labels.map((label, i) => {
           const x = margin.left + band * i + (band - barW) / 2;
           let acc = 0;
-          const segments = series.map((s, si) => ({ si, value: s.values[i] ?? 0 })).filter((seg) => seg.value > 0);
-          const topSi = segments.length > 0 ? segments[segments.length - 1].si : -1;
+          const active = series
+            .map((s, si) => ({ si, value: s.values[i] ?? 0 }))
+            .filter((seg) => seg.value > 0);
+          const topSi = active.length > 0 ? active[active.length - 1].si : -1;
           const tooltipLines = series
             .map((s) => `${s.name}: ${tooltipFormat(s.values[i] ?? 0)}`)
             .concat(`合计: ${tooltipFormat(totals[i])}`);
@@ -108,7 +111,7 @@ export function StackedBars({
                   <path
                     key={s.name}
                     d={topRoundedRect(x, y, barW, h, si === topSi ? 3 : 0)}
-                    className={cn(chartFill(si), "transition-opacity duration-fast hover:opacity-80")}
+                    className={cn(CHART_FILLS[colorOf(s, si)], "transition-opacity duration-fast hover:opacity-80")}
                   />
                 );
               })}
@@ -130,12 +133,13 @@ export function StackedBars({
           );
         })}
       </svg>
+      </div>
 
-      {/* 图例 */}
-      <figcaption className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1.5 px-1">
+      {/* 图例（色块与柱体同源） */}
+      <figcaption className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 px-1">
         {series.map((s, si) => (
           <span key={s.name} className="inline-flex items-center gap-1.5 text-xs text-fg-muted">
-            <span className={cn("h-2.5 w-2.5 rounded-[3px]", chartBg(si))} />
+            <span className={cn("h-2.5 w-2.5 rounded-[3px]", CHART_BGS[colorOf(s, si)])} />
             {s.name}
           </span>
         ))}
