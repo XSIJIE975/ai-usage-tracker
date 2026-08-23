@@ -113,7 +113,7 @@ export function Dashboard() {
       </header>
 
       <main className="flex-1 overflow-y-auto p-6">
-        <div className="mx-auto max-w-4xl">
+        <div className={cn("mx-auto", view === "stats" ? "max-w-5xl" : "max-w-4xl")}>
           {error && (
             <div className="mb-4 flex items-center justify-between gap-3 rounded-md border border-danger/20 bg-danger-soft px-4 py-2.5 text-[13px] text-danger-soft-fg">
               <span className="flex items-center gap-2">

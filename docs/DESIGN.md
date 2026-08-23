@@ -72,6 +72,12 @@
 图表序列只允许按顺序循环使用 `chart-1 … chart-6`（`fill-chart-N` / `stroke-chart-N` / `bg-chart-N`），
 浅深色已分别调校，禁止在图表内写死色号。语义顺序：主系列用 `chart-1`（iris 品牌色），其后依次分配。
 
+> **取色唯一入口是 `components/charts/palette.ts`**：
+> - Tailwind 只扫描源码中的完整类名，**禁止动态拼接**（`fill-chart-${i}` 不会生成任何样式）；
+>   必须使用静态数组 `CHART_FILLS / CHART_BGS / CHART_STROKES`。
+> - 同一模型在所有图表中颜色一致：通过 `modelColorIndex(model)` 全局注册表取色
+>   （已知模型固定索引，未知模型按名称哈希兜底）。新增模型时在注册表补一行。
+
 ### 阴影与焦点环
 
 - `shadow-card`：卡片默认；`shadow-pop`：悬浮窗、解锁卡片、hover 强调。
