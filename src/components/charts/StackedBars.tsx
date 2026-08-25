@@ -1,5 +1,12 @@
-import { CHART_BGS, CHART_FILLS, modelColorIndex } from "./palette";
+import ReactEChartsCore from "echarts-for-react/lib/core";
+import * as echarts from "echarts/core";
+import { BarChart } from "echarts/charts";
+import { TooltipComponent, GridComponent, LegendComponent } from "echarts/components";
+import { CanvasRenderer } from "echarts/renderers";
+import { modelColorIndex, chartHexColor } from "./palette";
 import { cn } from "../../lib/utils";
+
+echarts.use([BarChart, TooltipComponent, GridComponent, LegendComponent, CanvasRenderer]);
 
 export interface StackedSeries {
   name: string;
@@ -10,24 +17,10 @@ export interface StackedSeries {
 
 const colorOf = (s: StackedSeries, fallback: number) => s.color ?? modelColorIndex(s.name) ?? fallback;
 
-function niceCeil(value: number): number {
-  if (value <= 0) return 1;
-  const pow = Math.pow(10, Math.floor(Math.log10(value)));
-  const n = value / pow;
-  const nice = n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10;
-  return nice * pow;
-}
-
-/** 顶部圆角矩形路径（用于堆叠柱最顶端一段） */
-function topRoundedRect(x: number, y: number, w: number, h: number, r: number) {
-  const rr = Math.min(r, w / 2, h);
-  return `M ${x} ${y + h} L ${x} ${y + rr} Q ${x} ${y} ${x + rr} ${y} L ${x + w - rr} ${y} Q ${x + w} ${y} ${x + w} ${y + rr} L ${x + w} ${y + h} Z`;
-}
-
 /**
- * 堆叠柱状图规范（docs/DESIGN.md#图表）：
- * 纯 SVG 实现，y 轴 5 档网格线，图例在下方，hover 显示明细；
- * 柱体与图例颜色严格一致，由 palette.ts 静态类名驱动。
+ * 堆叠柱状图（ECharts 实现）：
+ * y 轴自动刻度，底部图例，hover 显示明细；
+ * 柱体与图例颜色严格一致。
  */
 export function StackedBars({
   labels,
@@ -44,106 +37,95 @@ export function StackedBars({
   height?: number;
   className?: string;
 }) {
-  const W = 720;
-  const H = height;
-  const margin = { top: 12, right: 8, bottom: 26, left: 46 };
-  const plotW = W - margin.left - margin.right;
-  const plotH = H - margin.top - margin.bottom;
-  const n = labels.length;
-
-  const totals = labels.map((_, i) => series.reduce((sum, s) => sum + (s.values[i] ?? 0), 0));
-  const max = niceCeil(Math.max(...totals, 0) * 1.05);
-  const ticks = Array.from({ length: 5 }, (_, i) => (max / 5) * (i + 1));
-
-  const band = plotW / Math.max(n, 1);
-  const barW = Math.min(band * (n > 20 ? 0.72 : 0.56), 64);
-  const labelEvery = Math.max(1, Math.ceil(n / 10));
+  const option = {
+    tooltip: {
+      trigger: "axis" as const,
+      axisPointer: {
+        type: "shadow" as const,
+      },
+      formatter: (params: Array<{ seriesName: string; value: number; marker: string }>) => {
+        const lines = params.map((p) => `${p.marker} ${p.seriesName}: ${tooltipFormat(p.value)}`);
+        const total = params.reduce((sum, p) => sum + p.value, 0);
+        lines.push(`合计: ${tooltipFormat(total)}`);
+        return lines.join("<br/>");
+      },
+    },
+    legend: {
+      show: true,
+      bottom: 0,
+      itemWidth: 10,
+      itemHeight: 10,
+      itemGap: 16,
+      textStyle: {
+        fontSize: 12,
+        color: "var(--color-fg-muted)",
+      },
+    },
+    grid: {
+      left: 46,
+      right: 8,
+      top: 12,
+      bottom: 36,
+      containLabel: false,
+    },
+    xAxis: {
+      type: "category" as const,
+      data: labels,
+      axisLine: {
+        lineStyle: {
+          color: "var(--color-line-strong)",
+        },
+      },
+      axisTick: { show: false },
+      axisLabel: {
+        fontSize: 10,
+        color: "var(--color-fg-muted)",
+        interval: Math.max(0, Math.floor(labels.length / 10) - 1),
+      },
+    },
+    yAxis: {
+      type: "value" as const,
+      splitNumber: 5,
+      axisLine: { show: false },
+      axisTick: { show: false },
+      splitLine: {
+        lineStyle: {
+          color: "var(--color-line)",
+        },
+      },
+      axisLabel: {
+        fontSize: 10,
+        color: "var(--color-fg-muted)",
+        formatter: (v: number) => yFormat(v),
+      },
+    },
+    series: series.map((s, si) => ({
+      name: s.name,
+      type: "bar" as const,
+      stack: "total",
+      barMaxWidth: 64,
+      itemStyle: {
+        color: chartHexColor(colorOf(s, si)),
+        borderRadius: si === series.length - 1 ? [3, 3, 0, 0] : [0, 0, 0, 0],
+      },
+      emphasis: {
+        focus: "series" as const,
+      },
+      data: s.values,
+    })),
+  };
 
   return (
     <figure className={cn("m-0", className)}>
       <div className="rounded-lg border border-line/60 bg-canvas/50 px-3 pt-3">
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="堆叠柱状图">
-        {/* 网格线与 y 轴刻度 */}
-        {ticks.map((tick) => {
-          const y = margin.top + plotH - (tick / max) * plotH;
-          return (
-            <g key={tick}>
-              <line x1={margin.left} x2={W - margin.right} y1={y} y2={y} className="stroke-line" strokeWidth={1} />
-              <text x={margin.left - 8} y={y + 3.5} textAnchor="end" className="fill-fg-muted text-[10px]">
-                {yFormat(tick)}
-              </text>
-            </g>
-          );
-        })}
-        {/* 基线 */}
-        <line
-          x1={margin.left}
-          x2={W - margin.right}
-          y1={margin.top + plotH}
-          y2={margin.top + plotH}
-          className="stroke-line-strong"
-          strokeWidth={1}
+        <ReactEChartsCore
+          echarts={echarts}
+          option={option}
+          style={{ width: "100%", height }}
+          opts={{ renderer: "canvas" }}
+          notMerge
         />
-        <text x={margin.left - 8} y={margin.top + plotH + 3.5} textAnchor="end" className="fill-fg-muted text-[10px]">
-          {yFormat(0)}
-        </text>
-
-        {/* 柱体 */}
-        {labels.map((label, i) => {
-          const x = margin.left + band * i + (band - barW) / 2;
-          let acc = 0;
-          const active = series
-            .map((s, si) => ({ si, value: s.values[i] ?? 0 }))
-            .filter((seg) => seg.value > 0);
-          const topSi = active.length > 0 ? active[active.length - 1].si : -1;
-          const tooltipLines = series
-            .map((s) => `${s.name}: ${tooltipFormat(s.values[i] ?? 0)}`)
-            .concat(`合计: ${tooltipFormat(totals[i])}`);
-          return (
-            <g key={label}>
-              {series.map((s, si) => {
-                const value = s.values[i] ?? 0;
-                if (value <= 0) return null;
-                const h = Math.max((value / max) * plotH, 1);
-                const y = margin.top + plotH - ((acc + value) / max) * plotH;
-                acc += value;
-                return (
-                  <path
-                    key={s.name}
-                    d={topRoundedRect(x, y, barW, h, si === topSi ? 3 : 0)}
-                    className={cn(CHART_FILLS[colorOf(s, si)], "transition-opacity duration-fast hover:opacity-80")}
-                  />
-                );
-              })}
-              {/* hover 命中区域 + 明细提示 */}
-              <rect x={margin.left + band * i} y={margin.top} width={band} height={plotH} fill="transparent">
-                <title>{`${label}\n${tooltipLines.join("\n")}`}</title>
-              </rect>
-              {i % labelEvery === 0 ? (
-                <text
-                  x={margin.left + band * i + band / 2}
-                  y={H - 8}
-                  textAnchor="middle"
-                  className="fill-fg-muted text-[10px]"
-                >
-                  {label}
-                </text>
-              ) : null}
-            </g>
-          );
-        })}
-      </svg>
       </div>
-
-      {/* 图例（色块与柱体同源） */}
-      <figcaption className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 px-1">
-        {series.map((s, si) => (
-          <span key={s.name} className="inline-flex items-center gap-1.5 text-xs text-fg-muted">
-            <span className={cn("h-2.5 w-2.5 rounded-[3px]", CHART_BGS[colorOf(s, si)])} />
-            {s.name}
-          </span>
-        ))}
-      </figcaption>
     </figure>
   );
 }

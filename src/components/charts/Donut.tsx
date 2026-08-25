@@ -1,5 +1,12 @@
-import { CHART_BGS, CHART_STROKES, modelColorIndex } from "./palette";
+import ReactEChartsCore from "echarts-for-react/lib/core";
+import * as echarts from "echarts/core";
+import { PieChart } from "echarts/charts";
+import { TooltipComponent, LegendComponent } from "echarts/components";
+import { CanvasRenderer } from "echarts/renderers";
+import { modelColorIndex, chartHexColor } from "./palette";
 import { cn } from "../../lib/utils";
+
+echarts.use([PieChart, TooltipComponent, LegendComponent, CanvasRenderer]);
 
 export interface DonutSegment {
   name: string;
@@ -11,7 +18,7 @@ export interface DonutSegment {
 const colorOf = (s: DonutSegment, fallback: number) => s.color ?? modelColorIndex(s.name) ?? fallback;
 
 /**
- * 环形占比图规范（docs/DESIGN.md#图表）：
+ * 环形占比图（ECharts 实现）：
  * 中心显示合计，右侧图例带数值与百分比；扇区与图例颜色严格一致。
  */
 export function Donut({
@@ -28,48 +35,71 @@ export function Donut({
   className?: string;
 }) {
   const total = segments.reduce((sum, s) => sum + s.value, 0);
-  const strokeW = 22;
-  const r = (size - strokeW) / 2;
-  const cx = size / 2;
-  const cy = size / 2;
-  const circumference = 2 * Math.PI * r;
-  const nonZeroCount = segments.filter((s) => s.value > 0).length;
-  const gapRatio = nonZeroCount > 1 ? 0.012 : 0;
 
-  let offsetRatio = 0.25; // 从 12 点方向开始
+  const option = {
+    tooltip: {
+      trigger: "item" as const,
+      formatter: (params: { name: string; value: number; percent: number }) =>
+        `${params.name}: ${format(params.value)}（${params.percent.toFixed(1)}%）`,
+    },
+    legend: {
+      show: false,
+    },
+    series: [
+      {
+        type: "pie" as const,
+        radius: ["52%", "78%"],
+        center: ["50%", "50%"],
+        avoidLabelOverlap: false,
+        padAngle: segments.length > 1 ? 1 : 0,
+        itemStyle: {
+          borderRadius: 0,
+        },
+        label: {
+          show: true,
+          position: "center" as const,
+          formatter: () => `{total|${format(total)}}\n{label|${centerLabel}}`,
+          rich: {
+            total: {
+              fontSize: 16,
+              fontWeight: 600,
+              color: "var(--color-fg)",
+              lineHeight: 24,
+            },
+            label: {
+              fontSize: 12,
+              color: "var(--color-fg-muted)",
+              lineHeight: 18,
+            },
+          },
+        },
+        emphasis: {
+          label: {
+            show: true,
+          },
+          scaleSize: 2,
+        },
+        data: segments.map((seg, i) => ({
+          name: seg.name,
+          value: seg.value,
+          itemStyle: {
+            color: chartHexColor(colorOf(seg, i)),
+          },
+        })),
+      },
+    ],
+  };
 
   return (
     <div className={cn("flex items-center gap-5", className)}>
-      <div className="relative shrink-0" style={{ width: size, height: size }}>
-        <svg width={size} height={size} role="img" aria-label="占比环形图">
-          <circle cx={cx} cy={cy} r={r} fill="none" strokeWidth={strokeW} className="stroke-surface-2" />
-          {segments.map((seg, i) => {
-            const ratio = total > 0 ? seg.value / total : 0;
-            const shown = Math.max(ratio - gapRatio, 0);
-            const dash = `${shown * circumference} ${circumference}`;
-            const rotation = offsetRatio * 360;
-            offsetRatio += ratio;
-            return (
-              <circle
-                key={seg.name}
-                cx={cx}
-                cy={cy}
-                r={r}
-                fill="none"
-                strokeWidth={strokeW}
-                strokeDasharray={dash}
-                transform={`rotate(${rotation} ${cx} ${cy})`}
-                className={cn(CHART_STROKES[colorOf(seg, i)], "transition-opacity duration-fast hover:opacity-80")}
-              >
-                <title>{`${seg.name}: ${format(seg.value)}（${(ratio * 100).toFixed(1)}%）`}</title>
-              </circle>
-            );
-          })}
-        </svg>
-        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-          <span className="tnum text-lg font-semibold text-fg">{format(total)}</span>
-          <span className="text-xs text-fg-muted">{centerLabel}</span>
-        </div>
+      <div className="shrink-0" style={{ width: size, height: size }}>
+        <ReactEChartsCore
+          echarts={echarts}
+          option={option}
+          style={{ width: size, height: size }}
+          opts={{ renderer: "canvas" }}
+          notMerge
+        />
       </div>
 
       <ul className="min-w-0 flex-1 space-y-2">
@@ -77,7 +107,10 @@ export function Donut({
           const ratio = total > 0 ? (seg.value / total) * 100 : 0;
           return (
             <li key={seg.name} className="flex items-center gap-2 text-[13px]">
-              <span className={cn("h-2.5 w-2.5 shrink-0 rounded-[3px]", CHART_BGS[colorOf(seg, i)])} />
+              <span
+                className="h-2.5 w-2.5 shrink-0 rounded-[3px]"
+                style={{ backgroundColor: chartHexColor(colorOf(seg, i)) }}
+              />
               <span className="min-w-0 flex-1 truncate text-fg-secondary">{seg.name}</span>
               <span className="tnum text-fg-muted">{ratio.toFixed(1)}%</span>
               <span className="tnum w-16 text-right font-medium text-fg">{format(seg.value)}</span>
