@@ -1,0 +1,92 @@
+{
+  "code": 0,
+  "msg": "",
+  "data": {
+    "biz_code": 0,
+    "biz_msg": "",
+    "biz_data": {
+      "start": 1784995200,
+      "end": 1787587200,
+      "bucket": 86400,
+      "models": ["deepseek-chat & deepseek-reasoner", "deepseek-v4-flash"],
+      "series": [
+        {
+          "api_key": {
+            "tracking_id": "194627f8-55fd-4f85-a57e-47fce0dcd32c",
+            "name": "HP-Book14 Pro",
+            "sensitive_id": "sk-bd22e***********************bff6",
+            "valid": true
+          },
+          "model": "deepseek-v4-flash",
+          "buckets": [
+            {
+              "time": 1785686400,
+              "usage": {
+                "RESPONSE_TOKEN": 55183,
+                "REQUEST": 58,
+                "PROMPT_CACHE_HIT_TOKEN": 14433280,
+                "PROMPT_CACHE_MISS_TOKEN": 262481
+              }
+            },
+            {
+              "time": 1785859200,
+              "usage": {
+                "RESPONSE_TOKEN": 351,
+                "REQUEST": 2,
+                "PROMPT_CACHE_HIT_TOKEN": 0,
+                "PROMPT_CACHE_MISS_TOKEN": 42499
+              }
+            },
+            {
+              "time": 1785945600,
+              "usage": {
+                "RESPONSE_TOKEN": 0,
+                "REQUEST": 0,
+                "PROMPT_CACHE_HIT_TOKEN": 0,
+                "PROMPT_CACHE_MISS_TOKEN": 0
+              }
+            }
+          ]
+        },
+        {
+          "api_key": {
+            "tracking_id": "194627f8-55fd-4f85-a57e-47fce0dcd32c",
+            "name": "HP-Book14 Pro",
+            "sensitive_id": "sk-bd22e***********************bff6",
+            "valid": true
+          },
+          "model": "deepseek-chat & deepseek-reasoner",
+          "buckets": [
+            {
+              "time": 1785686400,
+              "usage": {
+                "RESPONSE_TOKEN": 10,
+                "REQUEST": 1,
+                "PROMPT_CACHE_HIT_TOKEN": 1200,
+                "PROMPT_CACHE_MISS_TOKEN": 3400
+              }
+            },
+            {
+              "time": 1785859200,
+              "usage": {
+                "RESPONSE_TOKEN": 0,
+                "REQUEST": 0,
+                "PROMPT_CACHE_HIT_TOKEN": 0,
+                "PROMPT_CACHE_MISS_TOKEN": 0
+              }
+            },
+            {
+              "time": 1785945600,
+              "usage": {
+                "RESPONSE_TOKEN": 0,
+                "REQUEST": 0,
+                "PROMPT_CACHE_HIT_TOKEN": 0,
+                "PROMPT_CACHE_MISS_TOKEN": 0
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

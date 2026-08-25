@@ -17,6 +17,7 @@ pub struct VaultStatusResponse {
 #[serde(rename_all = "camelCase")]
 pub struct CredentialStatus {
     pub deepseek_api_key: bool,
+    pub deepseek_user_token: bool,
     pub opencode_go_workspace_id: bool,
     pub opencode_go_auth_cookie: bool,
     pub opencode_go_api_key: bool,
@@ -26,6 +27,7 @@ pub struct CredentialStatus {
 #[serde(rename_all = "camelCase")]
 pub struct VaultCredentials {
     pub deepseek_api_key: Option<String>,
+    pub deepseek_user_token: Option<String>,
     pub opencode_go_workspace_id: Option<String>,
     pub opencode_go_auth_cookie: Option<String>,
     pub opencode_go_api_key: Option<String>,
@@ -121,6 +123,7 @@ pub fn vault_credentials(state: State<'_, AppState>) -> Result<VaultCredentials,
     let credentials = vault.credentials()?;
     Ok(VaultCredentials {
         deepseek_api_key: credential_text(credentials, "deepseekApiKey"),
+        deepseek_user_token: credential_text(credentials, "deepseekUserToken"),
         opencode_go_workspace_id: credential_text(credentials, "opencodeGoWorkspaceId"),
         opencode_go_auth_cookie: credential_text(credentials, "opencodeGoAuthCookie"),
         opencode_go_api_key: credential_text(credentials, "opencodeGoApiKey"),
@@ -133,6 +136,7 @@ pub fn vault_credential_status(state: State<'_, AppState>) -> Result<CredentialS
     if !vault.is_unlocked() {
         return Ok(CredentialStatus {
             deepseek_api_key: false,
+            deepseek_user_token: false,
             opencode_go_workspace_id: false,
             opencode_go_auth_cookie: false,
             opencode_go_api_key: false,
@@ -141,6 +145,7 @@ pub fn vault_credential_status(state: State<'_, AppState>) -> Result<CredentialS
     let credentials = vault.credentials()?;
     Ok(CredentialStatus {
         deepseek_api_key: has_text(credentials, "deepseekApiKey"),
+        deepseek_user_token: has_text(credentials, "deepseekUserToken"),
         opencode_go_workspace_id: has_text(credentials, "opencodeGoWorkspaceId"),
         opencode_go_auth_cookie: has_text(credentials, "opencodeGoAuthCookie"),
         opencode_go_api_key: has_text(credentials, "opencodeGoApiKey"),
@@ -251,6 +256,10 @@ pub async fn provider_request(
                     .get("deepseekApiKey")
                     .and_then(Value::as_str)
                     .ok_or_else(|| "缺少 DeepSeek API Key".to_string())?,
+                "deepseek-platform" => credentials
+                    .get("deepseekUserToken")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "缺少 DeepSeek UserToken".to_string())?,
                 "opencode-go" => credentials
                     .get("opencodeGoApiKey")
                     .and_then(Value::as_str)
@@ -266,12 +275,12 @@ pub async fn provider_request(
                 .ok_or_else(|| "缺少 OpenCode Auth Cookie".to_string())?;
             let normalized = normalize_auth_cookie(cookie);
             headers.insert("Cookie".to_string(), format!("auth={normalized}"));
-            headers.insert("Accept".to_string(), "text/html".to_string());
-            headers.insert(
-                "User-Agent".to_string(),
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Gecko/20100101 Firefox/148.0"
-                    .to_string(),
-            );
+            headers
+                .entry("User-Agent".to_string())
+                .or_insert_with(|| {
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Gecko/20100101 Firefox/148.0"
+                        .to_string()
+                });
         }
         Some("cookie") => return Err("不支持的 provider cookie auth".to_string()),
         _ => {}
@@ -368,6 +377,29 @@ mod tests {
         assert_eq!(normalize_auth_cookie("AUTH=abc"), "abc");
         assert_eq!(normalize_auth_cookie("Cookie: auth=abc"), "abc");
         assert_eq!(normalize_auth_cookie("foo=1; auth=abc; bar=2"), "abc");
+    }
+
+    #[test]
+    fn credential_payloads_expose_deepseek_user_token_field() {
+        let status = serde_json::to_value(CredentialStatus {
+            deepseek_api_key: true,
+            deepseek_user_token: false,
+            opencode_go_workspace_id: false,
+            opencode_go_auth_cookie: false,
+            opencode_go_api_key: false,
+        })
+        .expect("credential status should serialize");
+        assert_eq!(status["deepseekUserToken"], false);
+
+        let credentials = serde_json::to_value(VaultCredentials {
+            deepseek_api_key: None,
+            deepseek_user_token: Some("token".to_string()),
+            opencode_go_workspace_id: None,
+            opencode_go_auth_cookie: None,
+            opencode_go_api_key: None,
+        })
+        .expect("vault credentials should serialize");
+        assert_eq!(credentials["deepseekUserToken"], "token");
     }
 
     #[test]

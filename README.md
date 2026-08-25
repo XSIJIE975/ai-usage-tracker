@@ -52,11 +52,19 @@ pnpm tauri build --bundles msi
 1. 首次启动创建 Credential Vault 主密码。
 2. 在“设置”中填写：
    - DeepSeek API Key：`sk-...`
+   - DeepSeek UserToken：platform.deepseek.com 网页登录态令牌，统计页使用（获取方式见下）
    - OpenCode Go Workspace ID：后台 URL 中的 `wrk_...`
    - OpenCode Auth Cookie：登录 `opencode.ai` 后浏览器里的 `auth` Cookie 值
    - OpenCode Go API Key（可选）：官方 `/usage` 接口上线后使用
 3. 设置自动刷新间隔，或点击“刷新”手动更新。
 4. 关闭主窗口后应用继续驻留托盘；托盘图标可打开快速面板。
+
+DeepSeek UserToken 获取方式（统计页使用，与 API Key 是两种不同凭据）：
+
+1. 打开 `https://platform.deepseek.com` 并登录。
+2. 按 F12 打开开发者工具，进入 Application → Local Storage → `https://platform.deepseek.com`。
+3. 找到键 `userToken`，其值是一个 JSON 对象，复制其中 `token` 字段的字符串值。
+4. Token 过期后统计页会提示重新填写。
 
 OpenCode Go Auth Cookie 获取方式：
 
@@ -77,4 +85,6 @@ OpenCode Go Auth Cookie 获取方式：
 
 - OpenCode Go 官方 `/zen/go/v1/usage` 当前线上 404，主要依赖 dashboard scraping，页面结构变化时可能需要更新解析器。
 - Auth Cookie 可能过期，出现 HTTP 401/403 时需要在设置中重新填写。
+- 统计页通过平台网页端私有接口取数（详见 ADR 0006）：opencode.ai 侧依赖构建产物中的 `x-server-id` 常量，平台重新部署可能使其失效；DeepSeek 平台网页接口同样无兼容性承诺。失效时会在界面给出明确错误提示。
+- DeepSeek UserToken 为网页登录态凭据，会过期，需要在设置中重新粘贴。
 - 本机已完成 Windows 验证；macOS/Linux 实机验证由三平台 CI 承担。

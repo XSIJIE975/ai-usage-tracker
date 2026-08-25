@@ -1,0 +1,50 @@
+;0x0000115e;
+((self.$R = self.$R || {})["server-fn:0"] = [],
+($R => $R[0] = {
+    usage: $R[1] = [$R[2] = {
+        date: "2026-08-05",
+        model: "deepseek-v4-flash",
+        totalCost: 224370975,
+        keyId: "key_TESTKEYAAAAAAAAAAAAAAAAA",
+        plan: "lite"
+    }, $R[3] = {
+        date: "2026-08-05",
+        model: "glm-5.2",
+        totalCost: 17054764,
+        keyId: "key_TESTKEYAAAAAAAAAAAAAAAAA",
+        plan: "lite"
+    }, $R[4] = {
+        date: "2026-08-06",
+        model: "deepseek-v4-flash",
+        totalCost: 188255069,
+        keyId: "key_TESTKEYAAAAAAAAAAAAAAAAA",
+        plan: "lite"
+    }, $R[5] = {
+        date: "2026-08-14",
+        model: "deepseek-v4-flash",
+        totalCost: 763124625,
+        keyId: "key_TESTKEYAAAAAAAAAAAAAAAAA",
+        plan: "lite"
+    }, $R[6] = {
+        date: "2026-08-24",
+        model: "mimo-v2.5",
+        totalCost: 1905700,
+        keyId: "key_TESTKEYAAAAAAAAAAAAAAAAA",
+        plan: "lite"
+    }, $R[7] = {
+        date: "2026-08-24",
+        model: "ox-alpha-free",
+        totalCost: 0,
+        keyId: "key_TESTKEYBBBBBBBBBBBBBBBBB",
+        plan: "lite"
+    }],
+    keys: $R[8] = [$R[9] = {
+        id: "key_TESTKEYAAAAAAAAAAAAAAAAA",
+        displayName: "user@example.com - Default API Key",
+        deleted: !1
+    }, $R[10] = {
+        id: "key_TESTKEYBBBBBBBBBBBBBBBBB",
+        displayName: "user@example.com - workbuddy",
+        deleted: !1
+    }]
+})($R["server-fn:0"]))

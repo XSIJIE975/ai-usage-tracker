@@ -33,7 +33,8 @@ export function Donut({
   const cx = size / 2;
   const cy = size / 2;
   const circumference = 2 * Math.PI * r;
-  const gapRatio = segments.length > 1 ? 0.012 : 0;
+  const nonZeroCount = segments.filter((s) => s.value > 0).length;
+  const gapRatio = nonZeroCount > 1 ? 0.012 : 0;
 
   let offsetRatio = 0.25; // 从 12 点方向开始
 

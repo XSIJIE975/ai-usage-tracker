@@ -1,0 +1,67 @@
+{
+  "code": 0,
+  "msg": "",
+  "data": {
+    "biz_code": 0,
+    "biz_msg": "",
+    "biz_data": {
+      "start": 1784995200,
+      "end": 1787587200,
+      "bucket": 86400,
+      "models": ["deepseek-chat & deepseek-reasoner", "deepseek-v4-flash"],
+      "data": [
+        {
+          "currency": "CNY",
+          "series": [
+            {
+              "api_key": {
+                "tracking_id": "194627f8-55fd-4f85-a57e-47fce0dcd32c",
+                "name": "HP-Book14 Pro",
+                "sensitive_id": "sk-bd22e***********************bff6",
+                "valid": true
+              },
+              "model": "deepseek-v4-flash",
+              "buckets": [
+                {
+                  "time": 1785686400,
+                  "cost": "0.6615126000000000"
+                },
+                {
+                  "time": 1785859200,
+                  "cost": "0.0432010000000000"
+                },
+                {
+                  "time": 1785945600,
+                  "cost": "0"
+                }
+              ]
+            },
+            {
+              "api_key": {
+                "tracking_id": "194627f8-55fd-4f85-a57e-47fce0dcd32c",
+                "name": "HP-Book14 Pro",
+                "sensitive_id": "sk-bd22e***********************bff6",
+                "valid": true
+              },
+              "model": "deepseek-chat & deepseek-reasoner",
+              "buckets": [
+                {
+                  "time": 1785686400,
+                  "cost": "0.0021000000000000"
+                },
+                {
+                  "time": 1785859200,
+                  "cost": "0"
+                },
+                {
+                  "time": 1785945600,
+                  "cost": "0"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

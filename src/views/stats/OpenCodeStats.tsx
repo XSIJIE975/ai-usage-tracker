@@ -1,62 +1,104 @@
 import { useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, KeyRound, RefreshCw } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import { Select } from "../../components/ui/select";
 import { IconButton } from "../../components/ui/icon-button";
-import { DataTable, THead, TBody, Th, Tr, Td } from "../../components/ui/data-table";
+import { Button } from "../../components/ui/button";
+import { EmptyState } from "../../components/ui/empty-state";
 import { StackedBars } from "../../components/charts/StackedBars";
-import { CHART_BGS, modelColorIndex } from "../../components/charts/palette";
-import { getOpenCodeCosts, getOpenCodeHistory, opencodeKeys, opencodeModels } from "../../data/mockStats";
+import { fetchOpenCodeMonthlyCost } from "../../providers/opencode-stats";
+import { createUsageCache } from "../../stats/usage-cache";
 import { formatInt, cn } from "../../lib/utils";
+import { StatsStateCard } from "./StatsStateCard";
+import { useStatsFetch } from "./use-stats-fetch";
+import { UsageHistoryTable } from "./opencode/UsageHistoryTable";
+import {
+  buildCostSeries,
+  collectCostDays,
+  dedupeModels,
+  formatCostDayLabel,
+  sumCostUsd,
+} from "./opencode/cost-series";
+import { useHistoryPages } from "./opencode/use-history-pages";
 
-/** 表格内 token 数前的迷你柱状 glyph（参照产品截图形态） */
-function InlineBars() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 12 12" className="inline-block shrink-0 text-fg-muted" aria-hidden>
-      <rect x="0.5" y="7" width="2" height="4" rx="0.5" fill="currentColor" />
-      <rect x="3.8" y="4.5" width="2" height="6.5" rx="0.5" fill="currentColor" />
-      <rect x="7.1" y="2" width="2" height="9" rx="0.5" fill="currentColor" />
-      <rect x="10.4" y="5.5" width="1.6" height="5.5" rx="0.5" fill="currentColor" opacity="0.55" />
-    </svg>
-  );
-}
+const monthlyCache = createUsageCache();
 
-const CURRENT = { year: 2026, month: 8 }; // 占位基准月
+const currentMonth = () => {
+  const now = new Date();
+  return { year: now.getFullYear(), month: now.getMonth() + 1 };
+};
 
 export function OpenCodeStats() {
-  const [month, setMonth] = useState(CURRENT);
+  const [month, setMonth] = useState(currentMonth);
   const [model, setModel] = useState("all");
   const [keyId, setKeyId] = useState("all");
+  const [refreshTick, setRefreshTick] = useState(0);
 
-  const costs = useMemo(() => getOpenCodeCosts(month.year, month.month, keyId), [month, keyId]);
-  const history = useMemo(() => getOpenCodeHistory(), []);
+  const monthly = useStatsFetch(
+    monthlyCache,
+    `${month.year}-${month.month}`,
+    () => fetchOpenCodeMonthlyCost(month.year, month.month),
+    refreshTick,
+  );
+  const history = useHistoryPages(refreshTick);
 
-  const series = useMemo(() => {
-    const selected = model === "all" ? opencodeModels : opencodeModels.filter((m) => m === model);
-    return selected.map((name) => {
-      const idx = opencodeModels.indexOf(name);
-      return { name, values: costs.map((day) => day.costs[idx] ?? 0) };
-    });
-  }, [costs, model]);
+  const costs = monthly.kind === "ready" ? monthly.data.costs : [];
+  const keys = monthly.kind === "ready" ? monthly.data.keys : [];
 
+  const filteredCosts = useMemo(
+    () => (keyId === "all" ? costs : costs.filter((point) => point.keyId === keyId)),
+    [costs, keyId],
+  );
+  const models = useMemo(() => dedupeModels(costs), [costs]);
+  const chartModels = useMemo(
+    () => (model === "all" ? models : models.filter((name) => name === model)),
+    [models, model],
+  );
+  const costDays = useMemo(() => collectCostDays(filteredCosts), [filteredCosts]);
+  const series = useMemo(
+    () => buildCostSeries(filteredCosts, costDays, chartModels),
+    [filteredCosts, costDays, chartModels],
+  );
   const monthTotal = useMemo(
-    () => costs.reduce((sum, day) => sum + day.costs.reduce((a, b) => a + b, 0), 0),
-    [costs],
+    () => sumCostUsd(model === "all" ? filteredCosts : filteredCosts.filter((p) => p.model === model)),
+    [filteredCosts, model],
   );
 
-  function shiftMonth(delta: number) {
+  const visibleRecords = useMemo(
+    () =>
+      history.records.filter(
+        (record) => (model === "all" || record.model === model) && (keyId === "all" || record.keyId === keyId),
+      ),
+    [history.records, model, keyId],
+  );
+
+  const shiftMonth = (delta: number) => {
     setMonth((prev) => {
       const date = new Date(prev.year, prev.month - 1 + delta, 1);
       return { year: date.getFullYear(), month: date.getMonth() + 1 };
     });
-  }
+  };
 
-  const isCurrent = month.year === CURRENT.year && month.month === CURRENT.month;
+  const refresh = () => {
+    monthlyCache.invalidate(`${month.year}-${month.month}`);
+    setRefreshTick((tick) => tick + 1);
+  };
 
+  const now = currentMonth();
+  const isCurrent = month.year === now.year && month.month === now.month;
+  const isFetching = monthly.kind === "loading";
   const modelOptions = [
     { value: "all", label: "所有模型" },
-    ...opencodeModels.map((m) => ({ value: m as string, label: m })),
+    ...models.map((name) => ({ value: name, label: name })),
   ];
+  const keyOptions = [
+    { value: "all", label: "所有密钥" },
+    ...keys.map((key) => ({ value: key.id, label: key.displayName })),
+  ];
+
+  if (monthly.kind !== "ready") {
+    return <StatsStateCard state={monthly} onRetry={refresh} />;
+  }
 
   return (
     <div className="space-y-4">
@@ -89,11 +131,14 @@ export function OpenCodeStats() {
               </IconButton>
             </div>
             <Select options={modelOptions} value={model} onChange={setModel} aria-label="模型筛选" />
-            <Select options={opencodeKeys} value={keyId} onChange={setKeyId} aria-label="密钥筛选" />
+            <Select options={keyOptions} value={keyId} onChange={setKeyId} aria-label="密钥筛选" />
+            <IconButton onClick={refresh} aria-label="刷新" title="刷新">
+              <RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin")} />
+            </IconButton>
           </div>
 
           <StackedBars
-            labels={costs.map((d) => d.label)}
+            labels={costDays.map(formatCostDayLabel)}
             series={series}
             yFormat={(v) => `$${formatInt(v)}`}
             tooltipFormat={(v) => `$${v.toFixed(2)}`}
@@ -108,50 +153,36 @@ export function OpenCodeStats() {
           <CardTitle>使用历史</CardTitle>
           <CardDescription>近期 API 使用情况和成本。</CardDescription>
         </CardHeader>
-        <CardContent>
-          <DataTable>
-            <THead>
-              <tr>
-                <Th>日期</Th>
-                <Th>模型</Th>
-                <Th align="right">输入</Th>
-                <Th align="right">输出</Th>
-                <Th align="right">成本</Th>
-                <Th align="right">会话</Th>
-              </tr>
-            </THead>
-            <TBody>
-              {history.map((row, i) => (
-                <Tr key={`${row.time}-${i}`}>
-                  <Td className="whitespace-nowrap text-fg-secondary">{row.time}</Td>
-                  <Td>
-                    <span className="inline-flex items-center gap-2">
-                      <span
-                        className={cn("h-2.5 w-2.5 shrink-0 rounded-[3px]", CHART_BGS[modelColorIndex(row.model)])}
-                      />
-                      <span className="font-mono text-xs">{row.model}</span>
-                    </span>
-                  </Td>
-                  <Td align="right">
-                    <span className="inline-flex items-center gap-1.5">
-                      <InlineBars />
-                      {formatInt(row.inputTokens)}
-                    </span>
-                  </Td>
-                  <Td align="right">
-                    <span className="inline-flex items-center gap-1.5">
-                      <InlineBars />
-                      {formatInt(row.outputTokens)}
-                    </span>
-                  </Td>
-                  <Td align="right" className="whitespace-nowrap text-fg-secondary">{row.costLabel}</Td>
-                  <Td align="right">
-                    <span className="font-mono text-xs text-fg-muted">{row.session}</span>
-                  </Td>
-                </Tr>
-              ))}
-            </TBody>
-          </DataTable>
+        <CardContent className="space-y-3">
+          {history.configNeeded ? (
+            <EmptyState
+              icon={<KeyRound className="h-5 w-5" />}
+              title={history.errorMessage || "缺少凭据配置"}
+              description="请前往设置页配置 Workspace ID 和 Auth Cookie。"
+            />
+          ) : (
+            <>
+              <UsageHistoryTable records={visibleRecords} />
+              {history.errorMessage ? (
+                <div className="flex items-center justify-center gap-2">
+                  <span className="text-xs text-danger">{history.errorMessage}</span>
+                  <Button variant="outline" size="sm" onClick={history.loadMore}>
+                    重试
+                  </Button>
+                </div>
+              ) : history.loading ? (
+                <p className="text-center text-xs text-fg-muted">正在加载…</p>
+              ) : history.hasMore ? (
+                <div className="flex justify-center">
+                  <Button variant="outline" size="sm" onClick={history.loadMore}>
+                    加载更多
+                  </Button>
+                </div>
+              ) : visibleRecords.length === 0 ? (
+                <p className="text-center text-xs text-fg-muted">当前筛选条件下暂无使用记录。</p>
+              ) : null}
+            </>
+          )}
         </CardContent>
       </Card>
     </div>

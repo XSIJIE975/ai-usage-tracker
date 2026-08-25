@@ -5,6 +5,7 @@ export interface VaultStatus {
 
 export interface CredentialStatus {
   deepseekApiKey: boolean;
+  deepseekUserToken: boolean;
   opencodeGoWorkspaceId: boolean;
   opencodeGoAuthCookie: boolean;
   opencodeGoApiKey: boolean;
@@ -12,6 +13,7 @@ export interface CredentialStatus {
 
 export interface VaultCredentials {
   deepseekApiKey?: string;
+  deepseekUserToken?: string;
   opencodeGoWorkspaceId?: string;
   opencodeGoAuthCookie?: string;
   opencodeGoApiKey?: string;
@@ -19,6 +21,7 @@ export interface VaultCredentials {
 
 export interface CredentialsInput {
   deepseekApiKey?: string | null;
+  deepseekUserToken?: string | null;
   opencodeGoWorkspaceId?: string | null;
   opencodeGoAuthCookie?: string | null;
   opencodeGoApiKey?: string | null;
