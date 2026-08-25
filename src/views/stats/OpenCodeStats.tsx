@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, KeyRound, RefreshCw } from "lucide-react";
+import { ChevronLeft, ChevronRight, KeyRound, LoaderCircle, RefreshCw } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import { Select } from "../../components/ui/select";
 import { IconButton } from "../../components/ui/icon-button";
 import { Button } from "../../components/ui/button";
+import { Pagination } from "../../components/ui/pagination";
 import { EmptyState } from "../../components/ui/empty-state";
 import { StackedBars } from "../../components/charts/StackedBars";
 import { fetchOpenCodeMonthlyCost } from "../../providers/opencode-stats";
@@ -20,6 +21,7 @@ import {
   sumCostUsd,
 } from "./opencode/cost-series";
 import { useHistoryPages } from "./opencode/use-history-pages";
+import { useAutoRefresh } from "./use-auto-refresh";
 
 const monthlyCache = createUsageCache();
 
@@ -28,13 +30,28 @@ const currentMonth = () => {
   return { year: now.getFullYear(), month: now.getMonth() + 1 };
 };
 
+/** 局部刷新遮罩 */
+function RefreshOverlay() {
+  return (
+    <div className="absolute inset-0 z-20 flex items-center justify-center rounded-lg bg-canvas/40 backdrop-blur-[1px]">
+      <LoaderCircle className="h-5 w-5 animate-spin text-brand" aria-hidden />
+    </div>
+  );
+}
+
 export function OpenCodeStats() {
   const [month, setMonth] = useState(currentMonth);
   const [model, setModel] = useState("all");
   const [keyId, setKeyId] = useState("all");
   const [refreshTick, setRefreshTick] = useState(0);
 
-  const monthly = useStatsFetch(
+  // 接入全局自动刷新
+  useAutoRefresh(() => {
+    monthlyCache.invalidate(`${month.year}-${month.month}`);
+    setRefreshTick((tick) => tick + 1);
+  });
+
+  const { state: monthly, isRefreshing } = useStatsFetch(
     monthlyCache,
     `${month.year}-${month.month}`,
     () => fetchOpenCodeMonthlyCost(month.year, month.month),
@@ -86,7 +103,6 @@ export function OpenCodeStats() {
 
   const now = currentMonth();
   const isCurrent = month.year === now.year && month.month === now.month;
-  const isFetching = monthly.kind === "loading";
   const modelOptions = [
     { value: "all", label: "所有模型" },
     ...models.map((name) => ({ value: name, label: name })),
@@ -103,14 +119,15 @@ export function OpenCodeStats() {
   return (
     <div className="space-y-4">
       {/* 成本图表 */}
-      <Card>
+      <Card className="relative">
+        {isRefreshing && <RefreshOverlay />}
         <CardHeader>
           <CardTitle>成本</CardTitle>
           <CardDescription>
             按模型细分的使用成本，本月合计 <span className="tnum font-medium text-fg">${monthTotal.toFixed(2)}</span>。
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-4 px-4 pb-4">
           <div className="flex flex-wrap items-center gap-2">
             {/* 月份翻页器 */}
             <div className="inline-flex items-center rounded-md border border-line bg-surface shadow-sm">
@@ -133,7 +150,7 @@ export function OpenCodeStats() {
             <Select options={modelOptions} value={model} onChange={setModel} aria-label="模型筛选" />
             <Select options={keyOptions} value={keyId} onChange={setKeyId} aria-label="密钥筛选" />
             <IconButton onClick={refresh} aria-label="刷新" title="刷新">
-              <RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin")} />
+              <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
             </IconButton>
           </div>
 
@@ -148,7 +165,7 @@ export function OpenCodeStats() {
       </Card>
 
       {/* 使用历史 */}
-      <Card>
+      <Card className="relative">
         <CardHeader>
           <CardTitle>使用历史</CardTitle>
           <CardDescription>近期 API 使用情况和成本。</CardDescription>
@@ -162,25 +179,25 @@ export function OpenCodeStats() {
             />
           ) : (
             <>
-              <UsageHistoryTable records={visibleRecords} />
+              <UsageHistoryTable records={visibleRecords} maxHeight={420} />
               {history.errorMessage ? (
                 <div className="flex items-center justify-center gap-2">
                   <span className="text-xs text-danger">{history.errorMessage}</span>
-                  <Button variant="outline" size="sm" onClick={history.loadMore}>
+                  <Button variant="outline" size="sm" onClick={() => history.goToPage(history.currentPage)}>
                     重试
                   </Button>
                 </div>
-              ) : history.loading ? (
-                <p className="text-center text-xs text-fg-muted">正在加载…</p>
-              ) : history.hasMore ? (
-                <div className="flex justify-center">
-                  <Button variant="outline" size="sm" onClick={history.loadMore}>
-                    加载更多
-                  </Button>
-                </div>
-              ) : visibleRecords.length === 0 ? (
+              ) : visibleRecords.length === 0 && !history.loading ? (
                 <p className="text-center text-xs text-fg-muted">当前筛选条件下暂无使用记录。</p>
-              ) : null}
+              ) : (
+                <Pagination
+                  currentPage={history.currentPage}
+                  hasPrev={history.hasPrev}
+                  hasNext={history.hasNext && visibleRecords.length > 0}
+                  loading={history.loading}
+                  onPageChange={history.goToPage}
+                />
+              )}
             </>
           )}
         </CardContent>

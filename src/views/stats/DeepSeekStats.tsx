@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Activity, CalendarRange, KeyRound, RefreshCw } from "lucide-react";
+import { Activity, CalendarRange, KeyRound, LoaderCircle, RefreshCw } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import { Select } from "../../components/ui/select";
 import { Segmented } from "../../components/ui/segmented";
@@ -13,6 +13,7 @@ import { createUsageCache } from "../../stats/usage-cache";
 import { formatCompact, formatInt, cn } from "../../lib/utils";
 import { StatsStateCard } from "./StatsStateCard";
 import { useStatsFetch } from "./use-stats-fetch";
+import { useAutoRefresh } from "./use-auto-refresh";
 import { OverviewCards } from "./deepseek/OverviewCards";
 import { ModelUsageTable } from "./deepseek/ModelUsageTable";
 import { isoDate, resolveRangeMs, timeRangeOptions, type TimeRange } from "./deepseek/time-range";
@@ -33,6 +34,15 @@ const metricOptions: { value: UsageMetric; label: string }[] = [
   { value: "cost", label: "费用" },
 ];
 
+/** 局部刷新遮罩：半透明覆盖 + 旋转加载图标，叠加在图表/卡片区域上 */
+function RefreshOverlay() {
+  return (
+    <div className="absolute inset-0 z-20 flex items-center justify-center rounded-lg bg-canvas/40 backdrop-blur-[1px]">
+      <LoaderCircle className="h-5 w-5 animate-spin text-brand" aria-hidden />
+    </div>
+  );
+}
+
 export function DeepSeekStats() {
   const [range, setRange] = useState<TimeRange>("7d");
   const [apiKeyId, setApiKeyId] = useState("all");
@@ -42,7 +52,7 @@ export function DeepSeekStats() {
   const [refreshTick, setRefreshTick] = useState(0);
 
   const rangeMs = useMemo(() => resolveRangeMs(range, customFrom, customTo), [range, customFrom, customTo]);
-  const state = useStatsFetch(
+  const { state, isRefreshing } = useStatsFetch(
     usageCache,
     rangeMs === null ? null : `${rangeMs.startMs}:${rangeMs.endMs}`,
     () =>
@@ -56,6 +66,9 @@ export function DeepSeekStats() {
     if (rangeMs !== null) usageCache.invalidate(`${rangeMs.startMs}:${rangeMs.endMs}`);
     setRefreshTick((tick) => tick + 1);
   };
+
+  // 接入全局自动刷新
+  useAutoRefresh(refresh);
 
   const bundle = state.kind === "ready" ? state.data : null;
   const filteredRows = useMemo(() => {
@@ -83,7 +96,6 @@ export function DeepSeekStats() {
   const tooltipFormat = metric === "cost" ? (value: number) => `¥${value.toFixed(2)}` : formatInt;
   const chartTitle =
     metric === "tokens" ? "Token 消耗趋势" : metric === "requests" ? "请求次数趋势" : "费用趋势";
-  const isFetching = state.kind === "loading";
   const hasUsage = aggregates.totalTokens > 0 || aggregates.totalRequests > 0;
   const emptyUsageHint = (
     <EmptyState
@@ -143,22 +155,26 @@ export function DeepSeekStats() {
           </div>
 
           <IconButton onClick={refresh} aria-label="刷新" title="刷新" className="mb-0.5">
-            <RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin")} />
+            <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
           </IconButton>
         </div>
       </Card>
 
       {/* 指标总览 */}
-      <OverviewCards aggregates={aggregates} currency={bundle?.currency ?? "CNY"} />
+      <div className="relative">
+        {isRefreshing && <RefreshOverlay />}
+        <OverviewCards aggregates={aggregates} currency={bundle?.currency ?? "CNY"} />
+      </div>
 
       {/* 图表区 */}
       <div className="grid gap-4 xl:grid-cols-5">
-        <Card className="xl:col-span-3">
+        <Card className="relative xl:col-span-3">
+          {isRefreshing && <RefreshOverlay />}
           <CardHeader>
             <CardTitle>{chartTitle}</CardTitle>
             <CardDescription>按模型堆叠，悬停查看每日明细。</CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="px-4 pb-4">
             {hasUsage ? (
               <StackedBars labels={chartLabels} series={chartSeries} yFormat={yFormat} tooltipFormat={tooltipFormat} />
             ) : (
@@ -167,12 +183,13 @@ export function DeepSeekStats() {
           </CardContent>
         </Card>
 
-        <Card className="xl:col-span-2">
+        <Card className="relative xl:col-span-2">
+          {isRefreshing && <RefreshOverlay />}
           <CardHeader>
             <CardTitle>模型 Token 占比</CardTitle>
             <CardDescription>所选时间范围内的消耗构成。</CardDescription>
           </CardHeader>
-          <CardContent className="flex min-h-[260px] items-center">
+          <CardContent className="flex min-h-[300px] items-center px-4 pb-4">
             {hasUsage ? (
               <Donut
                 className="w-full"
@@ -188,7 +205,8 @@ export function DeepSeekStats() {
       </div>
 
       {/* 模型明细表 */}
-      <Card>
+      <Card className="relative">
+        {isRefreshing && <RefreshOverlay />}
         <CardHeader>
           <CardTitle>模型明细</CardTitle>
           <CardDescription>各模型的 token 消耗、缓存命中与费用。</CardDescription>
