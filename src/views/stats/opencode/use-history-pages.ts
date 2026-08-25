@@ -4,30 +4,35 @@ import type { OpenCodeUsageRecord } from "../../../providers/opencode-stats";
 
 export interface HistoryPages {
   records: OpenCodeUsageRecord[];
-  hasMore: boolean;
+  currentPage: number;
+  hasPrev: boolean;
+  hasNext: boolean;
   loading: boolean;
   /** 非空表示最近一次加载失败的原因 */
   errorMessage: string;
   /** 失败原因是缺少凭据配置（引导前往设置页） */
   configNeeded: boolean;
-  loadMore: () => void;
+  goToPage: (page: number) => void;
+  nextPage: () => void;
+  prevPage: () => void;
 }
 
 /**
- * 使用历史分页：本地 state 累加各页记录（不做缓存键控）。
- * 挂载与 refreshTick 变化时重置回第 0 页；某页返回空数组后 hasMore=false。
- * 递增 requestId 丢弃过期响应，防止翻页/刷新竞态错序追加。
+ * 使用历史分页：支持前后翻页导航。
+ * 每页独立加载（非累加），翻页时替换记录。
+ * 递增 requestId 丢弃过期响应，防止翻页竞态。
+ * refreshTick 变化时回到第 0 页重载。
  */
 export const useHistoryPages = (refreshTick: number): HistoryPages => {
   const [records, setRecords] = useState<OpenCodeUsageRecord[]>([]);
-  const [nextPage, setNextPage] = useState(0);
-  const [hasMore, setHasMore] = useState(true);
+  const [currentPage, setCurrentPage] = useState(0);
+  const [hasNext, setHasNext] = useState(true);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [configNeeded, setConfigNeeded] = useState(false);
   const requestRef = useRef(0);
 
-  const load = useCallback((page: number, append: boolean) => {
+  const load = useCallback((page: number) => {
     const requestId = ++requestRef.current;
     setLoading(true);
     setErrorMessage("");
@@ -40,9 +45,10 @@ export const useHistoryPages = (refreshTick: number): HistoryPages => {
           setLoading(false);
           return;
         }
-        setRecords((prev) => (append ? [...prev, ...result.data.records] : result.data.records));
-        setNextPage(page + 1);
-        setHasMore(result.data.records.length > 0);
+        setRecords(result.data.records);
+        setCurrentPage(page);
+        // 返回了记录 → 还有下一页；空数组 → 没有更多
+        setHasNext(result.data.records.length > 0);
         setConfigNeeded(false);
         setLoading(false);
       })
@@ -55,13 +61,37 @@ export const useHistoryPages = (refreshTick: number): HistoryPages => {
   }, []);
 
   useEffect(() => {
-    load(0, false);
+    load(0);
   }, [load, refreshTick]);
 
-  const loadMore = useCallback(() => {
-    if (loading || !hasMore || configNeeded) return;
-    load(nextPage, true);
-  }, [load, loading, hasMore, configNeeded, nextPage]);
+  const goToPage = useCallback(
+    (page: number) => {
+      if (page < 0 || loading) return;
+      load(page);
+    },
+    [load, loading],
+  );
 
-  return { records, hasMore, loading, errorMessage, configNeeded, loadMore };
+  const nextPage = useCallback(() => {
+    if (loading || !hasNext) return;
+    load(currentPage + 1);
+  }, [load, loading, hasNext, currentPage]);
+
+  const prevPage = useCallback(() => {
+    if (loading || currentPage === 0) return;
+    load(currentPage - 1);
+  }, [load, loading, currentPage]);
+
+  return {
+    records,
+    currentPage,
+    hasPrev: currentPage > 0,
+    hasNext,
+    loading,
+    errorMessage,
+    configNeeded,
+    goToPage,
+    nextPage,
+    prevPage,
+  };
 };

@@ -23,10 +23,17 @@ const formatRecordTime = (iso: string): string => {
   return `${date.getMonth() + 1}月${date.getDate()}日 ${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
 };
 
-/** 使用历史表：日期/模型/输入/输出/成本/会话（记录按返回顺序直接渲染）。 */
-export function UsageHistoryTable({ records }: { records: OpenCodeUsageRecord[] }) {
+/** 使用历史表：日期/模型/输入/输出/成本/会话。
+ *  maxHeight 控制内部垂直滚动区域，表头粘性固定。 */
+export function UsageHistoryTable({
+  records,
+  maxHeight = 420,
+}: {
+  records: OpenCodeUsageRecord[];
+  maxHeight?: number;
+}) {
   return (
-    <DataTable>
+    <DataTable maxHeight={maxHeight}>
       <THead>
         <tr>
           <Th>日期</Th>

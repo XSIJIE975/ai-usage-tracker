@@ -4,17 +4,30 @@ import { cn } from "../../lib/utils";
 /**
  * 数据表格规范（docs/DESIGN.md#数据表格）：
  * 表头 xs/muted，数值右对齐 + tnum，行分隔用 line，末行不加分隔线。
+ * 传入 maxHeight 时启用内部垂直滚动 + 粘性表头。
  */
-export function DataTable({ className, ...props }: React.HTMLAttributes<HTMLTableElement>) {
+export function DataTable({
+  className,
+  maxHeight,
+  ...props
+}: React.HTMLAttributes<HTMLTableElement> & { maxHeight?: number | string }) {
   return (
-    <div className="overflow-x-auto">
+    <div
+      className={cn("overflow-x-auto", maxHeight !== undefined && "overflow-y-auto")}
+      style={maxHeight !== undefined ? { maxHeight: typeof maxHeight === "number" ? `${maxHeight}px` : maxHeight } : undefined}
+    >
       <table className={cn("w-full border-collapse text-[13px]", className)} {...props} />
     </div>
   );
 }
 
 export function THead({ className, ...props }: React.HTMLAttributes<HTMLTableSectionElement>) {
-  return <thead className={cn("[&_th]:border-b [&_th]:border-line", className)} {...props} />;
+  return (
+    <thead
+      className={cn("[&_th]:border-b [&_th]:border-line [&_th]:bg-surface [&_th]:sticky [&_th]:top-0 [&_th]:z-10", className)}
+      {...props}
+    />
+  );
 }
 
 export function Th({
