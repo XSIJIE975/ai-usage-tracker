@@ -34,6 +34,24 @@
   --color-iris-800: #3d32a0;
   --color-iris-900: #342f7e;
 
+  /* 数据可视化色阶（16 色，用于图表序列，确保同一图表内高区分度） */
+  --color-data-1: #6366f1;
+  --color-data-2: #14b8a6;
+  --color-data-3: #f59e0b;
+  --color-data-4: #ef4444;
+  --color-data-5: #0ea5e9;
+  --color-data-6: #84cc16;
+  --color-data-7: #8b5cf6;
+  --color-data-8: #f97316;
+  --color-data-9: #06b6d4;
+  --color-data-10: #ec4899;
+  --color-data-11: #eab308;
+  --color-data-12: #a855f7;
+  --color-data-13: #10b981;
+  --color-data-14: #3b82f6;
+  --color-data-15: #f43f5e;
+  --color-data-16: #22c55e;
+
   /* 动效时长 */
   --transition-duration-fast: 120ms;
   --transition-duration-normal: 200ms;
@@ -88,13 +106,27 @@
   /* 选中文字底色 */
   --selection: rgb(90 72 226 / 0.16);
 
-  /* 图表色板（按序列顺序取色，禁止图表内另造颜色） */
-  --chart-1: var(--color-iris-500);
-  --chart-2: #0d9488;
-  --chart-3: #d97706;
-  --chart-4: #e11d48;
-  --chart-5: #0284c7;
-  --chart-6: #65a30d;
+  /* 图表色板（16 色，按序列顺序取色，禁止图表内另造颜色） */
+  --chart-1: var(--color-data-1);
+  --chart-2: var(--color-data-2);
+  --chart-3: var(--color-data-3);
+  --chart-4: var(--color-data-4);
+  --chart-5: var(--color-data-5);
+  --chart-6: var(--color-data-6);
+  --chart-7: var(--color-data-7);
+  --chart-8: var(--color-data-8);
+  --chart-9: var(--color-data-9);
+  --chart-10: var(--color-data-10);
+  --chart-11: var(--color-data-11);
+  --chart-12: var(--color-data-12);
+  --chart-13: var(--color-data-13);
+  --chart-14: var(--color-data-14);
+  --chart-15: var(--color-data-15);
+  --chart-16: var(--color-data-16);
+
+  /* 哈希取色参数（用于超出 12 色板之外的模型，保证主题适配） */
+  --chart-hash-s: 68%;
+  --chart-hash-l: 52%;
 }
 
 /* ---------- 语义 Token：深色主题 ---------- */
@@ -137,12 +169,25 @@
   --ring: rgb(129 131 248 / 0.45);
   --selection: rgb(129 131 248 / 0.28);
 
-  --chart-1: var(--color-iris-400);
+  --chart-1: #8183f8;
   --chart-2: #2dd4bf;
   --chart-3: #fbbf24;
   --chart-4: #fb7185;
   --chart-5: #38bdf8;
   --chart-6: #a3e635;
+  --chart-7: #a78bfa;
+  --chart-8: #fb923c;
+  --chart-9: #67e8f9;
+  --chart-10: #f472b6;
+  --chart-11: #facc15;
+  --chart-12: #d8b4fe;
+  --chart-13: #34d399;
+  --chart-14: #60a5fa;
+  --chart-15: #fda4af;
+  --chart-16: #4ade80;
+
+  --chart-hash-s: 65%;
+  --chart-hash-l: 60%;
 }
 
 /* 跟随系统主题（未手动指定 data-theme 时） */
@@ -186,12 +231,25 @@
     --ring: rgb(129 131 248 / 0.45);
     --selection: rgb(129 131 248 / 0.28);
 
-    --chart-1: var(--color-iris-400);
+    --chart-1: #8183f8;
     --chart-2: #2dd4bf;
     --chart-3: #fbbf24;
     --chart-4: #fb7185;
     --chart-5: #38bdf8;
     --chart-6: #a3e635;
+    --chart-7: #a78bfa;
+    --chart-8: #fb923c;
+    --chart-9: #67e8f9;
+    --chart-10: #f472b6;
+    --chart-11: #facc15;
+    --chart-12: #d8b4fe;
+    --chart-13: #34d399;
+    --chart-14: #60a5fa;
+    --chart-15: #fda4af;
+    --chart-16: #4ade80;
+
+    --chart-hash-s: 65%;
+    --chart-hash-l: 60%;
   }
 }
 
@@ -241,6 +299,16 @@
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
   --color-chart-6: var(--chart-6);
+  --color-chart-7: var(--chart-7);
+  --color-chart-8: var(--chart-8);
+  --color-chart-9: var(--chart-9);
+  --color-chart-10: var(--chart-10);
+  --color-chart-11: var(--chart-11);
+  --color-chart-12: var(--chart-12);
+  --color-chart-13: var(--chart-13);
+  --color-chart-14: var(--chart-14);
+  --color-chart-15: var(--chart-15);
+  --color-chart-16: var(--chart-16);
 }
 
 /* ---------- 基础样式 ---------- */
