@@ -1,27 +1,45 @@
+import { useCallback, useMemo, useRef } from "react";
 import ReactEChartsCore from "echarts-for-react/lib/core";
 import * as echarts from "echarts/core";
 import { PieChart } from "echarts/charts";
-import { TooltipComponent, LegendComponent } from "echarts/components";
+import { TooltipComponent } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
 import { modelColor, getThemeColors } from "./palette";
+import { useEffectiveTheme } from "../../lib/theme";
+import { useChartLegend } from "../../hooks/use-chart-legend";
+import { ChartLegend } from "./ChartLegend";
 import { cn } from "../../lib/utils";
 
-echarts.use([PieChart, TooltipComponent, LegendComponent, CanvasRenderer]);
+echarts.use([PieChart, TooltipComponent, CanvasRenderer]);
 
 export interface DonutSegment {
   name: string;
   value: number;
 }
 
+interface TooltipParam {
+  name: string;
+  value: number;
+  percent: number;
+  marker: string;
+}
+
 /**
- * 环形占比图（ECharts 实现）：
- * 中心显示合计，右侧图例带数值与百分比；扇区与图例颜色严格一致。
+ * 环形占比图（ECharts + 外部 React 图例）。
+ *
+ * 联动机制：
+ * - 图例点击：直接过滤 data（仅保留 selected 集合内的扇区），被取消勾选的扇区从饼图中物理移除，
+ *   与 ECharts 原生图例的筛选行为一致；React state 为唯一数据源。
+ * - 图例悬停：仅更新 activeName（影响图例自身加粗 + tooltip 高亮），不 dispatchAction 改变图表。
+ * - 图表交互：监听 ECharts 的 mouseover/mouseout，同步 activeName，让 tooltip 与图表原生 emphasis 高亮一致。
+ * - tooltip：当前 active 扇区的名称与数值均使用该扇区自身颜色高亮；非 active 项整体变暗。
+ * - 中心合计随显隐状态实时更新。
  */
 export function Donut({
   segments,
   centerLabel,
   format = (v) => String(v),
-  size = 168,
+  size = 200,
   className,
 }: {
   segments: DonutSegment[];
@@ -30,100 +48,164 @@ export function Donut({
   size?: number;
   className?: string;
 }) {
-  const total = segments.reduce((sum, s) => sum + s.value, 0);
+  const theme = useEffectiveTheme();
   const colors = getThemeColors();
-  const nonZeroCount = segments.filter((s) => s.value > 0).length;
+  const chartComponentRef = useRef<ReactEChartsCore>(null);
 
-  const option = {
-    tooltip: {
-      trigger: "item" as const,
-      backgroundColor: colors.surface,
-      borderColor: colors.lineStrong,
-      textStyle: {
-        color: colors.fg,
-        fontSize: 13,
+  const total = segments.reduce((sum, s) => sum + s.value, 0);
+  const positiveSegments = useMemo(() => segments.filter((seg) => seg.value > 0), [segments]);
+  const allNames = useMemo(() => positiveSegments.map((s) => s.name), [positiveSegments]);
+  const legend = useChartLegend(allNames);
+
+  const handleLegendToggle = useCallback(
+    (name: string) => {
+      legend.toggle(name);
+    },
+    [legend]
+  );
+
+  const handleLegendEnter = useCallback(
+    (name: string) => {
+      legend.setActive(name);
+    },
+    [legend]
+  );
+
+  const handleLegendLeave = useCallback(() => {
+    legend.setActive(null);
+  }, [legend]);
+
+  const data = useMemo(
+    () =>
+      positiveSegments
+        .filter((seg) => legend.selected.has(seg.name))
+        .map((seg) => ({
+          name: seg.name,
+          value: seg.value,
+          itemStyle: { color: modelColor(seg.name) },
+        })),
+    [positiveSegments, legend.selected]
+  );
+
+  const visibleTotal = useMemo(
+    () => positiveSegments.filter((seg) => legend.selected.has(seg.name)).reduce((sum, s) => sum + s.value, 0),
+    [positiveSegments, legend.selected]
+  );
+
+  const onEvents = useMemo(
+    () => ({
+      mouseover: (e: { componentType: string; name?: string }) => {
+        if (e.componentType === "series" && e.name) {
+          legend.setActive(e.name);
+        }
       },
-      formatter: (params: { name: string; value: number; percent: number }) =>
-        `${params.name}: ${format(params.value)}（${params.percent.toFixed(1)}%）`,
-    },
-    legend: {
-      show: false,
-    },
-    series: [
-      {
-        type: "pie" as const,
-        radius: ["52%", "78%"],
-        center: ["50%", "50%"],
-        avoidLabelOverlap: false,
-        padAngle: nonZeroCount > 1 ? 2 : 0,
-        itemStyle: {
-          borderRadius: 0,
+      mouseout: () => {
+        legend.setActive(null);
+      },
+    }),
+    [legend]
+  );
+
+  const option = useMemo(
+    () => ({
+      tooltip: {
+        trigger: "item" as const,
+        backgroundColor: colors.surface,
+        borderColor: colors.lineStrong,
+        borderWidth: 1,
+        textStyle: {
+          color: colors.fg,
+          fontSize: 13,
         },
-        label: {
-          show: true,
-          position: "center" as const,
-          formatter: () => `{total|${format(total)}}\n{label|${centerLabel}}`,
-          rich: {
-            total: {
-              fontSize: 16,
-              fontWeight: 600,
-              color: colors.fg,
-              lineHeight: 24,
-            },
-            label: {
-              fontSize: 12,
-              color: colors.fgMuted,
-              lineHeight: 18,
-            },
-          },
+        formatter: (params: TooltipParam) => {
+          const isActive = params.name === legend.activeName;
+          const seriesColor = modelColor(params.name);
+          const opacity = isActive ? 1 : 0.55;
+          const fontWeight = isActive ? 700 : 400;
+          const nameColor = isActive ? seriesColor : colors.fgSecondary;
+          const valueColor = isActive ? seriesColor : colors.fgMuted;
+          return (
+            `<div style="display:flex;align-items:center;gap:8px;opacity:${opacity};font-weight:${fontWeight};font-size:13px;">` +
+            `<span style="flex:none">${params.marker}</span>` +
+            `<span style="flex:1 1 auto;color:${nameColor}">${params.name}</span>` +
+            `<span style="flex:none;color:${valueColor};font-weight:${fontWeight}">${format(params.value)}（${params.percent.toFixed(1)}%）</span>` +
+            `</div>`
+          );
         },
-        emphasis: {
+      },
+      legend: {
+        show: false,
+      },
+      series: [
+        {
+          type: "pie" as const,
+          radius: ["48%", "72%"],
+          center: ["50%", "50%"],
+          avoidLabelOverlap: false,
+          padAngle: data.length > 1 ? 2 : 0,
           label: {
             show: true,
-          },
-          scaleSize: 2,
-        },
-        data: segments
-          .filter((seg) => seg.value > 0)
-          .map((seg) => ({
-            name: seg.name,
-            value: seg.value,
-            itemStyle: {
-              color: modelColor(seg.name),
+            position: "center" as const,
+            formatter: () => `{total|${format(visibleTotal)}}\n{label|${centerLabel}}`,
+            rich: {
+              total: {
+                fontSize: 16,
+                fontWeight: 600,
+                color: colors.fg,
+                lineHeight: 24,
+              },
+              label: {
+                fontSize: 12,
+                color: colors.fgMuted,
+                lineHeight: 18,
+              },
             },
-          })),
-      },
-    ],
-  };
+          },
+          emphasis: {
+            label: { show: true },
+            scaleSize: 2,
+          },
+          data,
+        },
+      ],
+    }),
+    [colors, centerLabel, data, format, visibleTotal, legend.activeName]
+  );
+
+  const legendItems = useMemo(
+    () =>
+      positiveSegments.map((seg) => ({
+        name: seg.name,
+        color: modelColor(seg.name),
+        share: total > 0 ? (seg.value / total) * 100 : 0,
+      })),
+    [positiveSegments, total]
+  );
 
   return (
-    <div className={cn("flex items-center gap-6", className)}>
-      <div className="shrink-0" style={{ width: size, height: size }}>
+    <figure className={cn("m-0 flex flex-col items-center", className)}>
+      <div className="w-full rounded-lg border border-line/60 bg-canvas/50">
         <ReactEChartsCore
+          ref={chartComponentRef}
+          key={theme}
           echarts={echarts}
           option={option}
-          style={{ width: size, height: size }}
+          style={{ width: "100%", height: size }}
           opts={{ renderer: "canvas" }}
+          onEvents={onEvents}
           notMerge
         />
       </div>
 
-      <ul className="min-w-0 flex-1 space-y-2.5">
-        {segments.map((seg) => {
-          const ratio = total > 0 ? (seg.value / total) * 100 : 0;
-          return (
-            <li key={seg.name} className="flex items-center gap-2 text-[13px]">
-              <span
-                className="h-2.5 w-2.5 shrink-0 rounded-[3px]"
-                style={{ backgroundColor: modelColor(seg.name) }}
-              />
-              <span className="min-w-0 flex-1 truncate text-fg-secondary">{seg.name}</span>
-              <span className="tnum text-fg-muted">{ratio.toFixed(1)}%</span>
-              <span className="tnum w-16 text-right font-medium text-fg">{format(seg.value)}</span>
-            </li>
-          );
-        })}
-      </ul>
-    </div>
+      <ChartLegend
+        items={legendItems}
+        selected={legend.selected}
+        activeName={legend.activeName}
+        onToggle={handleLegendToggle}
+        onMouseEnter={handleLegendEnter}
+        onMouseLeave={handleLegendLeave}
+        className="justify-center"
+      />
+    </figure>
   );
 }
