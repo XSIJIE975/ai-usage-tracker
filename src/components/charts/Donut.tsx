@@ -3,7 +3,7 @@ import * as echarts from "echarts/core";
 import { PieChart } from "echarts/charts";
 import { TooltipComponent, LegendComponent } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
-import { modelColorIndex, chartHexColor, getThemeColors } from "./palette";
+import { modelColor, getThemeColors } from "./palette";
 import { cn } from "../../lib/utils";
 
 echarts.use([PieChart, TooltipComponent, LegendComponent, CanvasRenderer]);
@@ -11,11 +11,7 @@ echarts.use([PieChart, TooltipComponent, LegendComponent, CanvasRenderer]);
 export interface DonutSegment {
   name: string;
   value: number;
-  /** 颜色索引（0..5 对应 chart-1..6），缺省按模型名全局映射 */
-  color?: number;
 }
-
-const colorOf = (s: DonutSegment, fallback: number) => s.color ?? modelColorIndex(s.name) ?? fallback;
 
 /**
  * 环形占比图（ECharts 实现）：
@@ -36,6 +32,7 @@ export function Donut({
 }) {
   const total = segments.reduce((sum, s) => sum + s.value, 0);
   const colors = getThemeColors();
+  const nonZeroCount = segments.filter((s) => s.value > 0).length;
 
   const option = {
     tooltip: {
@@ -58,7 +55,7 @@ export function Donut({
         radius: ["52%", "78%"],
         center: ["50%", "50%"],
         avoidLabelOverlap: false,
-        padAngle: segments.length > 1 ? 1 : 0,
+        padAngle: nonZeroCount > 1 ? 2 : 0,
         itemStyle: {
           borderRadius: 0,
         },
@@ -70,12 +67,12 @@ export function Donut({
             total: {
               fontSize: 16,
               fontWeight: 600,
-              color: "var(--color-fg)",
+              color: colors.fg,
               lineHeight: 24,
             },
             label: {
               fontSize: 12,
-              color: "var(--color-fg-muted)",
+              color: colors.fgMuted,
               lineHeight: 18,
             },
           },
@@ -86,19 +83,21 @@ export function Donut({
           },
           scaleSize: 2,
         },
-        data: segments.map((seg, i) => ({
-          name: seg.name,
-          value: seg.value,
-          itemStyle: {
-            color: chartHexColor(colorOf(seg, i)),
-          },
-        })),
+        data: segments
+          .filter((seg) => seg.value > 0)
+          .map((seg) => ({
+            name: seg.name,
+            value: seg.value,
+            itemStyle: {
+              color: modelColor(seg.name),
+            },
+          })),
       },
     ],
   };
 
   return (
-    <div className={cn("flex items-center gap-5", className)}>
+    <div className={cn("flex items-center gap-6", className)}>
       <div className="shrink-0" style={{ width: size, height: size }}>
         <ReactEChartsCore
           echarts={echarts}
@@ -109,14 +108,14 @@ export function Donut({
         />
       </div>
 
-      <ul className="min-w-0 flex-1 space-y-2">
-        {segments.map((seg, i) => {
+      <ul className="min-w-0 flex-1 space-y-2.5">
+        {segments.map((seg) => {
           const ratio = total > 0 ? (seg.value / total) * 100 : 0;
           return (
             <li key={seg.name} className="flex items-center gap-2 text-[13px]">
               <span
                 className="h-2.5 w-2.5 shrink-0 rounded-[3px]"
-                style={{ backgroundColor: chartHexColor(colorOf(seg, i)) }}
+                style={{ backgroundColor: modelColor(seg.name) }}
               />
               <span className="min-w-0 flex-1 truncate text-fg-secondary">{seg.name}</span>
               <span className="tnum text-fg-muted">{ratio.toFixed(1)}%</span>

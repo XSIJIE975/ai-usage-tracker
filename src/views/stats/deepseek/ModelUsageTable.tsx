@@ -1,6 +1,6 @@
 import { DataTable, THead, TBody, Th, Tr, Td } from "../../../components/ui/data-table";
-import { CHART_BGS, modelColorIndex } from "../../../components/charts/palette";
-import { formatInt, cn } from "../../../lib/utils";
+import { modelColor } from "../../../components/charts/palette";
+import { formatInt } from "../../../lib/utils";
 import type { ModelUsage } from "./usage-aggregation";
 
 /** 缓存命中率 = 命中 / (命中 + 未命中)，两位小数百分数；分母为 0 显示 "-"。 */
@@ -29,12 +29,12 @@ export function ModelUsageTable({ models, totalTokens }: { models: ModelUsage[];
       <TBody>
         {models.map((model) => {
           const share = totalTokens > 0 ? (model.totalTokens / totalTokens) * 100 : 0;
-          const colorIdx = modelColorIndex(model.model);
+          const color = modelColor(model.model);
           return (
             <Tr key={model.model}>
               <Td>
                 <span className="inline-flex items-center gap-2">
-                  <span className={cn("h-2.5 w-2.5 shrink-0 rounded-[3px]", CHART_BGS[colorIdx])} />
+                  <span className="h-2.5 w-2.5 shrink-0 rounded-[3px]" style={{ backgroundColor: color }} />
                   <span className="font-mono text-xs">{model.model}</span>
                 </span>
               </Td>
@@ -49,8 +49,8 @@ export function ModelUsageTable({ models, totalTokens }: { models: ModelUsage[];
                 <span className="inline-flex items-center justify-end gap-2">
                   <span className="h-1.5 w-16 overflow-hidden rounded-full bg-surface-2">
                     <span
-                      className={cn("block h-full rounded-full", CHART_BGS[colorIdx])}
-                      style={{ width: `${Math.max(share, 2)}%` }}
+                      className="block h-full rounded-full"
+                      style={{ backgroundColor: color, width: `${Math.max(share, 2)}%` }}
                     />
                   </span>
                   <span className="tnum w-12 text-fg-muted">{share.toFixed(1)}%</span>

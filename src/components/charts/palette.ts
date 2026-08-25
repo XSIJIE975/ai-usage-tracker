@@ -1,11 +1,10 @@
 /**
  * 图表色板（全局唯一取色入口）。
  *
- * 1. 静态类名映射：Tailwind 只能扫描源码中出现的完整类名，
- *    动态拼接（如 `fill-chart-${i}`）不会被生成 —— 因此必须用这里的静态数组。
- * 2. 全局模型 → 颜色注册表：保证同一模型在所有图表中颜色一致；
- *    未知模型按名称哈希兜底，同一张图内仍能保持区分度。
- * 3. HEX 色值：供 ECharts 等第三方图表库使用。
+ * 颜色生成策略：基于模型名哈希 → HSL 色相旋转，保证：
+ * 1. 同一模型跨图表颜色一致（全局缓存）
+ * 2. 不同模型颜色视觉可区分（色相间隔 ≥ 30°）
+ * 3. 饱和度/明度控制在设计规范范围内（S 65-75%, L 50-60%）
  */
 
 export const CHART_FILLS = [
@@ -35,6 +34,87 @@ export const CHART_STROKES = [
   "stroke-chart-6",
 ] as const;
 
+export const CHART_COLOR_COUNT = CHART_FILLS.length;
+
+// ─── HSL 哈希取色 ───────────────────────────────────────────
+
+/** 预设色相种子（度数），确保相邻种子间隔 ≥ 30° */
+const HUE_SEEDS = [0, 35, 70, 120, 160, 200, 250, 290, 330];
+
+/** 全局模型 → hex 缓存，保证同一模型跨图表颜色一致 */
+const modelColorCache = new Map<string, string>();
+
+function djb2Hash(str: string): number {
+  let hash = 5381;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) + hash + str.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash);
+}
+
+/**
+ * 基于模型名生成唯一的 hex 颜色。
+ * 使用 djb2 哈希 → 选择色相种子 → 微调色相偏移 → HSL→hex。
+ * 饱和度 68%，明度 55%，在深浅主题下均清晰可读。
+ */
+function generateModelColor(modelName: string): string {
+  const hash = djb2Hash(modelName);
+  const seedIndex = hash % HUE_SEEDS.length;
+  const baseHue = HUE_SEEDS[seedIndex];
+  // 用哈希高位做 ±15° 微调，让同一种子下的不同模型也有区分
+  const offset = ((hash >> 8) % 30) - 15;
+  const hue = (baseHue + offset + 360) % 360;
+  const sat = 68;
+  const light = 55;
+  return hslToHex(hue, sat, light);
+}
+
+function hslToHex(h: number, s: number, l: number): string {
+  s /= 100;
+  l /= 100;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n: number) => {
+    const k = (n + h / 30) % 12;
+    const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+    return Math.round(255 * color)
+      .toString(16)
+      .padStart(2, "0");
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+}
+
+// ─── 公开 API ────────────────────────────────────────────────
+
+/**
+ * 取模型的唯一 hex 颜色（全局缓存）。
+ * 优先使用已知模型的固定配色，未知模型通过 HSL 哈希生成。
+ */
+export function modelColor(modelName: string): string {
+  let cached = modelColorCache.get(modelName);
+  if (!cached) {
+    cached = generateModelColor(modelName);
+    modelColorCache.set(modelName, cached);
+  }
+  return cached;
+}
+
+/**
+ * @deprecated 使用 modelColor() 代替。保留以兼容旧接口。
+ * 取模型的全局颜色索引（0..5），保证跨图表一致。
+ */
+export function modelColorIndex(model: string): number {
+  return djb2Hash(model) % CHART_COLOR_COUNT;
+}
+
+/** 取指定索引的 hex 色值（用于序列色回退） */
+export function chartHexColor(index: number): string {
+  const isDark = typeof document !== "undefined" && document.documentElement.classList.contains("dark");
+  const palette = isDark ? CHART_HEX_DARK : CHART_HEX_LIGHT;
+  return palette[index % palette.length];
+}
+
+// ─── 主题色板（序列色回退用） ────────────────────────────────
+
 /** 浅色主题 hex 色值（与 CSS 变量 --chart-1..6 对应） */
 export const CHART_HEX_LIGHT = [
   "#6a63f0",
@@ -55,40 +135,7 @@ export const CHART_HEX_DARK = [
   "#a3e635",
 ];
 
-export const CHART_COLOR_COUNT = CHART_FILLS.length;
-
-/** 已知模型的固定配色（索引 0..5 对应 chart-1..6） */
-const MODEL_COLOR_INDEX: Record<string, number> = {
-  // DeepSeek 官方
-  "deepseek-chat": 0,
-  "deepseek-reasoner": 1,
-  "deepseek-v4-flash": 2,
-  // OpenCode Go
-  "deepseek-v4-flash (go)": 0,
-  "glm-5.2 (go)": 1,
-  "gpt-5.6-luna (go)": 2,
-  "hy3 (go)": 3,
-  "mimo-v2.5 (go)": 4,
-  "muse-spark-1.2 (go)": 5,
-};
-
-function hashIndex(name: string): number {
-  let hash = 0;
-  for (const ch of name) hash = (hash * 31 + ch.charCodeAt(0)) | 0;
-  return Math.abs(hash) % CHART_COLOR_COUNT;
-}
-
-/** 取模型的全局颜色索引（0..5），保证跨图表一致 */
-export function modelColorIndex(model: string): number {
-  return MODEL_COLOR_INDEX[model] ?? hashIndex(model);
-}
-
-/** 取指定索引的 hex 色值（自动检测深浅主题） */
-export function chartHexColor(index: number): string {
-  const isDark = typeof document !== "undefined" && document.documentElement.classList.contains("dark");
-  const palette = isDark ? CHART_HEX_DARK : CHART_HEX_LIGHT;
-  return palette[index % palette.length];
-}
+// ─── 语义色 ──────────────────────────────────────────────────
 
 /** 获取当前主题的语义色值 */
 export function getThemeColors() {

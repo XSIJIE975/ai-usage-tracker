@@ -1,6 +1,6 @@
 import { DataTable, THead, TBody, Th, Tr, Td } from "../../../components/ui/data-table";
-import { CHART_BGS, modelColorIndex } from "../../../components/charts/palette";
-import { formatInt, cn } from "../../../lib/utils";
+import { modelColor } from "../../../components/charts/palette";
+import { formatInt } from "../../../lib/utils";
 import type { OpenCodeUsageRecord } from "../../../providers/opencode-stats";
 
 /** 表格内 token 数前的迷你柱状 glyph（参照产品截图形态） */
@@ -44,7 +44,8 @@ export function UsageHistoryTable({ records }: { records: OpenCodeUsageRecord[] 
             <Td>
               <span className="inline-flex items-center gap-2">
                 <span
-                  className={cn("h-2.5 w-2.5 shrink-0 rounded-[3px]", CHART_BGS[modelColorIndex(record.model)])}
+                  className="h-2.5 w-2.5 shrink-0 rounded-[3px]"
+                  style={{ backgroundColor: modelColor(record.model) }}
                 />
                 <span className="font-mono text-xs">{record.model}</span>
               </span>

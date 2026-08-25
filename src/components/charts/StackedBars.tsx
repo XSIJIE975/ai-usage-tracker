@@ -3,7 +3,7 @@ import * as echarts from "echarts/core";
 import { BarChart } from "echarts/charts";
 import { TooltipComponent, GridComponent, LegendComponent } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
-import { modelColorIndex, chartHexColor, getThemeColors } from "./palette";
+import { modelColor, getThemeColors } from "./palette";
 import { cn } from "../../lib/utils";
 
 echarts.use([BarChart, TooltipComponent, GridComponent, LegendComponent, CanvasRenderer]);
@@ -11,11 +11,7 @@ echarts.use([BarChart, TooltipComponent, GridComponent, LegendComponent, CanvasR
 export interface StackedSeries {
   name: string;
   values: number[];
-  /** 颜色索引（0..5 对应 chart-1..6），缺省按模型名全局映射 */
-  color?: number;
 }
-
-const colorOf = (s: StackedSeries, fallback: number) => s.color ?? modelColorIndex(s.name) ?? fallback;
 
 /**
  * 堆叠柱状图（ECharts 实现）：
@@ -63,7 +59,7 @@ export function StackedBars({
       bottom: 0,
       itemWidth: 10,
       itemHeight: 10,
-      itemGap: 16,
+      itemGap: 20,
       textStyle: {
         fontSize: 12,
         color: colors.fgMuted,
@@ -73,7 +69,7 @@ export function StackedBars({
       left: 46,
       right: 8,
       top: 12,
-      bottom: 36,
+      bottom: 48,
       containLabel: false,
     },
     xAxis: {
@@ -113,7 +109,7 @@ export function StackedBars({
       stack: "total",
       barMaxWidth: 64,
       itemStyle: {
-        color: chartHexColor(colorOf(s, si)),
+        color: modelColor(s.name),
         borderRadius: si === series.length - 1 ? [3, 3, 0, 0] : [0, 0, 0, 0],
       },
       emphasis: {
