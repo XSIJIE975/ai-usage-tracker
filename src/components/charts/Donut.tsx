@@ -3,7 +3,7 @@ import * as echarts from "echarts/core";
 import { PieChart } from "echarts/charts";
 import { TooltipComponent, LegendComponent } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
-import { modelColorIndex, chartHexColor } from "./palette";
+import { modelColorIndex, chartHexColor, getThemeColors } from "./palette";
 import { cn } from "../../lib/utils";
 
 echarts.use([PieChart, TooltipComponent, LegendComponent, CanvasRenderer]);
@@ -35,10 +35,17 @@ export function Donut({
   className?: string;
 }) {
   const total = segments.reduce((sum, s) => sum + s.value, 0);
+  const colors = getThemeColors();
 
   const option = {
     tooltip: {
       trigger: "item" as const,
+      backgroundColor: colors.surface,
+      borderColor: colors.lineStrong,
+      textStyle: {
+        color: colors.fg,
+        fontSize: 13,
+      },
       formatter: (params: { name: string; value: number; percent: number }) =>
         `${params.name}: ${format(params.value)}（${params.percent.toFixed(1)}%）`,
     },

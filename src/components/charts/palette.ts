@@ -35,9 +35,9 @@ export const CHART_STROKES = [
   "stroke-chart-6",
 ] as const;
 
-/** 深色主题 hex 色值（与 CSS 变量 --chart-1..6 对应） */
-export const CHART_HEX_DARK = [
-  "#818cf8",
+/** 浅色主题 hex 色值（与 CSS 变量 --chart-1..6 对应） */
+export const CHART_HEX_LIGHT = [
+  "#6a63f0",
   "#0d9488",
   "#d97706",
   "#e11d48",
@@ -45,9 +45,9 @@ export const CHART_HEX_DARK = [
   "#65a30d",
 ];
 
-/** 浅色主题 hex 色值 */
-export const CHART_HEX_LIGHT = [
-  "#a5b4fc",
+/** 深色主题 hex 色值（与 CSS 变量 --chart-1..6 对应） */
+export const CHART_HEX_DARK = [
+  "#8183f8",
   "#2dd4bf",
   "#fbbf24",
   "#fb7185",
@@ -88,4 +88,16 @@ export function chartHexColor(index: number): string {
   const isDark = typeof document !== "undefined" && document.documentElement.classList.contains("dark");
   const palette = isDark ? CHART_HEX_DARK : CHART_HEX_LIGHT;
   return palette[index % palette.length];
+}
+
+/** 获取当前主题的语义色值 */
+export function getThemeColors() {
+  const isDark = typeof document !== "undefined" && document.documentElement.classList.contains("dark");
+  return {
+    fg: isDark ? "#e9ebf2" : "#1a1d2e",
+    fgMuted: isDark ? "#697183" : "#697183",
+    line: isDark ? "#262b38" : "#e2e4ea",
+    lineStrong: isDark ? "#363d4e" : "#c8cad4",
+    surface: isDark ? "#171a23" : "#ffffff",
+  };
 }

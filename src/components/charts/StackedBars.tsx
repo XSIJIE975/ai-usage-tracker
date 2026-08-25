@@ -3,7 +3,7 @@ import * as echarts from "echarts/core";
 import { BarChart } from "echarts/charts";
 import { TooltipComponent, GridComponent, LegendComponent } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
-import { modelColorIndex, chartHexColor } from "./palette";
+import { modelColorIndex, chartHexColor, getThemeColors } from "./palette";
 import { cn } from "../../lib/utils";
 
 echarts.use([BarChart, TooltipComponent, GridComponent, LegendComponent, CanvasRenderer]);
@@ -37,9 +37,17 @@ export function StackedBars({
   height?: number;
   className?: string;
 }) {
+  const colors = getThemeColors();
+
   const option = {
     tooltip: {
       trigger: "axis" as const,
+      backgroundColor: colors.surface,
+      borderColor: colors.lineStrong,
+      textStyle: {
+        color: colors.fg,
+        fontSize: 13,
+      },
       axisPointer: {
         type: "shadow" as const,
       },
@@ -58,7 +66,7 @@ export function StackedBars({
       itemGap: 16,
       textStyle: {
         fontSize: 12,
-        color: "var(--color-fg-muted)",
+        color: colors.fgMuted,
       },
     },
     grid: {
@@ -73,13 +81,13 @@ export function StackedBars({
       data: labels,
       axisLine: {
         lineStyle: {
-          color: "var(--color-line-strong)",
+          color: colors.lineStrong,
         },
       },
       axisTick: { show: false },
       axisLabel: {
         fontSize: 10,
-        color: "var(--color-fg-muted)",
+        color: colors.fgMuted,
         interval: Math.max(0, Math.floor(labels.length / 10) - 1),
       },
     },
@@ -90,12 +98,12 @@ export function StackedBars({
       axisTick: { show: false },
       splitLine: {
         lineStyle: {
-          color: "var(--color-line)",
+          color: colors.line,
         },
       },
       axisLabel: {
         fontSize: 10,
-        color: "var(--color-fg-muted)",
+        color: colors.fgMuted,
         formatter: (v: number) => yFormat(v),
       },
     },
