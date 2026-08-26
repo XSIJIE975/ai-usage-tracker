@@ -34,6 +34,11 @@ interface TooltipParam {
  * - 图表交互：监听 ECharts 的 mouseover/mouseout，同步 activeName，让 tooltip 与图表原生 emphasis 高亮一致。
  * - tooltip：当前 active 扇区的名称与数值均使用该扇区自身颜色高亮；非 active 项整体变暗。
  * - 中心合计随显隐状态实时更新。
+ *
+ * ★ 架构铁律（与 StackedBars 同款）：hover 绝不能触发 setOption——
+ *   1. getThemeColors() 每次调用返回新对象，必须用 useMemo([theme]) 缓存；
+ *   2. option useMemo 依赖不含 legend.activeName，tooltip formatter 经 activeNameRef 运行时读取。
+ *   任何 setOption(notMerge) 都会销毁重建图形元素，使 ECharts 丢失 mouseout、emphasis 残留。
  */
 export function Donut({
   segments,
@@ -49,13 +54,18 @@ export function Donut({
   className?: string;
 }) {
   const theme = useEffectiveTheme();
-  const colors = getThemeColors();
+  // 注意：getThemeColors() 每次调用都返回新对象，必须按 theme 缓存，否则 option 每次 render 重算。
+  const colors = useMemo(() => getThemeColors(), [theme]);
   const chartComponentRef = useRef<ReactEChartsCore>(null);
 
   const total = segments.reduce((sum, s) => sum + s.value, 0);
   const positiveSegments = useMemo(() => segments.filter((seg) => seg.value > 0), [segments]);
   const allNames = useMemo(() => positiveSegments.map((s) => s.name), [positiveSegments]);
   const legend = useChartLegend(allNames);
+
+  // tooltip formatter 运行时读取的 activeName（见顶部架构铁律第 2 条）
+  const activeNameRef = useRef<string | null>(null);
+  activeNameRef.current = legend.activeName;
 
   const handleLegendToggle = useCallback(
     (name: string) => {
@@ -92,18 +102,24 @@ export function Donut({
     [positiveSegments, legend.selected]
   );
 
+  // onEvents 只同步 React activeName；deps 只引用 useChartLegend 的稳定回调，避免 echarts-for-react
+  // 在每次 setActive 后无谓 unbind/bind 事件。
+  const handleChartMouseOver = useCallback(
+    (e: { componentType: string; name?: string }) => {
+      if (e.componentType === "series" && e.name) {
+        legend.setActive(e.name);
+      }
+    },
+    [legend.setActive]
+  );
+
+  const handleChartMouseOut = useCallback(() => {
+    legend.setActive(null);
+  }, [legend.setActive]);
+
   const onEvents = useMemo(
-    () => ({
-      mouseover: (e: { componentType: string; name?: string }) => {
-        if (e.componentType === "series" && e.name) {
-          legend.setActive(e.name);
-        }
-      },
-      mouseout: () => {
-        legend.setActive(null);
-      },
-    }),
-    [legend]
+    () => ({ mouseover: handleChartMouseOver, mouseout: handleChartMouseOut }),
+    [handleChartMouseOver, handleChartMouseOut]
   );
 
   const option = useMemo(
@@ -118,7 +134,9 @@ export function Donut({
           fontSize: 13,
         },
         formatter: (params: TooltipParam) => {
-          const isActive = params.name === legend.activeName;
+          // 运行时读取最新 activeName，避免 activeName 进入 option 依赖导致 hover 触发 setOption
+          const activeName = activeNameRef.current;
+          const isActive = params.name === activeName;
           const seriesColor = modelColor(params.name);
           const opacity = isActive ? 1 : 0.55;
           const fontWeight = isActive ? 700 : 400;
@@ -169,7 +187,8 @@ export function Donut({
         },
       ],
     }),
-    [colors, centerLabel, data, format, visibleTotal, legend.activeName]
+    // 依赖刻意不含 legend.activeName：hover 不触发 option 重算 → 不触发 setOption → ECharts 状态机不受干扰
+    [colors, centerLabel, data, format, visibleTotal]
   );
 
   const legendItems = useMemo(
