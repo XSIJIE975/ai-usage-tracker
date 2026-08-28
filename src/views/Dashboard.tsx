@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { AlertCircle, Gauge, LayoutGrid, PieChart, RefreshCw, Settings, X } from "lucide-react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useAppStore } from "../store/useAppStore";
+import { providerModules } from "../providers";
 import { Button } from "../components/ui/button";
 import { Segmented } from "../components/ui/segmented";
 import { EmptyState } from "../components/ui/empty-state";
@@ -59,17 +60,19 @@ export function Dashboard() {
       return;
     }
     if (!settings.refreshEnabled || settings.refreshIntervalMinutes <= 0) return;
+    if (!providerModules.some((provider) => settings.providers[provider.id])) return;
 
     const elapsed = Date.now() - lastRefreshedAt;
     const delay = Math.max(0, settings.refreshIntervalMinutes * 60_000 - elapsed);
     const timer = window.setTimeout(() => {
-      void refreshAll(false);
+      void refreshAll(false, { auto: true });
     }, delay);
     return () => window.clearTimeout(timer);
   }, [
     vaultStatus?.unlocked,
     settings.refreshEnabled,
     settings.refreshIntervalMinutes,
+    settings.providers,
     lastRefreshedAt,
     refreshAll,
   ]);

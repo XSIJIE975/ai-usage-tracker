@@ -117,9 +117,11 @@
 - 使用历史等大数据量表格必须设置 `maxHeight`，避免整页滚动。
 - 分页使用 `Pagination` 组件（上一页/页码/下一页），替代"加载更多"按钮。
 
-### 统计页自动刷新
+### 自动刷新（两级门控）
 
-- 统计页通过 `useAutoRefresh(callback)` 接入全局 `settings.refreshEnabled / refreshIntervalMinutes`。
+- 自动刷新由两级开关控制：**自动刷新总开关**（设置 → 通用）是总闸；**供应商自动刷新**（各供应商设置页签）决定单个供应商是否参与定时刷新，受总开关门控。
+- 总览定时刷新走 `refreshAll(false, { auto: true })`，按供应商开关过滤；手动「刷新」始终拉取所有供应商。
+- 统计页通过 `useAutoRefresh(callback, providerId)` 接入，同时读取总开关、刷新间隔与该供应商的开关。
 - 刷新时保留旧数据，叠加 `RefreshOverlay`（半透明遮罩 + 旋转图标），不整体替换区域。
 - `useStatsFetch` 返回 `{ state, isRefreshing }`：首次加载走全屏 loading；已有数据刷新走局部 overlay。
 
@@ -223,6 +225,16 @@
   重新生成全尺寸：`node scripts/generate-icons.mjs`（输出 PNG 16–512、ICO、Store 方标）。
 - **界面图标**：统一使用 lucide-react，`strokeWidth` 默认 2，尺寸只用 `h-3.5 w-3.5`（小）/ `h-4 w-4`（中）/ `h-5 w-5`（大）。
 - **状态指示**：成功/警告/危险图标颜色用对应状态 Token，不用灰色表达状态。
+
+## 6.8 设置页模块约定 `views/settings/`
+
+- `SettingsView` 顶层用 `Tabs`：「通用」+ 每供应商一个页签（图标与命名同统计页）。  
+  新增供应商 = 注册 Tab + 新建 `<Provider>Settings.tsx`，复用 `ProviderSettingsProps` 与 `ProviderAutoRefresh`。
+- 通用页签承载全局设置：自动刷新总开关、刷新间隔（预设档位 `Select`，所有供应商共用）、外观；  
+  供应商页签承载该家凭据表单 + 供应商自动刷新开关。
+- 供应商自动刷新受总开关门控：总开关关闭时禁用置灰（保留开关值），提示可点击跳转「通用」页签。
+- 开关类设置即时保存并显示短暂「已保存」反馈（`useSaveFlash` / `SavedHint`）；凭据保存保留显式按钮。
+- 页签标签带凭据配置状态点：已配置成功色、未配置警告色；凭据库未解锁时不显示。
 
 ## 7. 动效
 

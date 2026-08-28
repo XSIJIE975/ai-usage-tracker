@@ -7,6 +7,7 @@ interface SecretFieldProps {
   id: string;
   value: string;
   placeholder?: string;
+  disabled?: boolean;
   onChange: (value: string) => void;
   onClear: () => void;
   clearDisabled?: boolean;
@@ -16,6 +17,7 @@ export function SecretField({
   id,
   value,
   placeholder,
+  disabled = false,
   onChange,
   onClear,
   clearDisabled = false,
@@ -29,6 +31,7 @@ export function SecretField({
         type={visible ? "text" : "password"}
         value={value}
         autoComplete="off"
+        disabled={disabled}
         className="pr-16 font-mono text-[13px]"
         placeholder={placeholder}
         onChange={(event) => onChange(event.currentTarget.value)}
@@ -36,7 +39,8 @@ export function SecretField({
       <button
         type="button"
         onClick={() => setVisible((current) => !current)}
-        className="absolute right-8 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-surface-2 hover:text-fg"
+        disabled={disabled}
+        className="absolute right-8 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-surface-2 hover:text-fg disabled:pointer-events-none disabled:opacity-40"
         title={visible ? "隐藏" : "显示"}
         aria-label={visible ? "隐藏" : "显示"}
       >
@@ -45,7 +49,7 @@ export function SecretField({
       <button
         type="button"
         onClick={onClear}
-        disabled={clearDisabled}
+        disabled={disabled || clearDisabled}
         className="absolute right-1 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-danger-soft hover:text-danger-soft-fg disabled:pointer-events-none disabled:opacity-40"
         title="清除"
         aria-label="清除"

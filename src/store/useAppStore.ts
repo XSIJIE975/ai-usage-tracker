@@ -76,7 +76,7 @@ interface AppStore {
   error: string | null;
   lastRefreshedAt: number;
   loadInitial: () => Promise<void>;
-  refreshAll: (showLoading?: boolean) => Promise<void>;
+  refreshAll: (showLoading?: boolean, options?: { auto?: boolean }) => Promise<void>;
   refreshProvider: (providerId: string) => Promise<void>;
   saveSettings: (settings: AppSettings) => Promise<void>;
   setVaultStatus: (status: VaultStatus) => void;
@@ -135,7 +135,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   },
 
-  refreshAll: async (showLoading = true) => {
+  refreshAll: async (showLoading = true, options) => {
     if (showLoading) set({ loading: true, error: null });
     const { settings, vaultStatus } = get();
     const blockedReason = vaultBlockedReason(vaultStatus);
@@ -146,7 +146,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
     const results: ProviderSnapshot[] = [];
     for (const provider of providerModules) {
-      if (!settings.providers[provider.id]) continue;
+      if (options?.auto && !settings.providers[provider.id]) continue;
       try {
         const snapshot = await provider.fetch();
         results.push(snapshot);

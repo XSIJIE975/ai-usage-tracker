@@ -49,7 +49,7 @@ export function OpenCodeStats() {
   useAutoRefresh(() => {
     monthlyCache.invalidate(`${month.year}-${month.month}`);
     setRefreshTick((tick) => tick + 1);
-  });
+  }, "opencode-go");
 
   const { state: monthly, isRefreshing } = useStatsFetch(
     monthlyCache,

@@ -68,7 +68,7 @@ export function DeepSeekStats() {
   };
 
   // 接入全局自动刷新
-  useAutoRefresh(refresh);
+  useAutoRefresh(refresh, "deepseek");
 
   const bundle = state.kind === "ready" ? state.data : null;
   const filteredRows = useMemo(() => {
