@@ -30,4 +30,5 @@ aes-gcm = "0.10"
 rand = "0.8"
 base64 = "0.22"
 zeroize = "1"
+keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service"] }
 

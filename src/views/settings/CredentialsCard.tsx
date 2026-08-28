@@ -12,10 +12,11 @@ import { normalizeOpenCodeAuthCookie } from "../../lib/utils";
 
 interface CredentialsCardProps {
   unlocked: boolean;
+  notice?: string;
   onChanged: () => Promise<void>;
 }
 
-export function CredentialsCard({ unlocked, onChanged }: CredentialsCardProps) {
+export function CredentialsCard({ unlocked, notice, onChanged }: CredentialsCardProps) {
   const [credentialStatus, setCredentialStatus] = useState<CredentialStatus | null>(null);
   const [deepseekKey, setDeepseekKey] = useState("");
   const [deepseekUserToken, setDeepseekUserToken] = useState("");
@@ -113,6 +114,11 @@ export function CredentialsCard({ unlocked, onChanged }: CredentialsCardProps) {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
+          {notice && (
+            <p className="rounded-md border border-warning/30 bg-warning-soft px-3 py-2 text-[13px] leading-relaxed text-warning-soft-fg">
+              {notice}
+            </p>
+          )}
           <div className="space-y-2.5">
             <div className="flex items-center justify-between">
               <Label htmlFor="deepseekKey">DeepSeek API Key</Label>

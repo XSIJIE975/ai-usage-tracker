@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, RefreshCw } from "lucide-react";
+import { AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
@@ -8,6 +8,7 @@ import { Label } from "../components/ui/label";
 import { Switch } from "../components/ui/switch";
 import { Separator } from "../components/ui/separator";
 import { CredentialsCard } from "./settings/CredentialsCard";
+import { MigrationCard } from "./settings/MigrationCard";
 import { AppearanceCard } from "./settings/AppearanceCard";
 import { formatRefreshLabel } from "../lib/utils";
 
@@ -40,8 +41,22 @@ export function SettingsView() {
         </p>
       )}
 
+      {vaultStatus?.needsMigration && <MigrationCard />}
+
+      {vaultStatus?.keychainLost && (
+        <p className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning-soft px-3 py-2 text-[13px] leading-relaxed text-warning-soft-fg">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          本机设备密钥已丢失（常见于换机、重装系统或重置账户密码），原凭据无法恢复。请在下方重新录入凭据，保存时将重建凭据库。
+        </p>
+      )}
+
       <CredentialsCard
         unlocked={Boolean(vaultStatus?.unlocked)}
+        notice={
+          vaultStatus && !vaultStatus.unlocked && !vaultStatus.keychainLost
+            ? "凭据库待迁移，请先完成上方的一次性迁移，再查看或保存凭据。"
+            : undefined
+        }
         onChanged={() => refreshAll(false)}
       />
 

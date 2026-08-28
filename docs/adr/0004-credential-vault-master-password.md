@@ -1,6 +1,6 @@
 # Use a master-password Credential Vault
 
-Status: accepted
+Status: superseded by ADR-0007
 
 敏感凭据使用应用自研 Vault 保存：主密码通过 Argon2id 派生 AES-256-GCM 密钥，凭据文件只保存加密后的数据，不依赖系统钥匙串。
 

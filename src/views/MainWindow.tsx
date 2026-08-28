@@ -1,12 +1,13 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { AlertCircle } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import { Button } from "../components/ui/button";
-import { VaultScreen } from "./VaultScreen";
+import { MigrationScreen } from "./MigrationScreen";
 import { Dashboard } from "./Dashboard";
 
 export function MainWindow() {
   const { vaultStatus, error, loadInitial } = useAppStore();
+  const [migrationSkipped, setMigrationSkipped] = useState(false);
 
   useEffect(() => {
     void loadInitial();
@@ -32,8 +33,8 @@ export function MainWindow() {
     );
   }
 
-  if (!vaultStatus.initialized || !vaultStatus.unlocked) {
-    return <VaultScreen />;
+  if (vaultStatus.needsMigration && !migrationSkipped) {
+    return <MigrationScreen onSkip={() => setMigrationSkipped(true)} />;
   }
 
   return <Dashboard />;

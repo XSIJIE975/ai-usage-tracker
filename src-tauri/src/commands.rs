@@ -8,9 +8,12 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::{db, AppState};
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VaultStatusResponse {
     pub initialized: bool,
     pub unlocked: bool,
+    pub needs_migration: bool,
+    pub keychain_lost: bool,
 }
 
 #[derive(Serialize)]
@@ -44,41 +47,27 @@ pub struct ProviderResponse {
 #[tauri::command]
 pub fn vault_status(state: State<'_, AppState>) -> VaultStatusResponse {
     let vault = state.vault.lock().expect("vault lock poisoned");
+    let status = vault.state();
     VaultStatusResponse {
-        initialized: vault.exists(),
-        unlocked: vault.is_unlocked(),
+        initialized: status.initialized,
+        unlocked: status.unlocked,
+        needs_migration: status.needs_migration,
+        keychain_lost: status.keychain_lost,
     }
 }
 
 #[tauri::command]
-pub fn vault_init(
+pub fn vault_migrate(
     app: AppHandle,
     state: State<'_, AppState>,
     password: String,
 ) -> Result<(), String> {
-    let mut vault = state.vault.lock().expect("vault lock poisoned");
-    vault.init(&password)?;
+    {
+        let mut vault = state.vault.lock().expect("vault lock poisoned");
+        vault.migrate(&password)?;
+    }
     let _ = app.emit("vault-status-changed", ());
-    Ok(())
-}
-
-#[tauri::command]
-pub fn vault_unlock(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    password: String,
-) -> Result<(), String> {
-    let mut vault = state.vault.lock().expect("vault lock poisoned");
-    vault.unlock(&password)?;
-    let _ = app.emit("vault-status-changed", ());
-    Ok(())
-}
-
-#[tauri::command]
-pub fn vault_lock(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    let mut vault = state.vault.lock().expect("vault lock poisoned");
-    vault.lock();
-    let _ = app.emit("vault-status-changed", ());
+    let _ = app.emit("credentials-changed", ());
     Ok(())
 }
 
@@ -89,6 +78,7 @@ pub fn vault_save_credentials(
     credentials: Value,
 ) -> Result<(), String> {
     let mut vault = state.vault.lock().expect("vault lock poisoned");
+    vault.ensure_unlocked()?;
     let mut current = vault.credentials()?.clone();
     let current_object = current
         .as_object_mut()
@@ -97,6 +87,8 @@ pub fn vault_save_credentials(
         apply_credentials(current_object, input);
     }
     vault.save_credentials(&current)?;
+    drop(vault);
+    let _ = app.emit("vault-status-changed", ());
     let _ = app.emit("credentials-changed", ());
     Ok(())
 }

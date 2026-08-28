@@ -9,7 +9,7 @@ mod db;
 mod vault;
 
 use db::Db;
-use vault::Vault;
+use vault::{KeyringKeyStore, Vault};
 
 pub struct AppState {
     pub vault: Mutex<Vault>,
@@ -24,7 +24,11 @@ pub fn run() {
             let app_data = app.path().app_data_dir()?;
             std::fs::create_dir_all(&app_data)?;
             let db = Db::open(&app_data.join("ai-usage-tracker.db"))?;
-            let vault = Vault::new(app_data.join("vault.json"));
+            let keystore = KeyringKeyStore::new(app.config().identifier.clone());
+            let mut vault = Vault::new(app_data.join("vault.json"), Box::new(keystore));
+            if let Err(error) = vault.open() {
+                eprintln!("Credential Vault 打开失败：{error}");
+            }
             app.manage(AppState {
                 vault: Mutex::new(vault),
                 db: Mutex::new(db),
@@ -47,9 +51,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::vault_status,
-            commands::vault_init,
-            commands::vault_unlock,
-            commands::vault_lock,
+            commands::vault_migrate,
             commands::vault_save_credentials,
             commands::vault_credentials,
             commands::vault_credential_status,

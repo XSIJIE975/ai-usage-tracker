@@ -112,9 +112,16 @@ export function QuickWindow() {
             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-surface-2 text-fg-muted">
               <Lock className="h-5 w-5" />
             </div>
-            <p className="text-[13px] text-fg-secondary">Credential Vault 未解锁</p>
+            <p className="text-[13px] text-fg-secondary">
+              {vaultStatus?.needsMigration ? "凭据库待迁移" : "凭据库不可用"}
+            </p>
+            <p className="text-xs leading-relaxed text-fg-muted">
+              {vaultStatus?.needsMigration
+                ? "打开主窗口完成一次性迁移（最后一次输入旧主密码）"
+                : "打开主窗口，在设置中重新录入凭据"}
+            </p>
             <Button size="sm" onClick={openMain}>
-              打开主窗口解锁
+              打开主窗口
             </Button>
           </div>
         ) : snapshots.length === 0 ? (

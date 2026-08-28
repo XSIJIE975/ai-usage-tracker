@@ -8,6 +8,19 @@ DeepSeek 开放平台网页（platform.deepseek.com）登录后保存在浏览�
 
 `sk-...` 形式的密钥，用于调用 DeepSeek 官方推理 API 与余额查询接口。与 UserToken 是两种不同凭据：API Key 授权程序访问账号的推理能力，UserToken 代表用户本人对开放平台控制台的会话。
 
+## 凭据库
+
+Rust 后端管理的加密存储（实现名 Credential Vault），统一保存 DeepSeek API Key、UserToken 等凭据，前端不接触明文凭据。密文文件保存在应用数据目录下，用设备密钥加密。
+
+## 设备密钥
+
+随机生成的 256 位主加密密钥，由操作系统钥匙串托管（Windows Credential Manager / macOS Keychain / Linux Secret Service），与本机及系统用户绑定。凭据库文件用它加密，复制到另一台机器无法解密。
+_Avoid_：主密钥、机器密钥、机器绑定密钥（它不是从机器派生的，而是随机生成后托管在本机）
+
+## 凭据库迁移
+
+废除主密码后的一次性升级动作：用户最后一次输入旧主密码，程序把旧凭据库解密后用设备密钥重新加密。首次升级启动时引导，跳过后可在设置页补做。
+
 ## 缓存命中率
 
 统计页展示的派生指标：`PROMPT_CACHE_HIT_TOKEN ÷ (PROMPT_CACHE_HIT_TOKEN + PROMPT_CACHE_MISS_TOKEN)`，即输入 Token 中命中提示缓存的占比。用于解释成本差异——DeepSeek 缓存命中的单价远低于未命中。

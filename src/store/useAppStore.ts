@@ -87,6 +87,14 @@ function toProviderSnapshot(payload: ProviderSnapshot): ProviderSnapshot {
   return payload;
 }
 
+function vaultBlockedReason(status: VaultStatus | null): string | null {
+  if (!status) return "凭据库状态未知";
+  if (status.unlocked) return null;
+  if (status.needsMigration) return "凭据库待迁移，请在设置中完成一次性迁移";
+  if (status.keychainLost) return "本机设备密钥丢失，请在设置中重新录入凭据";
+  return "Credential Vault 未解锁";
+}
+
 export const useAppStore = create<AppStore>((set, get) => ({
   vaultStatus: null,
   settings: DEFAULT_SETTINGS,
@@ -130,8 +138,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
   refreshAll: async (showLoading = true) => {
     if (showLoading) set({ loading: true, error: null });
     const { settings, vaultStatus } = get();
-    if (!vaultStatus?.unlocked) {
-      set({ loading: false, error: "Credential Vault 未解锁" });
+    const blockedReason = vaultBlockedReason(vaultStatus);
+    if (blockedReason) {
+      set({ loading: false, error: blockedReason });
       return;
     }
 
@@ -179,8 +188,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
   refreshProvider: async (providerId) => {
     const provider = providerModules.find((item) => item.id === providerId);
     if (!provider || get().refreshingProviders[providerId]) return;
-    if (!get().vaultStatus?.unlocked) {
-      set({ error: "Credential Vault 未解锁" });
+    const blockedReason = vaultBlockedReason(get().vaultStatus);
+    if (blockedReason) {
+      set({ error: blockedReason });
       return;
     }
 

@@ -1,6 +1,8 @@
 export interface VaultStatus {
   initialized: boolean;
   unlocked: boolean;
+  needsMigration: boolean;
+  keychainLost: boolean;
 }
 
 export interface CredentialStatus {
