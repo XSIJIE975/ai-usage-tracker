@@ -10,10 +10,12 @@ import { StackedBars } from "../../components/charts/StackedBars";
 import { Donut } from "../../components/charts/Donut";
 import { fetchDeepSeekUsage } from "../../providers/deepseek-stats";
 import { createUsageCache } from "../../stats/usage-cache";
+import { useAppStore } from "../../store/useAppStore";
 import { formatCompact, formatInt, cn } from "../../lib/utils";
 import { StatsStateCard } from "./StatsStateCard";
 import { useStatsFetch } from "./use-stats-fetch";
 import { useAutoRefresh } from "./use-auto-refresh";
+import { useGlobalRefresh } from "./use-global-refresh";
 import { OverviewCards } from "./deepseek/OverviewCards";
 import { ModelUsageTable } from "./deepseek/ModelUsageTable";
 import { isoDate, resolveRangeMs, timeRangeOptions, type TimeRange } from "./deepseek/time-range";
@@ -69,6 +71,14 @@ export function DeepSeekStats() {
 
   // 接入全局自动刷新
   useAutoRefresh(refresh, "deepseek");
+  // 接入顶栏手动全局刷新
+  useGlobalRefresh(refresh, "deepseek");
+
+  /** 全局刷新状态：顶栏「刷新」进行中（全局）或该供应商单刷进行中 */
+  const globalRefreshing = useAppStore(
+    (state) => state.loading || Boolean(state.refreshingProviders["deepseek"]),
+  );
+  const busy = isRefreshing || globalRefreshing;
 
   const bundle = state.kind === "ready" ? state.data : null;
   const filteredRows = useMemo(() => {
@@ -154,22 +164,28 @@ export function DeepSeekStats() {
             <Segmented value={metric} onChange={setMetric} options={metricOptions} />
           </div>
 
-          <IconButton onClick={refresh} aria-label="刷新" title="刷新" className="mb-0.5">
-            <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
+          <IconButton
+            onClick={refresh}
+            disabled={busy}
+            aria-label={busy ? "刷新中" : "刷新"}
+            title={busy ? "刷新中" : "刷新"}
+            className="mb-0.5"
+          >
+            <RefreshCw className={cn("h-4 w-4", busy && "animate-spin")} />
           </IconButton>
         </div>
       </Card>
 
       {/* 指标总览 */}
       <div className="relative">
-        {isRefreshing && <RefreshOverlay />}
+        {busy && <RefreshOverlay />}
         <OverviewCards aggregates={aggregates} currency={bundle?.currency ?? "CNY"} />
       </div>
 
       {/* 图表区 */}
       <div className="grid gap-4 xl:grid-cols-5">
         <Card className="relative xl:col-span-3">
-          {isRefreshing && <RefreshOverlay />}
+          {busy && <RefreshOverlay />}
           <CardHeader>
             <CardTitle>{chartTitle}</CardTitle>
             <CardDescription>按模型堆叠，悬停查看每日明细。</CardDescription>
@@ -184,7 +200,7 @@ export function DeepSeekStats() {
         </Card>
 
         <Card className="relative xl:col-span-2">
-          {isRefreshing && <RefreshOverlay />}
+          {busy && <RefreshOverlay />}
           <CardHeader>
             <CardTitle>模型 Token 占比</CardTitle>
             <CardDescription>所选时间范围内的消耗构成。</CardDescription>
@@ -206,7 +222,7 @@ export function DeepSeekStats() {
 
       {/* 模型明细表 */}
       <Card className="relative">
-        {isRefreshing && <RefreshOverlay />}
+        {busy && <RefreshOverlay />}
         <CardHeader>
           <CardTitle>模型明细</CardTitle>
           <CardDescription>各模型的 token 消耗、缓存命中与费用。</CardDescription>

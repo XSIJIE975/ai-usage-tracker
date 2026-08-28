@@ -121,6 +121,8 @@
 
 - 自动刷新由两级开关控制：**自动刷新总开关**（设置 → 通用）是总闸；**供应商自动刷新**（各供应商设置页签）决定单个供应商是否参与定时刷新，受总开关门控。
 - 总览定时刷新走 `refreshAll(false, { auto: true })`，按供应商开关过滤；手动「刷新」始终拉取所有供应商。
+- 手动全局刷新同时覆盖统计页：`refreshAll` 手动路径递增 `manualRefreshTick`，统计页经 `useGlobalRefresh(callback, providerId)` 感知并同步刷新；组件卸载期间发生的全局刷新，重挂载时补刷一次，不停留在旧缓存。
+- 统计页的刷新按钮与 `RefreshOverlay` 跟随全局刷新状态（`loading` 或该供应商的 `refreshingProviders`），与总览卡片行为一致。
 - 统计页通过 `useAutoRefresh(callback, providerId)` 接入，同时读取总开关、刷新间隔与该供应商的开关。
 - 刷新时保留旧数据，叠加 `RefreshOverlay`（半透明遮罩 + 旋转图标），不整体替换区域。
 - `useStatsFetch` 返回 `{ state, isRefreshing }`：首次加载走全屏 loading；已有数据刷新走局部 overlay。

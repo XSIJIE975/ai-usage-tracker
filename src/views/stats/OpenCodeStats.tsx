@@ -9,6 +9,7 @@ import { EmptyState } from "../../components/ui/empty-state";
 import { StackedBars } from "../../components/charts/StackedBars";
 import { fetchOpenCodeMonthlyCost } from "../../providers/opencode-stats";
 import { createUsageCache } from "../../stats/usage-cache";
+import { useAppStore } from "../../store/useAppStore";
 import { formatInt, cn } from "../../lib/utils";
 import { StatsStateCard } from "./StatsStateCard";
 import { useStatsFetch } from "./use-stats-fetch";
@@ -22,6 +23,7 @@ import {
 } from "./opencode/cost-series";
 import { useHistoryPages } from "./opencode/use-history-pages";
 import { useAutoRefresh } from "./use-auto-refresh";
+import { useGlobalRefresh } from "./use-global-refresh";
 
 const monthlyCache = createUsageCache();
 
@@ -45,11 +47,20 @@ export function OpenCodeStats() {
   const [keyId, setKeyId] = useState("all");
   const [refreshTick, setRefreshTick] = useState(0);
 
-  // 接入全局自动刷新
-  useAutoRefresh(() => {
+  const refresh = () => {
     monthlyCache.invalidate(`${month.year}-${month.month}`);
     setRefreshTick((tick) => tick + 1);
-  }, "opencode-go");
+  };
+
+  // 接入全局自动刷新
+  useAutoRefresh(refresh, "opencode-go");
+  // 接入顶栏手动全局刷新
+  useGlobalRefresh(refresh, "opencode-go");
+
+  /** 全局刷新状态：顶栏「刷新」进行中（全局）或该供应商单刷进行中 */
+  const globalRefreshing = useAppStore(
+    (state) => state.loading || Boolean(state.refreshingProviders["opencode-go"]),
+  );
 
   const { state: monthly, isRefreshing } = useStatsFetch(
     monthlyCache,
@@ -58,6 +69,7 @@ export function OpenCodeStats() {
     refreshTick,
   );
   const history = useHistoryPages(refreshTick);
+  const busy = isRefreshing || globalRefreshing;
 
   const costs = monthly.kind === "ready" ? monthly.data.costs : [];
   const keys = monthly.kind === "ready" ? monthly.data.keys : [];
@@ -96,11 +108,6 @@ export function OpenCodeStats() {
     });
   };
 
-  const refresh = () => {
-    monthlyCache.invalidate(`${month.year}-${month.month}`);
-    setRefreshTick((tick) => tick + 1);
-  };
-
   const now = currentMonth();
   const isCurrent = month.year === now.year && month.month === now.month;
   const modelOptions = [
@@ -120,7 +127,7 @@ export function OpenCodeStats() {
     <div className="space-y-4">
       {/* 成本图表 */}
       <Card className="relative">
-        {isRefreshing && <RefreshOverlay />}
+        {busy && <RefreshOverlay />}
         <CardHeader>
           <CardTitle>成本</CardTitle>
           <CardDescription>
@@ -149,8 +156,13 @@ export function OpenCodeStats() {
             </div>
             <Select options={modelOptions} value={model} onChange={setModel} aria-label="模型筛选" />
             <Select options={keyOptions} value={keyId} onChange={setKeyId} aria-label="密钥筛选" />
-            <IconButton onClick={refresh} aria-label="刷新" title="刷新">
-              <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
+            <IconButton
+              onClick={refresh}
+              disabled={busy}
+              aria-label={busy ? "刷新中" : "刷新"}
+              title={busy ? "刷新中" : "刷新"}
+            >
+              <RefreshCw className={cn("h-4 w-4", busy && "animate-spin")} />
             </IconButton>
           </div>
 

@@ -75,6 +75,8 @@ interface AppStore {
   refreshingProviders: Record<string, boolean>;
   error: string | null;
   lastRefreshedAt: number;
+  /** 手动全局刷新序号（顶栏「刷新」）；统计页据此联动刷新。自动定时刷新不递增。 */
+  manualRefreshTick: number;
   loadInitial: () => Promise<void>;
   refreshAll: (showLoading?: boolean, options?: { auto?: boolean }) => Promise<void>;
   refreshProvider: (providerId: string) => Promise<void>;
@@ -103,6 +105,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   refreshingProviders: {},
   error: null,
   lastRefreshedAt: 0,
+  manualRefreshTick: 0,
 
   loadInitial: async () => {
     try {
@@ -137,6 +140,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   refreshAll: async (showLoading = true, options) => {
     if (showLoading) set({ loading: true, error: null });
+    if (!options?.auto) {
+      set((state) => ({ manualRefreshTick: state.manualRefreshTick + 1 }));
+    }
     const { settings, vaultStatus } = get();
     const blockedReason = vaultBlockedReason(vaultStatus);
     if (blockedReason) {
