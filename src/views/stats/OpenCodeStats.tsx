@@ -22,7 +22,7 @@ import {
   sumCostUsd,
 } from "./opencode/cost-series";
 import { useHistoryPages } from "./opencode/use-history-pages";
-import { useT } from "../../i18n";
+import { useLanguage, useT } from "../../i18n";
 import { useAutoRefresh } from "./use-auto-refresh";
 import { useGlobalRefresh } from "./use-global-refresh";
 
@@ -72,6 +72,7 @@ export function OpenCodeStats() {
   const history = useHistoryPages(refreshTick);
   const busy = isRefreshing || globalRefreshing;
   const t = useT();
+  const language = useLanguage();
 
   const costs = monthly.kind === "ready" ? monthly.data.costs : [];
   const keys = monthly.kind === "ready" ? monthly.data.keys : [];
@@ -145,7 +146,7 @@ export function OpenCodeStats() {
                 <ChevronLeft className="h-4 w-4" />
               </IconButton>
               <span className="tnum min-w-24 border-x border-line px-3 py-1.5 text-center text-[13px] font-medium text-fg">
-                {month.year}年{month.month}月
+                {language === "en" ? `${month.year}-${String(month.month).padStart(2, "0")}` : `${month.year}年${month.month}月`}
               </span>
               <IconButton
                 onClick={() => shiftMonth(1)}

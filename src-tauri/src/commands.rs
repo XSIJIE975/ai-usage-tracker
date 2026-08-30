@@ -400,6 +400,16 @@ pub async fn diagnose_request(
     })
 }
 
+/// 按界面语言重建托盘右键菜单（zh/en）；菜单事件处理在托盘创建时已注册，重建菜单不影响
+#[tauri::command]
+pub fn refresh_tray_menu(app: AppHandle, language: String) -> Result<(), String> {
+    let tray = app
+        .tray_by_id("main-tray")
+        .ok_or_else(|| "托盘未初始化".to_string())?;
+    let menu = crate::build_tray_menu(&app, &language).map_err(|error| error.to_string())?;
+    tray.set_menu(Some(menu)).map_err(|error| error.to_string())
+}
+
 // ─── 通知 ───
 
 #[tauri::command]

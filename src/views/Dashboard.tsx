@@ -21,7 +21,7 @@ const StatsView = lazy(() =>
 import { formatClock } from "../lib/utils";
 import { cn } from "../lib/utils";
 import { updateSupported, useUpdateStore } from "../store/useUpdateStore";
-import { useT } from "../i18n";
+import { useLanguage, useT } from "../i18n";
 
 type ViewKey = "overview" | "stats" | "settings";
 
@@ -40,6 +40,7 @@ export function Dashboard() {
   } = useAppStore();
   const [view, setView] = useState<ViewKey>("overview");
   const t = useT();
+  const language = useLanguage();
   const [noticeOpen, setNoticeOpen] = useState(false);
   const [remoteRefreshedAt, setRemoteRefreshedAt] = useState(0);
 
@@ -152,6 +153,11 @@ export function Dashboard() {
     };
   }, []);
 
+  // 界面语言变化 → 重建托盘右键菜单（挂载时执行一次，与启动检测语言对齐）
+  useEffect(() => {
+    void invoke("refresh_tray_menu", { language }).catch(() => undefined);
+  }, [language]);
+
   // 托盘图标随告警状态切换（去重，避免重复 set）
   const alertActiveMap = useAlertStore((state) => state.active);
   const anyAlertActive = Object.values(alertActiveMap).some(Boolean);
@@ -168,7 +174,7 @@ export function Dashboard() {
         <div className="flex items-center gap-3">
           <BrandIcon size={32} className="rounded-md shadow-sm" />
           <div>
-            <h1 className="text-[15px] font-semibold tracking-tight text-fg">AI 用量助手</h1>
+            <h1 className="text-[15px] font-semibold tracking-tight text-fg">{t("AI 用量助手")}</h1>
             <p className="mt-px flex items-center gap-1.5 text-xs text-fg-muted">
               <span
                 className={cn(
