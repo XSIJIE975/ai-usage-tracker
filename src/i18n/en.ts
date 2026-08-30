@@ -210,6 +210,7 @@ export const en: Record<string, string> = {
   "成本": "Cost",
   "模型": "Model",
   "所有模型": "All models",
+  "所有密钥": "All keys",
   "使用历史": "Usage history",
   "近期 API 使用情况和成本。": "Recent API usage and cost.",
   "日期": "Date",
