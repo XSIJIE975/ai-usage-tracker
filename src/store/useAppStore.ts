@@ -16,6 +16,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   },
   quickPanelShortcut: "Alt+KeyU",
   quickAutoHide: true,
+  interfaceLanguage: "auto",
 };
 
 /** 旧版本持久化的设置缺少新增字段时，用默认值补齐（providers/alertThresholds 为嵌套对象，需逐层合并） */

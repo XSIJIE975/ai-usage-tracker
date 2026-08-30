@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AlertCircle, ArrowUpCircle, Bell, Gauge, LayoutGrid, PieChart, RefreshCw, Settings, X } from "lucide-react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -14,7 +14,10 @@ import { IconButton } from "../components/ui/icon-button";
 import { ProviderCard } from "../components/ProviderCard";
 import { NotificationCenterPanel } from "./NotificationCenterPanel";
 import { SettingsView } from "./SettingsView";
-import { StatsView } from "./stats/StatsView";
+// ECharts 仅统计页使用，懒加载避免主窗口启动时解析大依赖
+const StatsView = lazy(() =>
+  import("./stats/StatsView").then((module) => ({ default: module.StatsView })),
+);
 import { formatClock } from "../lib/utils";
 import { cn } from "../lib/utils";
 import { updateSupported, useUpdateStore } from "../store/useUpdateStore";
@@ -269,7 +272,15 @@ export function Dashboard() {
               )}
             </div>
           ) : view === "stats" ? (
-            <StatsView />
+            <Suspense
+              fallback={
+                <div className="flex h-40 items-center justify-center">
+                  <span className="h-5 w-5 animate-spin rounded-full border-2 border-line-strong border-t-brand" />
+                </div>
+              }
+            >
+              <StatsView />
+            </Suspense>
           ) : (
             <SettingsView />
           )}

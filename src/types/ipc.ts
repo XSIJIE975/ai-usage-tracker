@@ -87,6 +87,8 @@ export interface AppSettings {
   quickPanelShortcut: string;
   /** 快速面板失焦自动隐藏 */
   quickAutoHide: boolean;
+  /** 界面语言：auto 按系统语言检测（中文→中文，否则英文） */
+  interfaceLanguage: "auto" | "zh" | "en";
 }
 
 export interface StoredNotification {

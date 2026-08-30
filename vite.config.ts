@@ -12,6 +12,14 @@ export default defineConfig(async () => ({
   build: {
     // 沙箱环境的 safe-delete 拦截会使 emptyDir 偶发失败；产物带内容哈希，无需清空
     emptyOutDir: false,
+    rollupOptions: {
+      output: {
+        // echarts 体量大且仅统计页使用，拆分为独立 chunk 避免主包超限
+        manualChunks: {
+          echarts: ["echarts", "echarts-for-react"],
+        },
+      },
+    },
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`

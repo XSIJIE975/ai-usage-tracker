@@ -1,41 +1,61 @@
 import type { BurnRateResult } from "./burn-rate";
+import type { Language } from "../i18n";
 
 export interface BurnRateTextOptions {
-  /** 指标名词：deplete 模式如「余额」、fill 模式如「本月额度」 */
-  noun: string;
-  /** 到达目标的动词：deplete 为「耗尽」、fill 为「用完」 */
-  verb: string;
+  /** 界面语言：zh 中文（源语言）、en 英文 */
+  locale?: Language;
+  /** 预测模式：deplete=余额耗尽、fill=额度用满 */
+  mode: "deplete" | "fill";
 }
 
 /**
  * 预测结果 → 用户可读文案；无需展示（at-target）返回 null。
- * 文案集中在此处，i18n 接入时只需替换本模块。
+ * 中英文模板集中在此处，后续接入 i18n 字典时替换。
  */
 export function describeBurnRate(
   result: BurnRateResult,
   options: BurnRateTextOptions,
 ): string | null {
+  const en = options.locale === "en";
+  const noun =
+    options.mode === "fill" ? (en ? "monthly quota" : "本月额度") : en ? "balance" : "余额";
+  const verb = options.mode === "fill" ? (en ? "be used up" : "用完") : en ? "run out" : "耗尽";
+
   switch (result.kind) {
-    case "insufficient":
-      return `数据积累中，约 ${result.hoursNeeded} 小时后可预测`;
+    case "insufficient": {
+      const hours = Math.max(1, Math.round(result.hoursNeeded));
+      return en
+        ? `Collecting data — prediction available in about ${hours}h`
+        : `数据积累中，约 ${hours} 小时后可预测`;
+    }
     case "stable":
-      return "近期消耗平稳，暂无耗尽风险";
+      return en
+        ? "Steady usage recently — no exhaustion risk for now"
+        : "近期消耗平稳，暂无耗尽风险";
     case "at-target":
       return null;
     case "no-risk":
-      return `按当前速率，本周期内${options.noun}足够`;
+      return en
+        ? "At the current rate, this period's quota is enough"
+        : "按当前速率，本周期内额度足够";
     case "predict": {
       const duration =
         result.hoursLeft >= 48
-          ? `约 ${Math.round(result.hoursLeft / 24)} 天`
-          : `约 ${Math.max(1, Math.round(result.hoursLeft))} 小时`;
-      const eta = new Intl.DateTimeFormat("zh-CN", {
+          ? en
+            ? `about ${Math.round(result.hoursLeft / 24)} days`
+            : `约 ${Math.round(result.hoursLeft / 24)} 天`
+          : en
+            ? `about ${Math.max(1, Math.round(result.hoursLeft))} hours`
+            : `约 ${Math.max(1, Math.round(result.hoursLeft))} 小时`;
+      const eta = new Intl.DateTimeFormat(en ? "en-US" : "zh-CN", {
         month: "numeric",
         day: "numeric",
         hour: "2-digit",
         minute: "2-digit",
       }).format(new Date(result.etaMs));
-      return `按当前速率，${options.noun}${duration}后${options.verb}（预计 ${eta}）`;
+      return en
+        ? `At the current rate, ${noun} will ${verb} in ${duration} (ETA ${eta})`
+        : `按当前速率，${noun}${duration}后${verb}（预计 ${eta}）`;
     }
   }
 }
