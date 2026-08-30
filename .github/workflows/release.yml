@@ -90,6 +90,8 @@ jobs:
                 owner,
                 repo,
                 release_id: release.id,
+                // 草稿 Release 在 PATCH 不带 tag_name 时会被 GitHub 重置为 untagged-*，必须显式带上
+                tag_name: tagName,
                 name: tagName,
                 body,
                 draft: true,
