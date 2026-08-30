@@ -26,14 +26,10 @@ pnpm tauri dev
 pnpm test
 cd src-tauri && cargo test
 pnpm build
-pnpm tauri build
+pnpm tauri build --no-sign
 ```
 
-Windows 本地如果 NSIS 下载超时，可以先生成 MSI：
-
-```sh
-pnpm tauri build --bundles msi
-```
+构建默认会产出供自动更新使用的签名产物，需要 `TAURI_SIGNING_PRIVATE_KEY`（及密码）；本地开发没有密钥时用 `--no-sign` 跳过。
 
 ## 版本与发布流程
 
@@ -46,6 +42,13 @@ pnpm tauri build --bundles msi
 5. 发布 workflow 会生成 `vX.Y.Z` draft release，安装包上传后由你在 GitHub 网页手动发布。
 
 发布 workflow 使用 `package.json` 作为版本源，并自动同步 `src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 和 `src-tauri/tauri.conf.json`。
+
+安装包与更新通道：
+
+- 三平台产物：Windows 为 NSIS（按当前用户安装，更新无需管理员权限）、macOS 为 DMG、Linux 为 DEB + AppImage。
+- 构建使用仓库 Secrets（`TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`）签名更新产物，并随安装包上传 `latest.json` 更新清单。
+- 手动发布 draft release 后，旧版本启动时会静默检测到新版本：顶栏出现「新版本」徽标，设置 → 通用 →「关于与更新」可下载并安装。
+- 0.1.0 及更早的安装没有更新能力，需要手动下载安装包重装一次；之后的版本均可自动更新。
 
 ## 使用
 

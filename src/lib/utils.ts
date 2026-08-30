@@ -59,6 +59,20 @@ export function formatInt(value: number) {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
 }
 
+/** 字节数可读化：1536 → 1.5 KB；5242880 → 5 MB */
+export function formatBytes(value: number) {
+  if (!Number.isFinite(value) || value < 0) return "-";
+  const units = ["B", "KB", "MB", "GB"];
+  let index = 0;
+  let scaled = value;
+  while (scaled >= 1024 && index < units.length - 1) {
+    scaled /= 1024;
+    index += 1;
+  }
+  const text = index === 0 ? String(Math.round(scaled)) : scaled.toFixed(1).replace(/\.0$/, "");
+  return `${text} ${units[index]}`;
+}
+
 export function formatReset(iso?: string | null, now = Date.now()) {
   if (!iso) return "重置时间未知";
   const diff = new Date(iso).getTime() - now;

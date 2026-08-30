@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AlertCircle, Gauge, LayoutGrid, PieChart, RefreshCw, Settings, X } from "lucide-react";
+import { AlertCircle, ArrowUpCircle, Gauge, LayoutGrid, PieChart, RefreshCw, Settings, X } from "lucide-react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useAppStore } from "../store/useAppStore";
 import { providerModules } from "../providers";
@@ -12,6 +12,7 @@ import { SettingsView } from "./SettingsView";
 import { StatsView } from "./stats/StatsView";
 import { formatClock } from "../lib/utils";
 import { cn } from "../lib/utils";
+import { updateSupported, useUpdateStore } from "../store/useUpdateStore";
 
 type ViewKey = "overview" | "stats" | "settings";
 
@@ -52,6 +53,20 @@ export function Dashboard() {
   }, []);
 
   const lastRefreshedAt = Math.max(storeLastRefreshedAt, remoteRefreshedAt);
+
+  const updateStatus = useUpdateStore((state) => state.status);
+  const updateVersion = useUpdateStore((state) => state.version);
+  const updateNotice =
+    updateStatus === "available" || updateStatus === "downloading" || updateStatus === "ready";
+
+  // 启动后静默检查一次更新；失败不打扰用户，手动入口在设置页
+  useEffect(() => {
+    if (!updateSupported()) return;
+    const timer = window.setTimeout(() => {
+      void useUpdateStore.getState().check({ silent: true });
+    }, 5_000);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     if (!vaultStatus?.unlocked) return;
@@ -109,6 +124,18 @@ export function Dashboard() {
               { value: "settings", label: "设置", icon: <Settings className="h-3.5 w-3.5" /> },
             ]}
           />
+          {updateNotice && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="border-brand/40 text-brand"
+              onClick={() => setView("settings")}
+              title="前往设置安装新版本"
+              aria-label={`新版本 v${updateVersion} 可用，前往设置安装`}
+            >
+              <ArrowUpCircle className="h-3.5 w-3.5" /> 新版本 v{updateVersion}
+            </Button>
+          )}
           <Button size="sm" variant="outline" onClick={() => void refreshAll(true)} disabled={refreshing}>
             <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} /> 刷新
           </Button>

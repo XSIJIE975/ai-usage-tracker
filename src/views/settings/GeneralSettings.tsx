@@ -7,6 +7,7 @@ import { useAppStore } from "../../store/useAppStore";
 import { formatRefreshLabel } from "../../lib/utils";
 import type { AppSettings } from "../../types/ipc";
 import { AppearanceCard } from "./AppearanceCard";
+import { UpdateCard } from "./UpdateCard";
 import { SavedHint, useSaveFlash } from "./save-flash";
 
 const INTERVAL_PRESETS = [5, 10, 15, 30, 60, 120];
@@ -76,6 +77,8 @@ export function GeneralSettings() {
       </Card>
 
       <AppearanceCard />
+
+      <UpdateCard />
     </div>
   );
 }

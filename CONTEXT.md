@@ -43,8 +43,20 @@ _Avoid_：主密钥、机器密钥、机器绑定密钥（它不是从机器派�
 
 ## Draft Release
 
-发布 workflow 创建的暂存 GitHub Release。安装包上传完成后仍为草稿，需要用户在 GitHub 网页手动发布。
+发布 workflow 创建的暂存 GitHub Release。安装包上传完成后仍为草稿，需要用户在 GitHub 网页手动发布。草稿期已包含签名的更新产物与 `latest.json`；手动发布即同时开放安装包下载与自动更新通道。
 
 ## 版本源
 
 `package.json` 中的版本号是唯一版本源。发布脚本会在 Changesets 更新版本后同步 `src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 和 `src-tauri/tauri.conf.json`。
+
+## 更新签名密钥
+
+`tauri signer generate` 生成的 minisign 密钥对。公钥固化在 `tauri.conf.json`，用于校验更新包签名；私钥与密码仅存开发者本机（仓库外 `~/.tauri/`）与 GitHub Secrets（`TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`），永不入库。私钥丢失即失去更新通道，存量用户只能手动重装。
+
+## latest.json
+
+tauri-action 随发布产物自动上传的静态更新清单，记录各平台更新包的下载地址与签名。`releases/latest/download/latest.json` 恒指向最新已发布 Release，是应用内自动更新通道的唯一数据源。
+
+## 自动更新
+
+启动后在后台静默检查 `latest.json`：发现新版本时顶栏出现「新版本」徽标，设置 → 通用的「关于与更新」卡片可手动检查、查看变更说明、下载并安装（Windows 由 NSIS 安装器静默完成，无需管理员权限）。首个带更新能力的版本无法被更早的安装自动升级到，需手动重装一次。
