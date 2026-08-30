@@ -69,8 +69,27 @@ export interface StoredSnapshot {
   payload: ProviderSnapshot;
 }
 
+export interface AlertThresholds {
+  /** DeepSeek 余额低于该值（元）时告警 */
+  deepseekBalanceBelowCny: number;
+  /** OpenCode Go 本月额度已用达到该百分比时告警 */
+  opencodeMonthlyUsedPercent: number;
+}
+
 export interface AppSettings {
   refreshEnabled: boolean;
   refreshIntervalMinutes: number;
   providers: Record<string, boolean>;
+  /** 用量告警总开关 */
+  alertsEnabled: boolean;
+  alertThresholds: AlertThresholds;
+}
+
+export interface StoredNotification {
+  id: number;
+  created_at: number;
+  provider_id: string;
+  title: string;
+  body: string;
+  read: boolean;
 }

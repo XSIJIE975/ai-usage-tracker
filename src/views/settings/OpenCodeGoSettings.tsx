@@ -7,6 +7,7 @@ import { Label } from "../../components/ui/label";
 import { Separator } from "../../components/ui/separator";
 import { SecretField, StatusBadge } from "./CredentialInput";
 import { ProviderAutoRefresh } from "./ProviderAutoRefresh";
+import { AlertThresholdSetting } from "./AlertThresholdSetting";
 import { SaveMessageBanner, type ProviderSettingsProps, type SaveMessage } from "./provider-settings";
 import { normalizeOpenCodeAuthCookie } from "../../lib/utils";
 import type { CredentialsInput } from "../../types/ipc";
@@ -130,6 +131,10 @@ export function OpenCodeGoSettings({
         <Separator />
 
         <ProviderAutoRefresh providerId="opencode-go" onOpenGeneral={onOpenGeneral} />
+
+        <Separator />
+
+        <AlertThresholdSetting providerId="opencode-go" />
       </CardContent>
     </Card>
   );

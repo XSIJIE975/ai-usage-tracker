@@ -3,12 +3,31 @@ import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import type { AppSettings, ProviderSnapshot, StoredSnapshot, VaultStatus } from "../types/ipc";
 import { providerModules } from "../providers";
+import { useAlertStore } from "./useAlertStore";
 
 const DEFAULT_SETTINGS: AppSettings = {
   refreshEnabled: true,
   refreshIntervalMinutes: 5,
   providers: Object.fromEntries(providerModules.map((provider) => [provider.id, true])),
+  alertsEnabled: true,
+  alertThresholds: {
+    deepseekBalanceBelowCny: 50,
+    opencodeMonthlyUsedPercent: 80,
+  },
 };
+
+/** 旧版本持久化的设置缺少新增字段时，用默认值补齐（providers/alertThresholds 为嵌套对象，需逐层合并） */
+function normalizeSettings(settings: Partial<AppSettings>): AppSettings {
+  return {
+    ...DEFAULT_SETTINGS,
+    ...settings,
+    providers: { ...DEFAULT_SETTINGS.providers, ...settings.providers },
+    alertThresholds: {
+      ...DEFAULT_SETTINGS.alertThresholds,
+      ...settings.alertThresholds,
+    },
+  };
+}
 
 function waitForTauriRuntime(timeoutMs = 5_000) {
   const deadline = Date.now() + timeoutMs;
@@ -125,7 +144,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         invokeWithTimeout<StoredSnapshot[]>("get_latest_snapshots", 4_000),
       ]);
       set({
-        settings: { ...DEFAULT_SETTINGS, ...settings, providers: { ...DEFAULT_SETTINGS.providers, ...settings.providers } },
+        settings: normalizeSettings(settings),
         snapshots: snapshots.map((item) => toProviderSnapshot(item.payload)),
         error: null,
       });
@@ -188,6 +207,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
         lastRefreshedAt: refreshedAt,
       });
     }
+    // 刷新落库后评估阈值告警（成功与失败的快照都参与，失败会解除告警态）
+    for (const result of results) {
+      useAlertStore.getState().observe(result.providerId, result, get().settings);
+    }
     emitRefreshCompleted(refreshedAt);
   },
 
@@ -240,6 +263,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       set((state) => ({
         refreshingProviders: { ...state.refreshingProviders, [providerId]: false },
       }));
+      useAlertStore.getState().observe(providerId, result, get().settings);
       emitRefreshCompleted(refreshedAt);
     }
   },

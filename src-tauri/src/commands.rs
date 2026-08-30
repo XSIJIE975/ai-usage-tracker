@@ -225,6 +225,105 @@ pub fn list_snapshots(
     db.list_snapshots(&provider_id, since_ms.unwrap_or(0), limit.unwrap_or(2000))
 }
 
+/// 在默认托盘图标的右下角合成红点徽章，生成告警态托盘图标（无需额外图标资产）
+fn alert_tray_icon(default_icon: &tauri::image::Image<'_>) -> tauri::image::Image<'static> {
+    let mut rgba = default_icon.rgba().to_vec();
+    let width = default_icon.width() as i32;
+    let height = default_icon.height() as i32;
+    let center_x = width - 10;
+    let center_y = height - 10;
+    let radius = 8;
+    for y in (center_y - radius - 1).max(0)..=(center_y + radius + 1).min(height - 1) {
+        for x in (center_x - radius - 1).max(0)..=(center_x + radius + 1).min(width - 1) {
+            let dx = x - center_x;
+            let dy = y - center_y;
+            let dist2 = dx * dx + dy * dy;
+            let index = ((y as usize) * (width as usize) + (x as usize)) * 4;
+            if dist2 <= (radius - 2) * (radius - 2) {
+                rgba[index] = 220;
+                rgba[index + 1] = 38;
+                rgba[index + 2] = 38;
+                rgba[index + 3] = 255;
+            } else if dist2 <= radius * radius {
+                rgba[index] = 255;
+                rgba[index + 1] = 255;
+                rgba[index + 2] = 255;
+                rgba[index + 3] = 255;
+            }
+        }
+    }
+    tauri::image::Image::new_owned(rgba, width as u32, height as u32)
+}
+
+#[tauri::command]
+pub fn set_tray_alert(app: AppHandle, active: bool) -> Result<(), String> {
+    let tray = app
+        .tray_by_id("main-tray")
+        .ok_or_else(|| "托盘未初始化".to_string())?;
+    if active {
+        let default_icon = app
+            .default_window_icon()
+            .ok_or_else(|| "缺少默认图标".to_string())?;
+        tray.set_icon(Some(alert_tray_icon(default_icon)))
+            .map_err(|error| error.to_string())?;
+        tray.set_tooltip(Some("AI 用量助手 — 有额度告警"))
+            .map_err(|error| error.to_string())?;
+    } else {
+        if let Some(icon) = app.default_window_icon().cloned() {
+            tray.set_icon(Some(icon)).map_err(|error| error.to_string())?;
+        }
+        tray.set_tooltip(Some("AI 用量助手"))
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+// ─── 通知 ───
+
+#[tauri::command]
+pub fn add_notification(
+    state: State<'_, AppState>,
+    provider_id: String,
+    title: String,
+    body: String,
+) -> Result<db::StoredNotification, String> {
+    let db = state.db.lock().expect("db lock poisoned");
+    db.add_notification(&provider_id, &title, &body)
+}
+
+#[tauri::command]
+pub fn list_notifications(
+    state: State<'_, AppState>,
+    limit: Option<i64>,
+) -> Result<Vec<db::StoredNotification>, String> {
+    let db = state.db.lock().expect("db lock poisoned");
+    db.list_notifications(limit.unwrap_or(200))
+}
+
+#[tauri::command]
+pub fn unread_notification_count(state: State<'_, AppState>) -> Result<i64, String> {
+    let db = state.db.lock().expect("db lock poisoned");
+    db.unread_notification_count()
+}
+
+#[tauri::command]
+pub fn mark_all_notifications_read(state: State<'_, AppState>) -> Result<(), String> {
+    let db = state.db.lock().expect("db lock poisoned");
+    db.mark_all_notifications_read()
+}
+
+#[tauri::command]
+pub fn delete_notification(state: State<'_, AppState>, id: i64) -> Result<(), String> {
+    let db = state.db.lock().expect("db lock poisoned");
+    db.delete_notification(id)
+}
+
+#[tauri::command]
+pub fn clear_notifications(state: State<'_, AppState>) -> Result<(), String> {
+    let db = state.db.lock().expect("db lock poisoned");
+    db.clear_notifications()
+}
+
 #[tauri::command]
 pub async fn provider_request(
     state: State<'_, AppState>,
