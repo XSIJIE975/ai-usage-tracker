@@ -14,6 +14,7 @@ const settings = (alertsEnabled = true): AppSettings => ({
   alertThresholds: { deepseekBalanceBelowCny: 50, opencodeMonthlyUsedPercent: 80 },
   quickPanelShortcut: "Alt+KeyU",
   quickAutoHide: true,
+  interfaceLanguage: "auto",
 });
 
 const deepseekSnapshot = (balance: number): ProviderSnapshot => ({

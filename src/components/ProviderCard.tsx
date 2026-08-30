@@ -20,6 +20,7 @@ import { loadProviderHistory, type ProviderHistory } from "../stats/snapshot-his
 import { analyzeBurnRate } from "../stats/burn-rate";
 import { describeBurnRate } from "../stats/burn-rate-format";
 import { useAppStore } from "../store/useAppStore";
+import { useLanguage, useT } from "../i18n";
 import { cn } from "../lib/utils";
 
 function useNow(intervalMs = 30_000) {
@@ -63,23 +64,24 @@ function ProviderAvatar({ providerId, name }: { providerId: string; name: string
 }
 
 function statusBadge(status: ProviderSnapshot["status"]) {
+  const t = useT();
   if (status === "ok") {
     return (
       <Badge variant="success">
-        <CheckCircle2 className="h-3 w-3" /> 正常
+        <CheckCircle2 className="h-3 w-3" /> {t("正常")}
       </Badge>
     );
   }
   if (status === "needs_config") {
     return (
       <Badge variant="neutral">
-        <Settings2 className="h-3 w-3" /> 待配置
+        <Settings2 className="h-3 w-3" /> {t("待配置")}
       </Badge>
     );
   }
   return (
     <Badge variant="warning">
-      <AlertTriangle className="h-3 w-3" /> 异常
+      <AlertTriangle className="h-3 w-3" /> {t("异常")}
     </Badge>
   );
 }
@@ -165,23 +167,24 @@ function CompactUpdatedAt({
   now: number;
   intervalMinutes: number;
 }) {
+  const t = useT();
   if (updatedAt <= 0) {
-    return <p className="mt-0.5 text-[11px] text-fg-muted">未更新</p>;
+    return <p className="mt-0.5 text-[11px] text-fg-muted">{t("未更新")}</p>;
   }
   const delta = Math.max(0, now - updatedAt);
   const stale = intervalMinutes > 0 && delta > intervalMinutes * 60_000 * 1.5;
   const text =
     delta < 60_000
-      ? "刚刚"
+      ? t("刚刚")
       : delta < 3_600_000
-        ? `${Math.floor(delta / 60_000)} 分钟前`
+        ? `${Math.floor(delta / 60_000)} ${t("分钟前")}`
         : formatClock(updatedAt);
   return (
     <p
       className={cn("tnum mt-0.5 text-[11px]", stale ? "text-warning" : "text-fg-muted")}
-      title={`更新于 ${formatClock(updatedAt)}`}
+      title={`${t("更新于")} ${formatClock(updatedAt)}`}
     >
-      更新于 {text}
+      {t("更新于")} {text}
     </p>
   );
 }
@@ -199,6 +202,8 @@ export function ProviderCard({
 }) {
   const needsConfig = snapshot.status === "needs_config";
   const now = useNow();
+  const t = useT();
+  const language = useLanguage();
   const refreshIntervalMinutes = useAppStore((state) => state.settings.refreshIntervalMinutes);
   const history = useProviderHistory(snapshot.providerId, snapshot.updatedAt);
 
@@ -214,12 +219,12 @@ export function ProviderCard({
   const burnText = useMemo(
     () =>
       burn
-        ? describeBurnRate(
-            burn,
-            fillMode ? { noun: "本月额度", verb: "用完" } : { noun: "余额", verb: "耗尽" },
-          )
+        ? describeBurnRate(burn, {
+            locale: language,
+            mode: fillMode ? "fill" : "deplete",
+          })
         : null,
-    [burn, fillMode],
+    [burn, fillMode, language],
   );
   const trend = history && history.points.length >= 2 ? history : null;
   const sparkColor = snapshot.providerId === "deepseek" ? "#5786FE" : undefined;
@@ -234,7 +239,9 @@ export function ProviderCard({
           <div className="min-w-0">
             <CardTitle className="truncate text-sm">{snapshot.providerName}</CardTitle>
             {!compact ? (
-              <p className="tnum mt-0.5 text-xs text-fg-muted">更新于 {formatClock(snapshot.updatedAt)}</p>
+              <p className="tnum mt-0.5 text-xs text-fg-muted">
+                {t("更新于")} {formatClock(snapshot.updatedAt)}
+              </p>
             ) : (
               <CompactUpdatedAt
                 updatedAt={snapshot.updatedAt}
@@ -293,7 +300,7 @@ export function ProviderCard({
           </div>
         ) : null}
         {snapshot.lines.length === 0 && !snapshot.message ? (
-          <p className="py-2 text-xs text-fg-muted">暂无数据</p>
+          <p className="py-2 text-xs text-fg-muted">{t("暂无数据")}</p>
         ) : null}
       </CardContent>
     </Card>

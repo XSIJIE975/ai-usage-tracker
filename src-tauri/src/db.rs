@@ -94,7 +94,8 @@ impl Db {
                 "opencodeMonthlyUsedPercent": 80
             },
             "quickPanelShortcut": "Alt+KeyU",
-            "quickAutoHide": true
+            "quickAutoHide": true,
+            "interfaceLanguage": "auto"
         });
         let row = self
             .conn

@@ -2,7 +2,7 @@ import { useCallback, useMemo, useRef } from "react";
 import ReactEChartsCore from "echarts-for-react/lib/core";
 import * as echarts from "echarts/core";
 import { PieChart } from "echarts/charts";
-import { TooltipComponent } from "echarts/components";
+import { LegendComponent, TooltipComponent } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
 import { modelColor, getThemeColors } from "./palette";
 import { useEffectiveTheme } from "../../lib/theme";
@@ -10,7 +10,7 @@ import { useChartLegend } from "../../hooks/use-chart-legend";
 import { ChartLegend } from "./ChartLegend";
 import { cn } from "../../lib/utils";
 
-echarts.use([PieChart, TooltipComponent, CanvasRenderer]);
+echarts.use([PieChart, TooltipComponent, LegendComponent, CanvasRenderer]);
 
 export interface DonutSegment {
   name: string;
