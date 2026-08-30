@@ -1,5 +1,6 @@
 use std::sync::Mutex;
 
+use serde_json::Value;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager};
@@ -14,6 +15,8 @@ use vault::{KeyringKeyStore, Vault};
 pub struct AppState {
     pub vault: Mutex<Vault>,
     pub db: Mutex<Db>,
+    /// 当前注册的快速面板全局快捷键（规范格式，如 "Alt+KeyU"）
+    pub quick_shortcut: Mutex<Option<String>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -28,6 +31,7 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
@@ -43,7 +47,20 @@ pub fn run() {
             app.manage(AppState {
                 vault: Mutex::new(vault),
                 db: Mutex::new(db),
+                quick_shortcut: Mutex::new(None),
             });
+
+            // 注册设置中配置的快速面板全局快捷键；失败不阻断启动
+            let app_state = app.state::<AppState>();
+            if let Ok(settings) = app_state.db.lock().expect("db lock poisoned").get_settings() {
+                if let Some(shortcut) = settings.get("quickPanelShortcut").and_then(Value::as_str) {
+                    if !shortcut.is_empty() {
+                        if let Err(error) = commands::apply_quick_shortcut(app.handle(), shortcut.to_string()) {
+                            eprintln!("注册快速面板快捷键失败：{error}");
+                        }
+                    }
+                }
+            }
 
             if let Some(quick) = app.get_webview_window("quick") {
                 quick.hide()?;
@@ -82,6 +99,8 @@ pub fn run() {
             commands::open_main_window,
             commands::hide_quick_window,
             commands::toggle_quick_window,
+            commands::register_quick_shortcut,
+            commands::diagnose_request,
             commands::quit_app,
         ])
         .run(tauri::generate_context!())
@@ -132,7 +151,7 @@ fn open_main(app: &AppHandle) {
     }
 }
 
-fn toggle_quick(app: &AppHandle) {
+pub fn toggle_quick(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("quick") {
         let visible = window.is_visible().unwrap_or(false);
         if visible {

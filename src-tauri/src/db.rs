@@ -92,7 +92,9 @@ impl Db {
             "alertThresholds": {
                 "deepseekBalanceBelowCny": 50,
                 "opencodeMonthlyUsedPercent": 80
-            }
+            },
+            "quickPanelShortcut": "Alt+KeyU",
+            "quickAutoHide": true
         });
         let row = self
             .conn

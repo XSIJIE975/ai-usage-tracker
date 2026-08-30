@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { emit } from "@tauri-apps/api/event";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { AlertCoordinator, type AlertCoordinatorDeps } from "../alerts/coordinator";
 import type { AlertFire } from "../alerts/evaluate";
@@ -41,6 +42,8 @@ function createCoordinator(): AlertCoordinator {
       useAlertStore.setState((state) => ({
         active: { ...state.active, [providerId]: active },
       }));
+      // 同步其他窗口（快速面板/主窗口各自独立 webview 上下文）
+      void emit("alert-state-changed", { providerId, active }).catch(() => undefined);
     },
   };
   return new AlertCoordinator(deps);

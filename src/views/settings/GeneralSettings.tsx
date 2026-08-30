@@ -9,6 +9,7 @@ import type { AppSettings } from "../../types/ipc";
 import { AppearanceCard } from "./AppearanceCard";
 import { AboutCard } from "./AboutCard";
 import { UpdateCard } from "./UpdateCard";
+import { QuickPanelShortcutSetting } from "./QuickPanelShortcutSetting";
 import { SavedHint, useSaveFlash } from "./save-flash";
 
 const INTERVAL_PRESETS = [5, 10, 15, 30, 60, 120];
@@ -98,6 +99,18 @@ export function GeneralSettings() {
           <p className="text-[13px] text-fg-muted">
             各供应商的阈值在其页签中设置；触发后 6 小时内不会重复通知，恢复到阈值以上会自动解除。
           </p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex-row items-start justify-between space-y-0 pb-3">
+          <div className="space-y-1.5">
+            <CardTitle>快速面板</CardTitle>
+            <CardDescription>全局快捷键与窗口行为。</CardDescription>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <QuickPanelShortcutSetting />
         </CardContent>
       </Card>
 

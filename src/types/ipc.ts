@@ -83,6 +83,10 @@ export interface AppSettings {
   /** 用量告警总开关 */
   alertsEnabled: boolean;
   alertThresholds: AlertThresholds;
+  /** 快速面板全局快捷键（规范格式，如 "Alt+KeyU"；空字符串表示不启用） */
+  quickPanelShortcut: string;
+  /** 快速面板失焦自动隐藏 */
+  quickAutoHide: boolean;
 }
 
 export interface StoredNotification {
