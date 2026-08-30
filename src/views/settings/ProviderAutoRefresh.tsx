@@ -3,6 +3,7 @@ import { Switch } from "../../components/ui/switch";
 import { useAppStore } from "../../store/useAppStore";
 import { formatRefreshLabel } from "../../lib/utils";
 import { SavedHint, useSaveFlash } from "./save-flash";
+import { useT } from "../../i18n";
 
 interface ProviderAutoRefreshProps {
   providerId: string;
@@ -11,12 +12,13 @@ interface ProviderAutoRefreshProps {
 
 /**
  * 供应商自动刷新区块：受「自动刷新总开关」门控。
- * 总开关关闭时开关禁用置灰（保留原值），并给出可跳转「通用」页签的提示。
+ * 总开关关闭时开关禁用置灰（保留原值），并给出可跳转{t("「通用」页签")}的提示。
  */
 export function ProviderAutoRefresh({ providerId, onOpenGeneral }: ProviderAutoRefreshProps) {
   const settings = useAppStore((state) => state.settings);
   const saveSettings = useAppStore((state) => state.saveSettings);
   const { visible, flash } = useSaveFlash();
+  const t = useT();
   const masterOn = settings.refreshEnabled;
   const enabled = Boolean(settings.providers[providerId]);
 
@@ -31,11 +33,11 @@ export function ProviderAutoRefresh({ providerId, onOpenGeneral }: ProviderAutoR
       <div className="flex items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <Label>供应商自动刷新</Label>
+            <Label>{t("供应商自动刷新")}</Label>
             <SavedHint visible={visible} />
           </div>
           <p className="mt-1 text-[13px] text-fg-muted">
-            跟随全局刷新间隔（当前 {formatRefreshLabel(settings.refreshIntervalMinutes)}），手动刷新不受此开关影响。
+            {t("跟随全局刷新间隔（当前")} {formatRefreshLabel(settings.refreshIntervalMinutes, t)}{t("），手动刷新不受此开关影响。")}
           </p>
         </div>
         <Switch checked={enabled} disabled={!masterOn} onCheckedChange={(value) => void toggle(value)} />
@@ -50,7 +52,7 @@ export function ProviderAutoRefresh({ providerId, onOpenGeneral }: ProviderAutoR
           >
             「通用」页签
           </button>{" "}
-          开启自动刷新总开关。
+          {t("开启自动刷新总开关。")}
         </p>
       )}
     </div>

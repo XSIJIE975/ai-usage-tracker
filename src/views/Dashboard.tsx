@@ -21,6 +21,7 @@ const StatsView = lazy(() =>
 import { formatClock } from "../lib/utils";
 import { cn } from "../lib/utils";
 import { updateSupported, useUpdateStore } from "../store/useUpdateStore";
+import { useT } from "../i18n";
 
 type ViewKey = "overview" | "stats" | "settings";
 
@@ -38,6 +39,7 @@ export function Dashboard() {
     lastRefreshedAt: storeLastRefreshedAt,
   } = useAppStore();
   const [view, setView] = useState<ViewKey>("overview");
+  const t = useT();
   const [noticeOpen, setNoticeOpen] = useState(false);
   const [remoteRefreshedAt, setRemoteRefreshedAt] = useState(0);
 
@@ -174,7 +176,7 @@ export function Dashboard() {
                   latest ? "bg-success" : "bg-line-strong",
                 )}
               />
-              {latest ? `最近更新 ${formatClock(latest)}` : "等待刷新"}
+              {latest ? `${t("最近更新")} ${formatClock(latest)}` : t("等待刷新")}
             </p>
           </div>
         </div>
@@ -183,9 +185,9 @@ export function Dashboard() {
             value={view}
             onChange={setView}
             options={[
-              { value: "overview", label: "总览", icon: <LayoutGrid className="h-3.5 w-3.5" /> },
-              { value: "stats", label: "统计", icon: <PieChart className="h-3.5 w-3.5" /> },
-              { value: "settings", label: "设置", icon: <Settings className="h-3.5 w-3.5" /> },
+              { value: "overview", label: t("总览"), icon: <LayoutGrid className="h-3.5 w-3.5" /> },
+              { value: "stats", label: t("统计"), icon: <PieChart className="h-3.5 w-3.5" /> },
+              { value: "settings", label: t("设置"), icon: <Settings className="h-3.5 w-3.5" /> },
             ]}
           />
           {updateNotice && (
@@ -194,10 +196,10 @@ export function Dashboard() {
               variant="outline"
               className="border-brand/40 text-brand"
               onClick={() => setView("settings")}
-              title="前往设置安装新版本"
+              title={t("前往设置安装新版本")}
               aria-label={`新版本 v${updateVersion} 可用，前往设置安装`}
             >
-              <ArrowUpCircle className="h-3.5 w-3.5" /> 新版本 v{updateVersion}
+              <ArrowUpCircle className="h-3.5 w-3.5" /> {t("新版本")} v{updateVersion}
             </Button>
           )}
           <div className="relative">
@@ -222,7 +224,7 @@ export function Dashboard() {
             )}
           </div>
           <Button size="sm" variant="outline" onClick={() => void refreshAll(true)} disabled={refreshing}>
-            <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} /> 刷新
+            <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} /> {t("刷新")}
           </Button>
         </div>
       </header>
@@ -239,7 +241,7 @@ export function Dashboard() {
                 type="button"
                 onClick={clearError}
                 className="rounded p-0.5 opacity-70 transition-opacity hover:opacity-100"
-                aria-label="关闭"
+                aria-label={t("关闭")}
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -260,11 +262,11 @@ export function Dashboard() {
                 <div className="lg:col-span-2">
                   <EmptyState
                     icon={<Gauge className="h-5 w-5" />}
-                    title="还没有用量数据"
+                    title={t("还没有用量数据")}
                     description="点击右上角「刷新」获取各 Provider 的最新用量。"
                     action={
                       <Button size="sm" onClick={() => void refreshAll(true)} disabled={refreshing}>
-                        <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} /> 立即刷新
+                        <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} /> {t("立即刷新")}
                       </Button>
                     }
                   />

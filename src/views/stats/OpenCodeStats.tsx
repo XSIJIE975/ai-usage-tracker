@@ -22,6 +22,7 @@ import {
   sumCostUsd,
 } from "./opencode/cost-series";
 import { useHistoryPages } from "./opencode/use-history-pages";
+import { useT } from "../../i18n";
 import { useAutoRefresh } from "./use-auto-refresh";
 import { useGlobalRefresh } from "./use-global-refresh";
 
@@ -70,6 +71,7 @@ export function OpenCodeStats() {
   );
   const history = useHistoryPages(refreshTick);
   const busy = isRefreshing || globalRefreshing;
+  const t = useT();
 
   const costs = monthly.kind === "ready" ? monthly.data.costs : [];
   const keys = monthly.kind === "ready" ? monthly.data.keys : [];
@@ -129,16 +131,17 @@ export function OpenCodeStats() {
       <Card className="relative">
         {busy && <RefreshOverlay />}
         <CardHeader>
-          <CardTitle>成本</CardTitle>
+          <CardTitle>{t("成本")}</CardTitle>
           <CardDescription>
-            按模型细分的使用成本，本月合计 <span className="tnum font-medium text-fg">${monthTotal.toFixed(2)}</span>。
+            {t("按模型细分的使用成本，本月合计")} <span className="tnum font-medium text-fg">${monthTotal.toFixed(2)}</span>。
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4 px-4 pb-4">
           <div className="flex flex-wrap items-center gap-2">
             {/* 月份翻页器 */}
             <div className="inline-flex items-center rounded-md border border-line bg-surface shadow-sm">
-              <IconButton onClick={() => shiftMonth(-1)} aria-label="上一月" title="上一月" className="rounded-r-none">
+              <IconButton onClick={() => shiftMonth(-1)} aria-label={t("上一月")}
+                title={t("上一月")}  className="rounded-r-none">
                 <ChevronLeft className="h-4 w-4" />
               </IconButton>
               <span className="tnum min-w-24 border-x border-line px-3 py-1.5 text-center text-[13px] font-medium text-fg">
@@ -147,20 +150,31 @@ export function OpenCodeStats() {
               <IconButton
                 onClick={() => shiftMonth(1)}
                 disabled={isCurrent}
-                aria-label="下一月"
-                title="下一月"
+                aria-label={t("下一月")}
+                title={t("下一月")}
+                
                 className="rounded-l-none"
               >
                 <ChevronRight className="h-4 w-4" />
               </IconButton>
             </div>
-            <Select options={modelOptions} value={model} onChange={setModel} aria-label="模型筛选" />
-            <Select options={keyOptions} value={keyId} onChange={setKeyId} aria-label="密钥筛选" />
+            <Select
+              options={modelOptions.map((option) => ({ ...option, label: t(option.label) }))}
+              value={model}
+              onChange={setModel}
+              aria-label="模型筛选"
+            />
+            <Select
+              options={keyOptions.map((option) => ({ ...option, label: t(option.label) }))}
+              value={keyId}
+              onChange={setKeyId}
+              aria-label="密钥筛选"
+            />
             <IconButton
               onClick={refresh}
               disabled={busy}
-              aria-label={busy ? "刷新中" : "刷新"}
-              title={busy ? "刷新中" : "刷新"}
+              aria-label={busy ? t("刷新中") : t("刷新")}
+              title={busy ? t("刷新中") : t("刷新")}
             >
               <RefreshCw className={cn("h-4 w-4", busy && "animate-spin")} />
             </IconButton>
@@ -179,15 +193,15 @@ export function OpenCodeStats() {
       {/* 使用历史 */}
       <Card className="relative">
         <CardHeader>
-          <CardTitle>使用历史</CardTitle>
-          <CardDescription>近期 API 使用情况和成本。</CardDescription>
+          <CardTitle>{t("使用历史")}</CardTitle>
+          <CardDescription>{t("近期 API 使用情况和成本。")}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           {history.configNeeded ? (
             <EmptyState
               icon={<KeyRound className="h-5 w-5" />}
-              title={history.errorMessage || "缺少凭据配置"}
-              description="请前往设置页配置 Workspace ID 和 Auth Cookie。"
+              title={history.errorMessage || t("缺少凭据配置")}
+              description={t("请前往设置页配置 Workspace ID 和 Auth Cookie。")}
             />
           ) : (
             <>
@@ -199,11 +213,11 @@ export function OpenCodeStats() {
                 <div className="flex items-center justify-center gap-2">
                   <span className="text-xs text-danger">{history.errorMessage}</span>
                   <Button variant="outline" size="sm" onClick={() => history.goToPage(history.currentPage)}>
-                    重试
+                    {t("重试")}
                   </Button>
                 </div>
               ) : visibleRecords.length === 0 && !history.loading ? (
-                <p className="text-center text-xs text-fg-muted">当前筛选条件下暂无使用记录。</p>
+                <p className="text-center text-xs text-fg-muted">{t("当前筛选条件下暂无使用记录。")}</p>
               ) : (
                 <Pagination
                   currentPage={history.currentPage}

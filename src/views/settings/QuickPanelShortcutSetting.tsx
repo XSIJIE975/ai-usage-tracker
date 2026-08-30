@@ -7,6 +7,7 @@ import { Switch } from "../../components/ui/switch";
 import { useAppStore } from "../../store/useAppStore";
 import { canonicalFromEvent, displayShortcut } from "../../lib/shortcut";
 import { SavedHint, useSaveFlash } from "./save-flash";
+import { useT } from "../../i18n";
 
 /**
  * 快速面板全局快捷键：录制式捕获（按下组合键即录入），保存时真实注册，
@@ -18,6 +19,7 @@ export function QuickPanelShortcutSetting() {
   const { visible, flash } = useSaveFlash();
   const [recording, setRecording] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const t = useT();
 
   async function applyShortcut(canonical: string): Promise<boolean> {
     const previous = useAppStore.getState().settings.quickPanelShortcut;
@@ -35,7 +37,11 @@ export function QuickPanelShortcutSetting() {
       flash();
       return true;
     } catch (error) {
-      setError(error instanceof Error ? error.message : String(error));
+      setError(
+        error instanceof Error
+          ? `${t("快捷键可能与其他程序冲突，请更换")}（${error.message}）`
+          : String(error),
+      );
       // 注册失败时回退：重新注册旧组合
       if (previous) {
         try {
@@ -74,28 +80,28 @@ export function QuickPanelShortcutSetting() {
       <div className="flex items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <Label>快速面板快捷键</Label>
+            <Label>{t("快速面板快捷键")}</Label>
             <SavedHint visible={visible} />
           </div>
           <p className="mt-1 text-[13px] text-fg-muted">
-            全局呼出/收起快速面板。录制时按下组合键即可，Esc 取消。
+            {t("全局呼出/收起快速面板。录制时按下组合键即可，Esc 取消。")}
           </p>
         </div>
         {recording ? (
           <span className="flex h-9 items-center rounded-md border border-brand bg-brand-soft px-3 text-[13px] text-brand">
-            按下组合键…（Esc 取消）
+            {t("按下组合键…（Esc 取消）")}
           </span>
         ) : (
           <Button variant="outline" onClick={() => setRecording(true)}>
             <SquarePen className="h-3.5 w-3.5" />
-            {displayShortcut(settings.quickPanelShortcut)}
+            {displayShortcut(settings.quickPanelShortcut) === "未设置" ? t("未设置") : displayShortcut(settings.quickPanelShortcut)}
           </Button>
         )}
       </div>
       <div className="flex items-center justify-between gap-4">
         <div>
-          <Label>失焦自动隐藏</Label>
-          <p className="mt-1 text-[13px] text-fg-muted">点击面板外部时自动收起快速面板。</p>
+          <Label>{t("失焦自动隐藏")}</Label>
+          <p className="mt-1 text-[13px] text-fg-muted">{t("点击面板外部时自动收起快速面板。")}</p>
         </div>
         <Switch
           checked={settings.quickAutoHide}

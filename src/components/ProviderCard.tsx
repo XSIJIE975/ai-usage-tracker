@@ -87,6 +87,9 @@ function statusBadge(status: ProviderSnapshot["status"]) {
 }
 
 function MetricRow({ line, now }: { line: MetricLine; now: number }) {
+  const t = useT();
+  const label = t(line.label);
+  const valueText = line.value !== undefined ? t(line.value) : undefined;
   if (line.type === "progress") {
     const percent = line.percentUsed ?? (line.limit ? Math.round(((line.used ?? 0) / line.limit) * 100) : 0);
     const remaining =
@@ -100,11 +103,11 @@ function MetricRow({ line, now }: { line: MetricLine; now: number }) {
     return (
       <div className="space-y-1.5 py-2.5">
         <div className="flex items-center justify-between gap-3 text-[13px]">
-          <span className="text-fg-secondary">{line.label}</span>
+          <span className="text-fg-secondary">{label}</span>
           <span className="tnum font-medium text-fg">
             {line.percentUsed !== undefined
-              ? `已用 ${line.percentUsed.toFixed(1)}%`
-              : `${line.suffix}${(line.used ?? 0).toFixed(2)} / ${line.suffix}${(line.limit ?? 0).toFixed(2)}`}
+              ? `${t("已用")} ${line.percentUsed.toFixed(1)}%`
+              : `${line.suffix ?? ""}${(line.used ?? 0).toFixed(2)} / ${line.suffix ?? ""}${(line.limit ?? 0).toFixed(2)}`}
           </span>
         </div>
         <Progress
@@ -113,10 +116,10 @@ function MetricRow({ line, now }: { line: MetricLine; now: number }) {
         />
         <div className="flex items-center justify-between text-xs text-fg-muted">
           <span className="tnum">
-            {line.percentUsed !== undefined ? `剩余 ${remaining?.toFixed(1)}%` : `已用 ${percent}%`}
+            {line.percentUsed !== undefined ? `${t("剩余")} ${remaining?.toFixed(1)}%` : `${t("已用")} ${percent}%`}
           </span>
           {line.resetsAt ? (
-            <span title={resetTitle}>{formatReset(line.resetsAt, now)}</span>
+            <span title={resetTitle}>{formatReset(line.resetsAt, now, t)}</span>
           ) : null}
         </div>
       </div>
@@ -125,12 +128,12 @@ function MetricRow({ line, now }: { line: MetricLine; now: number }) {
 
   return (
     <div className="flex items-center justify-between gap-3 py-2 text-[13px]">
-      <span className="text-fg-secondary">{line.label}</span>
+      <span className="text-fg-secondary">{label}</span>
       <span
         className={cn("tnum font-medium", !line.color && "text-fg")}
         style={line.color ? { color: line.color } : undefined}
       >
-        {line.value}
+        {valueText}
       </span>
     </div>
   );

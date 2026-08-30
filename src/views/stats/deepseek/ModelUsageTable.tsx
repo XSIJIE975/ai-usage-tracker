@@ -2,6 +2,7 @@ import { useState } from "react";
 import { DataTable, THead, TBody, Th, Tr, Td } from "../../../components/ui/data-table";
 import { modelColor } from "../../../components/charts/palette";
 import { formatCompact, formatInt, cn } from "../../../lib/utils";
+import { useT } from "../../../i18n";
 import type { ModelUsage } from "./usage-aggregation";
 
 /** 缓存命中率 = 命中 / (命中 + 未命中)，两位小数百分数；分母为 0 显示 "-"。 */
@@ -30,19 +31,20 @@ function ToggleNumber({ value, className }: { value: number; className?: string 
 
 /** 模型明细表：输入/缓存命中/命中率/输出/合计/请求/费用/占比。table-fixed 固定列宽。 */
 export function ModelUsageTable({ models, totalTokens }: { models: ModelUsage[]; totalTokens: number }) {
+  const t = useT();
   return (
     <DataTable className="table-fixed min-w-[880px]">
       <THead>
         <tr>
-          <Th>模型</Th>
-          <Th align="right" className="w-[104px]">输入 Token</Th>
-          <Th align="right" className="w-[96px]">缓存命中</Th>
-          <Th align="right" className="w-[104px]">缓存命中率</Th>
-          <Th align="right" className="w-[96px]">输出 Token</Th>
-          <Th align="right" className="w-[88px]">合计</Th>
-          <Th align="right" className="w-[84px]">请求次数</Th>
-          <Th align="right" className="w-[92px]">费用（¥）</Th>
-          <Th align="right" className="w-[136px]">占比</Th>
+          <Th>{t("模型")}</Th>
+          <Th align="right" className="w-[104px]">{t("输入 Token")}</Th>
+          <Th align="right" className="w-[96px]">{t("缓存命中")}</Th>
+          <Th align="right" className="w-[104px]">{t("缓存命中率")}</Th>
+          <Th align="right" className="w-[96px]">{t("输出 Token")}</Th>
+          <Th align="right" className="w-[88px]">{t("合计")}</Th>
+          <Th align="right" className="w-[84px]">{t("请求次数")}</Th>
+          <Th align="right" className="w-[92px]">{t("费用（¥）")}</Th>
+          <Th align="right" className="w-[136px]">{t("占比")}</Th>
         </tr>
       </THead>
       <TBody>

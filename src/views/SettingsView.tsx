@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useT } from "../i18n";
 import { AlertTriangle, Settings2 } from "lucide-react";
 import { DeepSeekLogo, OpenCodeLogo } from "../components/brand/provider-logo";
 import { useAppStore } from "../store/useAppStore";
@@ -37,6 +38,7 @@ function ProviderTabLabel({
 }
 
 export function SettingsView() {
+  const t = useT();
   const { vaultStatus, refreshAll } = useAppStore();
   const [tab, setTab] = useState<SettingsTab>("general");
   const unlocked = Boolean(vaultStatus?.unlocked);
@@ -70,7 +72,7 @@ export function SettingsView() {
       {vaultStatus?.keychainLost && (
         <p className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning-soft px-3 py-2 text-[13px] leading-relaxed text-warning-soft-fg">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          本机设备密钥已丢失（常见于换机、重装系统或重置账户密码），原凭据无法恢复。请在供应商页签中重新录入凭据，保存时将重建凭据库。
+          {t("本机设备密钥已丢失（常见于换机、重装系统或重置账户密码），原凭据无法恢复。请在供应商页签中重新录入凭据，保存时将重建凭据库。")}
         </p>
       )}
 
@@ -78,18 +80,18 @@ export function SettingsView() {
         value={tab}
         onChange={setTab}
         items={[
-          { value: "general", label: "通用", icon: <Settings2 className="h-3.5 w-3.5" /> },
+          { value: "general", label: t("通用"), icon: <Settings2 className="h-3.5 w-3.5" /> },
           {
             value: "deepseek",
             label: (
-              <ProviderTabLabel name="DeepSeek 官方" showDot={unlocked} configured={deepseekConfigured} />
+              <ProviderTabLabel name={t("DeepSeek 官方")} showDot={unlocked} configured={deepseekConfigured} />
             ),
             icon: <DeepSeekLogo className="h-3.5 w-3.5" />,
           },
           {
             value: "opencode",
             label: (
-              <ProviderTabLabel name="OpenCode Go" showDot={unlocked} configured={opencodeConfigured} />
+              <ProviderTabLabel name={t("OpenCode Go")} showDot={unlocked} configured={opencodeConfigured} />
             ),
             icon: <OpenCodeLogo className="h-3.5 w-3.5" />,
           },
