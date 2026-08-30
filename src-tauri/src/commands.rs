@@ -278,6 +278,128 @@ pub fn set_tray_alert(app: AppHandle, active: bool) -> Result<(), String> {
     Ok(())
 }
 
+// ─── 全局快捷键 ───
+
+/// 注册快速面板全局快捷键（注销旧组合）。空字符串表示不启用。
+/// 注册失败通常意味着组合被其他程序占用（无法识别具体占用者）。
+pub fn apply_quick_shortcut(app: &AppHandle, shortcut: String) -> Result<(), String> {
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+
+    let state = app.state::<AppState>();
+    {
+        let mut current = state.quick_shortcut.lock().expect("quick_shortcut lock poisoned");
+        if current.as_deref() == Some(shortcut.as_str()) {
+            return Ok(());
+        }
+        if let Some(previous) = current.take() {
+            let _ = app.global_shortcut().unregister(previous.as_str());
+        }
+        if shortcut.is_empty() {
+            return Ok(());
+        }
+        app.global_shortcut()
+            .on_shortcut(shortcut.as_str(), |app, _shortcut, event| {
+                if event.state == ShortcutState::Pressed {
+                    crate::toggle_quick(app);
+                }
+            })
+            .map_err(|error| format!("快捷键注册失败，可能与其他程序冲突：{error}"))?;
+        *current = Some(shortcut);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn register_quick_shortcut(app: AppHandle, shortcut: String) -> Result<(), String> {
+    apply_quick_shortcut(&app, shortcut)
+}
+
+// ─── 连通性诊断 ───
+
+#[derive(Serialize)]
+pub struct DiagnosisResult {
+    pub ok: bool,
+    pub status: u16,
+    pub latency_ms: u64,
+    pub message: String,
+}
+
+/// 用"刚输入、尚未保存"的凭据值发起一次真实探测请求，验证连通性。
+/// auth: "bearer"（携带 credential 作为 Bearer token）| "cookie"（auth=<normalized credential>）
+#[tauri::command]
+pub async fn diagnose_request(
+    url: String,
+    auth: Option<String>,
+    credential: Option<String>,
+    expect_html: Option<bool>,
+) -> Result<DiagnosisResult, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("AI Usage Tracker/0.1.0")
+        .build()
+        .map_err(|error| error.to_string())?;
+
+    let mut request = client.request(Method::GET, &url);
+    match auth.as_deref() {
+        Some("bearer") => {
+            let key = credential
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| "请先填写凭据值".to_string())?;
+            let key = key.trim();
+            request = request.header("Authorization", format!("Bearer {key}"));
+        }
+        Some("cookie") => {
+            let cookie = credential
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| "请先填写凭据值".to_string())?;
+            let normalized = normalize_auth_cookie(&cookie);
+            request = request.header("Cookie", format!("auth={normalized}"));
+            request = request.header(
+                "User-Agent",
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Gecko/20100101 Firefox/148.0",
+            );
+        }
+        _ => {}
+    }
+
+    let started = std::time::Instant::now();
+    let response = request.send().await;
+    let latency_ms = started.elapsed().as_millis() as u64;
+
+    let response = match response {
+        Ok(response) => response,
+        Err(error) => {
+            return Ok(DiagnosisResult {
+                ok: false,
+                status: 0,
+                latency_ms,
+                message: format!("网络请求失败：{error}"),
+            });
+        }
+    };
+
+    let status = response.status().as_u16();
+    let body = response.text().await.unwrap_or_default();
+
+    let (ok, message) = if status == 200 {
+        if expect_html == Some(true) && body.contains("openauth") {
+            (false, "Cookie 已失效（页面跳转到登录）".to_string())
+        } else {
+            (true, format!("连接正常（{latency_ms}ms）"))
+        }
+    } else if status == 401 || status == 403 {
+        (false, format!("凭据无效或已过期（HTTP {status}）"))
+    } else {
+        (false, format!("接口返回 HTTP {status}"))
+    };
+
+    Ok(DiagnosisResult {
+        ok,
+        status,
+        latency_ms,
+        message,
+    })
+}
+
 // ─── 通知 ───
 
 #[tauri::command]

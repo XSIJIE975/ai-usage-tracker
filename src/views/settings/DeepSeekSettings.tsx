@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { AlertTriangle, Save } from "lucide-react";
+import { AlertTriangle, LoaderCircle, Save } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import { Label } from "../../components/ui/label";
@@ -8,6 +8,8 @@ import { Separator } from "../../components/ui/separator";
 import { SecretField, StatusBadge } from "./CredentialInput";
 import { ProviderAutoRefresh } from "./ProviderAutoRefresh";
 import { AlertThresholdSetting } from "./AlertThresholdSetting";
+import { DiagnosisButton } from "./DiagnosisButton";
+import { testDeepSeekApiKey, testDeepSeekUserToken } from "../../diagnostics";
 import { SaveMessageBanner, type ProviderSettingsProps, type SaveMessage } from "./provider-settings";
 import type { CredentialsInput } from "../../types/ipc";
 
@@ -23,6 +25,7 @@ export function DeepSeekSettings({
   const [apiKey, setApiKey] = useState("");
   const [userToken, setUserToken] = useState("");
   const [message, setMessage] = useState<SaveMessage>(null);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     setApiKey(credentials?.deepseekApiKey ?? "");
@@ -33,6 +36,7 @@ export function DeepSeekSettings({
     const input: CredentialsInput = {};
     if (apiKey.trim()) input.deepseekApiKey = apiKey.trim();
     if (userToken.trim()) input.deepseekUserToken = userToken.trim();
+    setSaving(true);
     try {
       await invoke("vault_save_credentials", { credentials: input });
       await onChanged();
@@ -40,10 +44,13 @@ export function DeepSeekSettings({
       setMessage({ kind: "success", text: "凭据已保存，已刷新用量" });
     } catch (error) {
       setMessage({ kind: "error", text: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setSaving(false);
     }
   }
 
   async function clearCredential(field: keyof CredentialsInput) {
+    setSaving(true);
     try {
       await invoke("vault_save_credentials", { credentials: { [field]: null } });
       await onChanged();
@@ -51,6 +58,8 @@ export function DeepSeekSettings({
       setMessage({ kind: "success", text: "凭据已清除" });
     } catch (error) {
       setMessage({ kind: "error", text: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -83,6 +92,10 @@ export function DeepSeekSettings({
             onClear={() => void clearCredential("deepseekApiKey")}
             clearDisabled={!apiKey}
           />
+          <DiagnosisButton
+            test={() => testDeepSeekApiKey(apiKey)}
+            disabled={saveDisabled || saving || !apiKey.trim()}
+          />
         </div>
 
         <div className="space-y-2.5">
@@ -99,6 +112,10 @@ export function DeepSeekSettings({
             onClear={() => void clearCredential("deepseekUserToken")}
             clearDisabled={!userToken}
           />
+          <DiagnosisButton
+            test={() => testDeepSeekUserToken(userToken)}
+            disabled={saveDisabled || saving || !userToken.trim()}
+          />
           <p className="text-xs leading-relaxed text-fg-muted">
             获取方式：打开 platform.deepseek.com 并登录 → F12 打开开发者工具 → Application(应用)
             → Local Storage → https://platform.deepseek.com → 找到键 userToken，其值为 JSON
@@ -106,8 +123,16 @@ export function DeepSeekSettings({
           </p>
         </div>
 
-        <Button disabled={saveDisabled} onClick={() => void saveCredentials()}>
-          <Save className="h-4 w-4" /> 保存凭据
+        <Button disabled={saveDisabled || saving} onClick={() => void saveCredentials()}>
+          {saving ? (
+            <>
+              <LoaderCircle className="h-4 w-4 animate-spin" /> 保存中…
+            </>
+          ) : (
+            <>
+              <Save className="h-4 w-4" /> 保存凭据
+            </>
+          )}
         </Button>
 
         <Separator />

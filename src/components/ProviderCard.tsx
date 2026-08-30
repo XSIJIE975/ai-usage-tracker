@@ -19,6 +19,7 @@ import { DeepSeekLogo, OpenCodeLogo } from "./brand/provider-logo";
 import { loadProviderHistory, type ProviderHistory } from "../stats/snapshot-history";
 import { analyzeBurnRate } from "../stats/burn-rate";
 import { describeBurnRate } from "../stats/burn-rate-format";
+import { useAppStore } from "../store/useAppStore";
 import { cn } from "../lib/utils";
 
 function useNow(intervalMs = 30_000) {
@@ -154,6 +155,37 @@ function useProviderHistory(providerId: string, updatedAt: number): ProviderHist
   return history;
 }
 
+/** 紧凑模式的数据更新时间：相对形式 + 过期警示（超过刷新间隔 1.5 倍未更新） */
+function CompactUpdatedAt({
+  updatedAt,
+  now,
+  intervalMinutes,
+}: {
+  updatedAt: number;
+  now: number;
+  intervalMinutes: number;
+}) {
+  if (updatedAt <= 0) {
+    return <p className="mt-0.5 text-[11px] text-fg-muted">未更新</p>;
+  }
+  const delta = Math.max(0, now - updatedAt);
+  const stale = intervalMinutes > 0 && delta > intervalMinutes * 60_000 * 1.5;
+  const text =
+    delta < 60_000
+      ? "刚刚"
+      : delta < 3_600_000
+        ? `${Math.floor(delta / 60_000)} 分钟前`
+        : formatClock(updatedAt);
+  return (
+    <p
+      className={cn("tnum mt-0.5 text-[11px]", stale ? "text-warning" : "text-fg-muted")}
+      title={`更新于 ${formatClock(updatedAt)}`}
+    >
+      更新于 {text}
+    </p>
+  );
+}
+
 export function ProviderCard({
   snapshot,
   compact = false,
@@ -167,6 +199,7 @@ export function ProviderCard({
 }) {
   const needsConfig = snapshot.status === "needs_config";
   const now = useNow();
+  const refreshIntervalMinutes = useAppStore((state) => state.settings.refreshIntervalMinutes);
   const history = useProviderHistory(snapshot.providerId, snapshot.updatedAt);
 
   // 有重置时间的指标（额度窗口）按"用满"预测，否则按"耗尽"预测（余额）
@@ -200,8 +233,14 @@ export function ProviderCard({
           <ProviderAvatar providerId={snapshot.providerId} name={snapshot.providerName} />
           <div className="min-w-0">
             <CardTitle className="truncate text-sm">{snapshot.providerName}</CardTitle>
-            {!compact && (
+            {!compact ? (
               <p className="tnum mt-0.5 text-xs text-fg-muted">更新于 {formatClock(snapshot.updatedAt)}</p>
+            ) : (
+              <CompactUpdatedAt
+                updatedAt={snapshot.updatedAt}
+                now={now}
+                intervalMinutes={refreshIntervalMinutes}
+              />
             )}
           </div>
         </div>

@@ -108,6 +108,45 @@ export function Dashboard() {
     void useNotificationStore.getState().load();
   }, []);
 
+  // 快速面板触发的"打开通知中心"
+  useEffect(() => {
+    let disposed = false;
+    let stop: UnlistenFn | undefined;
+    void listen("open-notifications", () => {
+      if (!disposed) setNoticeOpen(true);
+    })
+      .then((unlisten) => {
+        if (disposed) unlisten();
+        else stop = unlisten;
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+      stop?.();
+    };
+  }, []);
+
+  // 其他窗口（快速面板）刷新产生的告警态变化同步到本窗口
+  useEffect(() => {
+    let disposed = false;
+    let stop: UnlistenFn | undefined;
+    void listen<{ providerId: string; active: boolean }>("alert-state-changed", (event) => {
+      if (disposed) return;
+      useAlertStore.setState((state) => ({
+        active: { ...state.active, [event.payload.providerId]: event.payload.active },
+      }));
+    })
+      .then((unlisten) => {
+        if (disposed) unlisten();
+        else stop = unlisten;
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+      stop?.();
+    };
+  }, []);
+
   // 托盘图标随告警状态切换（去重，避免重复 set）
   const alertActiveMap = useAlertStore((state) => state.active);
   const anyAlertActive = Object.values(alertActiveMap).some(Boolean);
