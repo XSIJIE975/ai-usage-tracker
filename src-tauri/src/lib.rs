@@ -100,6 +100,7 @@ pub fn run() {
             commands::hide_quick_window,
             commands::toggle_quick_window,
             commands::register_quick_shortcut,
+            commands::refresh_tray_menu,
             commands::diagnose_request,
             commands::quit_app,
         ])
@@ -107,11 +108,16 @@ pub fn run() {
         .expect("error while running AI Usage Tracker");
 }
 
+fn build_tray_menu(app: &AppHandle, lang: &str) -> tauri::Result<Menu<tauri::Wry>> {
+    let en = lang == "en";
+    let open = MenuItem::with_id(app, "open", if en { "Open main window" } else { "打开主窗口" }, true, None::<&str>)?;
+    let quick = MenuItem::with_id(app, "quick", if en { "Show quick panel" } else { "显示快速面板" }, true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", if en { "Quit" } else { "退出" }, true, None::<&str>)?;
+    Menu::with_items(app, &[&open, &quick, &quit])
+}
+
 fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
-    let open = MenuItem::with_id(app, "open", "打开主窗口", true, None::<&str>)?;
-    let quick = MenuItem::with_id(app, "quick", "显示快速面板", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &quick, &quit])?;
+    let menu = build_tray_menu(app, "zh")?;
 
     let mut builder = TrayIconBuilder::with_id("main-tray")
         .menu(&menu)

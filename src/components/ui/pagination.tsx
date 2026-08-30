@@ -1,5 +1,6 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { useT } from "../../i18n";
 
 /**
  * 分页器组件（docs/DESIGN.md#数据表格）：
@@ -24,6 +25,7 @@ export function Pagination({
   onPageChange: (page: number) => void;
   className?: string;
 }) {
+  const t = useT();
   return (
     <div className={cn("flex items-center justify-center gap-4 pt-1", className)}>
       <button
@@ -35,14 +37,14 @@ export function Pagination({
           "hover:bg-surface-2 hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring",
           "disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent",
         )}
-        aria-label="上一页"
+        aria-label={t("上一页")}
       >
         <ChevronLeft className="h-3.5 w-3.5" />
-        上一页
+        {t("上一页")}
       </button>
 
       <span className="tnum text-[13px] text-fg-muted">
-        第 {currentPage + 1} 页
+        {t("第")} {currentPage + 1} {t("页")}
         {totalPages !== undefined ? ` / ${totalPages}` : ""}
       </span>
 
@@ -55,9 +57,9 @@ export function Pagination({
           "hover:bg-surface-2 hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring",
           "disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent",
         )}
-        aria-label="下一页"
+        aria-label={t("下一页")}
       >
-        下一页
+        {t("下一页")}
         <ChevronRight className="h-3.5 w-3.5" />
       </button>
     </div>

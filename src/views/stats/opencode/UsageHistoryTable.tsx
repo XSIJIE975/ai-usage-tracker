@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { DataTable, THead, TBody, Th, Tr, Td } from "../../../components/ui/data-table";
 import { modelColor } from "../../../components/charts/palette";
 import { formatInt } from "../../../lib/utils";
-import { useT } from "../../../i18n";
+import { useLanguage, useT } from "../../../i18n";
 import type { OpenCodeUsageRecord } from "../../../providers/opencode-stats";
 
 /** 表格内 token 数前的迷你柱状 glyph（参照产品截图形态） */
@@ -17,10 +17,13 @@ function InlineBars() {
   );
 }
 
-/** ISO 时间 → 本地 "M月D日 HH:mm" */
-const formatRecordTime = (iso: string): string => {
+/** ISO 时间 → 本地时间文本：zh "M月D日 HH:mm"、en "Aug 26, 15:26" */
+const formatRecordTime = (iso: string, language: string): string => {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "-";
+  if (language === "en") {
+    return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
+  }
   const pad2 = (n: number): string => String(n).padStart(2, "0");
   return `${date.getMonth() + 1}月${date.getDate()}日 ${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
 };
@@ -40,6 +43,7 @@ export function UsageHistoryTable({
 }) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const t = useT();
+  const language = useLanguage();
 
   useEffect(() => {
     viewportRef.current?.scrollTo({ top: 0 });
@@ -60,7 +64,7 @@ export function UsageHistoryTable({
       <TBody>
         {records.map((record) => (
           <Tr key={record.id || `${record.timeCreated}-${record.model}`}>
-            <Td className="whitespace-nowrap text-fg-secondary">{formatRecordTime(record.timeCreated)}</Td>
+            <Td className="whitespace-nowrap text-fg-secondary">{formatRecordTime(record.timeCreated, language)}</Td>
             <Td>
               <div className="flex items-center gap-2">
                 <span
