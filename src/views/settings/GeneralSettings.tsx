@@ -79,6 +79,28 @@ export function GeneralSettings() {
 
       <AppearanceCard />
 
+      <Card>
+        <CardHeader className="flex-row items-start justify-between space-y-0">
+          <div className="space-y-1.5">
+            <CardTitle>用量告警</CardTitle>
+            <CardDescription>
+              {settings.alertsEnabled
+                ? "余额/额度越过阈值时发送系统通知，并计入通知中心。"
+                : "已关闭，不会发送任何告警通知。"}
+            </CardDescription>
+          </div>
+          <Switch
+            checked={settings.alertsEnabled}
+            onCheckedChange={(value) => void save({ alertsEnabled: value })}
+          />
+        </CardHeader>
+        <CardContent>
+          <p className="text-[13px] text-fg-muted">
+            各供应商的阈值在其页签中设置；触发后 6 小时内不会重复通知，恢复到阈值以上会自动解除。
+          </p>
+        </CardContent>
+      </Card>
+
       <AboutCard />
 
       <UpdateCard />

@@ -7,11 +7,25 @@ use serde_json::Value;
 /// 快照保留期：90 天，打开数据库时清理更早的历史
 const SNAPSHOT_RETENTION_MS: i64 = 90 * 24 * 60 * 60 * 1000;
 
+/// 通知保留期与条数上限：30 天 / 200 条，插入时顺带清理
+const NOTIFICATION_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1000;
+const NOTIFICATION_MAX_COUNT: i64 = 200;
+
 #[derive(Serialize)]
 pub struct StoredSnapshot {
     pub provider_id: String,
     pub captured_at: i64,
     pub payload: Value,
+}
+
+#[derive(Serialize)]
+pub struct StoredNotification {
+    pub id: i64,
+    pub created_at: i64,
+    pub provider_id: String,
+    pub title: String,
+    pub body: String,
+    pub read: bool,
 }
 
 pub struct Db {
@@ -39,6 +53,18 @@ impl Db {
 
             CREATE INDEX IF NOT EXISTS idx_snapshots_provider_id
                 ON snapshots(provider_id, id DESC);
+
+            CREATE TABLE IF NOT EXISTS notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at INTEGER NOT NULL,
+                provider_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                body TEXT NOT NULL,
+                read INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_notifications_created
+                ON notifications(created_at DESC);
             "#,
         )
         .map_err(|error| error.to_string())?;
@@ -61,6 +87,11 @@ impl Db {
             "providers": {
                 "opencode-go": true,
                 "deepseek": true
+            },
+            "alertsEnabled": true,
+            "alertThresholds": {
+                "deepseekBalanceBelowCny": 50,
+                "opencodeMonthlyUsedPercent": 80
             }
         });
         let row = self
@@ -179,6 +210,117 @@ impl Db {
         // SQL 按时间倒序取最新 N 条，返回时转为时间正序
         result.reverse();
         Ok(result)
+    }
+
+    // ─── 通知 ───
+
+    /// 写入一条告警通知，并按保留策略（30 天 / 200 条）清理旧数据
+    pub fn add_notification(
+        &self,
+        provider_id: &str,
+        title: &str,
+        body: &str,
+    ) -> Result<StoredNotification, String> {
+        let created_at = chrono_utc_now();
+        self.conn
+            .execute(
+                "INSERT INTO notifications(created_at, provider_id, title, body) VALUES(?1, ?2, ?3, ?4)",
+                rusqlite::params![created_at, provider_id, title, body],
+            )
+            .map_err(|error| error.to_string())?;
+        let id = self.conn.last_insert_rowid();
+
+        let retention_cutoff = created_at - NOTIFICATION_RETENTION_MS;
+        if let Err(error) = self.conn.execute(
+            "DELETE FROM notifications WHERE created_at < ?1",
+            [retention_cutoff],
+        ) {
+            eprintln!("清理过期通知失败：{error}");
+        }
+        if let Err(error) = self.conn.execute(
+            r#"
+            DELETE FROM notifications
+            WHERE id NOT IN (
+                SELECT id FROM notifications
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?1
+            )
+            "#,
+            [NOTIFICATION_MAX_COUNT],
+        ) {
+            eprintln!("裁剪通知数量失败：{error}");
+        }
+
+        Ok(StoredNotification {
+            id,
+            created_at,
+            provider_id: provider_id.to_string(),
+            title: title.to_string(),
+            body: body.to_string(),
+            read: false,
+        })
+    }
+
+    pub fn list_notifications(&self, limit: i64) -> Result<Vec<StoredNotification>, String> {
+        let mut statement = self
+            .conn
+            .prepare(
+                r#"
+                SELECT id, created_at, provider_id, title, body, read
+                FROM notifications
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?1
+                "#,
+            )
+            .map_err(|error| error.to_string())?;
+        let rows = statement
+            .query_map([limit], |row| {
+                Ok(StoredNotification {
+                    id: row.get(0)?,
+                    created_at: row.get(1)?,
+                    provider_id: row.get(2)?,
+                    title: row.get(3)?,
+                    body: row.get(4)?,
+                    read: row.get::<_, i64>(5)? != 0,
+                })
+            })
+            .map_err(|error| error.to_string())?;
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row.map_err(|error| error.to_string())?);
+        }
+        Ok(result)
+    }
+
+    pub fn unread_notification_count(&self) -> Result<i64, String> {
+        self.conn
+            .query_row(
+                "SELECT COUNT(*) FROM notifications WHERE read = 0",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn mark_all_notifications_read(&self) -> Result<(), String> {
+        self.conn
+            .execute("UPDATE notifications SET read = 1 WHERE read = 0", [])
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    pub fn delete_notification(&self, id: i64) -> Result<(), String> {
+        self.conn
+            .execute("DELETE FROM notifications WHERE id = ?1", [id])
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    pub fn clear_notifications(&self) -> Result<(), String> {
+        self.conn
+            .execute("DELETE FROM notifications", [])
+            .map_err(|error| error.to_string())?;
+        Ok(())
     }
 }
 

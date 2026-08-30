@@ -27,6 +27,7 @@ pub fn run() {
                 let _ = main.set_focus();
             }
         }))
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
@@ -70,6 +71,13 @@ pub fn run() {
             commands::save_snapshot,
             commands::get_latest_snapshots,
             commands::list_snapshots,
+            commands::set_tray_alert,
+            commands::add_notification,
+            commands::list_notifications,
+            commands::unread_notification_count,
+            commands::mark_all_notifications_read,
+            commands::delete_notification,
+            commands::clear_notifications,
             commands::provider_request,
             commands::open_main_window,
             commands::hide_quick_window,
@@ -86,7 +94,7 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&open, &quick, &quit])?;
 
-    let mut builder = TrayIconBuilder::new()
+    let mut builder = TrayIconBuilder::with_id("main-tray")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {

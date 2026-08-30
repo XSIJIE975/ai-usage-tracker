@@ -1,13 +1,18 @@
-import { useEffect, useState } from "react";
-import { AlertCircle, ArrowUpCircle, Gauge, LayoutGrid, PieChart, RefreshCw, Settings, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { AlertCircle, ArrowUpCircle, Bell, Gauge, LayoutGrid, PieChart, RefreshCw, Settings, X } from "lucide-react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useAppStore } from "../store/useAppStore";
+import { useAlertStore } from "../store/useAlertStore";
+import { selectUnreadCount, useNotificationStore } from "../store/useNotificationStore";
 import { providerModules } from "../providers";
 import { Button } from "../components/ui/button";
 import { Segmented } from "../components/ui/segmented";
 import { EmptyState } from "../components/ui/empty-state";
 import { BrandIcon } from "../components/BrandIcon";
+import { IconButton } from "../components/ui/icon-button";
 import { ProviderCard } from "../components/ProviderCard";
+import { NotificationCenterPanel } from "./NotificationCenterPanel";
 import { SettingsView } from "./SettingsView";
 import { StatsView } from "./stats/StatsView";
 import { formatClock } from "../lib/utils";
@@ -30,6 +35,7 @@ export function Dashboard() {
     lastRefreshedAt: storeLastRefreshedAt,
   } = useAppStore();
   const [view, setView] = useState<ViewKey>("overview");
+  const [noticeOpen, setNoticeOpen] = useState(false);
   const [remoteRefreshedAt, setRemoteRefreshedAt] = useState(0);
 
   useEffect(() => {
@@ -96,6 +102,22 @@ export function Dashboard() {
   const anyProviderRefreshing = Object.values(refreshingProviders).some(Boolean);
   const refreshing = loading || anyProviderRefreshing;
 
+  // 通知中心：主窗口启动时加载历史；未读数驱动铃铛徽标
+  const unread = useNotificationStore(selectUnreadCount);
+  useEffect(() => {
+    void useNotificationStore.getState().load();
+  }, []);
+
+  // 托盘图标随告警状态切换（去重，避免重复 set）
+  const alertActiveMap = useAlertStore((state) => state.active);
+  const anyAlertActive = Object.values(alertActiveMap).some(Boolean);
+  const trayAlertRef = useRef(false);
+  useEffect(() => {
+    if (trayAlertRef.current === anyAlertActive) return;
+    trayAlertRef.current = anyAlertActive;
+    void invoke("set_tray_alert", { active: anyAlertActive }).catch(() => undefined);
+  }, [anyAlertActive]);
+
   return (
     <div className="flex h-full flex-col bg-canvas">
       <header className="flex items-center justify-between border-b border-line bg-surface px-6 py-3.5">
@@ -136,6 +158,27 @@ export function Dashboard() {
               <ArrowUpCircle className="h-3.5 w-3.5" /> 新版本 v{updateVersion}
             </Button>
           )}
+          <div className="relative">
+            <IconButton
+              onClick={() => setNoticeOpen((open) => !open)}
+              title="通知中心"
+              aria-label={`通知中心${unread > 0 ? `（${unread} 条未读）` : ""}`}
+              className="relative h-8"
+            >
+              <Bell className="h-4 w-4" />
+              {unread > 0 && (
+                <span className="tnum absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-medium leading-none text-white">
+                  {unread > 99 ? "99+" : unread}
+                </span>
+              )}
+            </IconButton>
+            {noticeOpen && (
+              <>
+                <div className="fixed inset-0 z-20" onClick={() => setNoticeOpen(false)} aria-hidden />
+                <NotificationCenterPanel onClose={() => setNoticeOpen(false)} />
+              </>
+            )}
+          </div>
           <Button size="sm" variant="outline" onClick={() => void refreshAll(true)} disabled={refreshing}>
             <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} /> 刷新
           </Button>

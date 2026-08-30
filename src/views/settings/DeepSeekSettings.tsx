@@ -7,6 +7,7 @@ import { Label } from "../../components/ui/label";
 import { Separator } from "../../components/ui/separator";
 import { SecretField, StatusBadge } from "./CredentialInput";
 import { ProviderAutoRefresh } from "./ProviderAutoRefresh";
+import { AlertThresholdSetting } from "./AlertThresholdSetting";
 import { SaveMessageBanner, type ProviderSettingsProps, type SaveMessage } from "./provider-settings";
 import type { CredentialsInput } from "../../types/ipc";
 
@@ -112,6 +113,10 @@ export function DeepSeekSettings({
         <Separator />
 
         <ProviderAutoRefresh providerId="deepseek" onOpenGeneral={onOpenGeneral} />
+
+        <Separator />
+
+        <AlertThresholdSetting providerId="deepseek" />
       </CardContent>
     </Card>
   );
