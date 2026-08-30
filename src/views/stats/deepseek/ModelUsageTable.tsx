@@ -31,7 +31,7 @@ function ToggleNumber({ value, className }: { value: number; className?: string 
 /** 模型明细表：输入/缓存命中/命中率/输出/合计/请求/费用/占比。table-fixed 固定列宽。 */
 export function ModelUsageTable({ models, totalTokens }: { models: ModelUsage[]; totalTokens: number }) {
   return (
-    <DataTable className="table-fixed">
+    <DataTable className="table-fixed min-w-[880px]">
       <THead>
         <tr>
           <Th>模型</Th>
@@ -52,10 +52,10 @@ export function ModelUsageTable({ models, totalTokens }: { models: ModelUsage[];
           return (
             <Tr key={model.model}>
               <Td>
-                <span className="inline-flex items-center gap-2 overflow-hidden">
+                <div className="flex items-center gap-2">
                   <span className="h-2.5 w-2.5 shrink-0 rounded-[3px]" style={{ backgroundColor: color }} />
-                  <span className="truncate font-mono text-xs">{model.model}</span>
-                </span>
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs">{model.model}</span>
+                </div>
               </Td>
               <Td align="right"><ToggleNumber value={model.inputTokens} /></Td>
               <Td align="right"><ToggleNumber value={model.cacheHitTokens} /></Td>
