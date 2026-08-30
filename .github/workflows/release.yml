@@ -76,16 +76,14 @@ jobs:
             const owner = context.repo.owner
             const repo = context.repo.repo
 
-            let release = null
-            try {
-              release = await github.rest.repos.getReleaseByTag({
-                owner,
-                repo,
-                tag: tagName
-              })
-            } catch {
-              release = null
-            }
+            // getReleaseByTag 查不到 draft 状态的 Release（draft 尚无真实 tag），
+            // 因此用 listReleases 按 tag_name 匹配，避免每次手动重建都新建重复草稿
+            const releases = await github.paginate(github.rest.repos.listReleases, {
+              owner,
+              repo,
+              per_page: 100
+            })
+            const release = releases.find((item) => item.tag_name === tagName) ?? null
 
             if (release) {
               const updated = await github.rest.repos.updateRelease({
