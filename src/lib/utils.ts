@@ -44,12 +44,41 @@ export function formatClock(ts: number | string | null | undefined) {
   }).format(date);
 }
 
+/** 紧凑数字格式：1234 → 1,234；1520704 → 1.5M（图表轴与统计卡使用） */
+export function formatCompact(value: number) {
+  if (!Number.isFinite(value)) return "-";
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (abs >= 10_000) return `${(value / 1_000).toFixed(0)}K`;
+  if (abs >= 1_000) return `${(value / 1_000).toFixed(1).replace(/\.0$/, "")}K`;
+  return String(Math.round(value));
+}
+
+/** 千分位整数：152704 → 152,704 */
+export function formatInt(value: number) {
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
+}
+
+/** 字节数可读化：1536 → 1.5 KB；5242880 → 5 MB */
+export function formatBytes(value: number) {
+  if (!Number.isFinite(value) || value < 0) return "-";
+  const units = ["B", "KB", "MB", "GB"];
+  let index = 0;
+  let scaled = value;
+  while (scaled >= 1024 && index < units.length - 1) {
+    scaled /= 1024;
+    index += 1;
+  }
+  const text = index === 0 ? String(Math.round(scaled)) : scaled.toFixed(1).replace(/\.0$/, "");
+  return `${text} ${units[index]}`;
+}
+
 export function formatReset(iso?: string | null, now = Date.now()) {
   if (!iso) return "重置时间未知";
   const diff = new Date(iso).getTime() - now;
   if (!Number.isFinite(diff)) return "重置时间未知";
   if (diff <= 0) return "即将重置";
-  const totalMinutes = Math.max(1, Math.ceil(diff / 60_000));
+  const totalMinutes = Math.max(1, Math.floor(diff / 60_000));
   const days = Math.floor(totalMinutes / 1_440);
   const hours = Math.floor((totalMinutes % 1_440) / 60);
   const minutes = totalMinutes % 60;

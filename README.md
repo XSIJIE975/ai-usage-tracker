@@ -5,8 +5,8 @@
 ## 功能
 
 - 系统托盘快速面板：点击托盘图标查看 OpenCode Go 5 小时/周/月额度和 DeepSeek 余额。
-- 主窗口：Credential Vault 创建/解锁、Provider 凭据配置、刷新策略和用量卡片。
-- 自研 Credential Vault：主密码 + Argon2id + AES-256-GCM，不依赖系统钥匙串。
+- 主窗口：用量总览卡片、用量统计图表、Provider 凭据配置与刷新策略。
+- 凭据本地加密：凭据以 AES-256-GCM 加密存储在本机，加密密钥托管在系统钥匙串，启动即用、全程无需输入密码。
 - OpenCode Go：优先尝试官方 `/zen/go/v1/usage`，未上线时降级抓取后台页面解析账号真值。
 - DeepSeek：通过官方 API Key 查询余额、可用状态和刷新时间。
 - 刷新策略：可自定义分钟数，最大 120 分钟，超过 60 分钟显示为小时，可禁用自动刷新。
@@ -26,14 +26,10 @@ pnpm tauri dev
 pnpm test
 cd src-tauri && cargo test
 pnpm build
-pnpm tauri build
+pnpm tauri build --no-sign
 ```
 
-Windows 本地如果 NSIS 下载超时，可以先生成 MSI：
-
-```sh
-pnpm tauri build --bundles msi
-```
+构建默认会产出供自动更新使用的签名产物，需要 `TAURI_SIGNING_PRIVATE_KEY`（及密码）；本地开发没有密钥时用 `--no-sign` 跳过。
 
 ## 版本与发布流程
 
@@ -47,16 +43,30 @@ pnpm tauri build --bundles msi
 
 发布 workflow 使用 `package.json` 作为版本源，并自动同步 `src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 和 `src-tauri/tauri.conf.json`。
 
+安装包与更新通道：
+
+- 三平台产物：Windows 为 NSIS（按当前用户安装，更新无需管理员权限）、macOS 为 DMG、Linux 为 DEB + AppImage。
+- 构建使用仓库 Secrets（`TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`）签名更新产物，并随安装包上传 `latest.json` 更新清单。
+- 手动发布 draft release 后，旧版本启动时会静默检测到新版本：顶栏出现「新版本」徽标，设置 → 通用 →「关于与更新」可下载并安装。
+- 0.1.0 及更早的安装没有更新能力，需要手动下载安装包重装一次；之后的版本均可自动更新。
+
 ## 使用
 
-1. 首次启动创建 Credential Vault 主密码。
-2. 在“设置”中填写：
+1. 在“设置”中填写：
    - DeepSeek API Key：`sk-...`
+   - DeepSeek UserToken：platform.deepseek.com 网页登录态令牌，统计页使用（获取方式见下）
    - OpenCode Go Workspace ID：后台 URL 中的 `wrk_...`
    - OpenCode Auth Cookie：登录 `opencode.ai` 后浏览器里的 `auth` Cookie 值
    - OpenCode Go API Key（可选）：官方 `/usage` 接口上线后使用
-3. 设置自动刷新间隔，或点击“刷新”手动更新。
-4. 关闭主窗口后应用继续驻留托盘；托盘图标可打开快速面板。
+2. 设置自动刷新间隔，或点击“刷新”手动更新。
+3. 关闭主窗口后应用继续驻留托盘；托盘图标可打开快速面板。
+
+DeepSeek UserToken 获取方式（统计页使用，与 API Key 是两种不同凭据）：
+
+1. 打开 `https://platform.deepseek.com` 并登录。
+2. 按 F12 打开开发者工具，进入 Application → Local Storage → `https://platform.deepseek.com`。
+3. 找到键 `userToken`，其值是一个 JSON 对象，复制其中 `token` 字段的字符串值。
+4. Token 过期后统计页会提示重新填写。
 
 OpenCode Go Auth Cookie 获取方式：
 
@@ -68,13 +78,15 @@ OpenCode Go Auth Cookie 获取方式：
 
 ## 数据与安全
 
-- 凭据保存在应用数据目录的 `vault.json` 中，使用主密码派生密钥加密。
+- 凭据保存在应用数据目录的 `vault.json` 中，以 AES-256-GCM 加密；加密密钥为随机生成的设备密钥，托管在系统钥匙串（Windows 凭据管理器 / macOS 钥匙串 / Linux Secret Service）。
 - 用量快照保存在本地 SQLite 数据库 `ai-usage-tracker.db`。
 - 应用不会上传凭据或用量数据到第三方服务。
-- 忘记主密码将无法恢复已保存凭据。
+- 系统钥匙串中的设备密钥丢失（如重装系统、更换设备）后，凭据无法解密，需要重新录入。
 
 ## 已知边界
 
 - OpenCode Go 官方 `/zen/go/v1/usage` 当前线上 404，主要依赖 dashboard scraping，页面结构变化时可能需要更新解析器。
 - Auth Cookie 可能过期，出现 HTTP 401/403 时需要在设置中重新填写。
+- 统计页通过平台网页端私有接口取数（详见 ADR 0006）：opencode.ai 侧依赖构建产物中的 `x-server-id` 常量，平台重新部署可能使其失效；DeepSeek 平台网页接口同样无兼容性承诺。失效时会在界面给出明确错误提示。
+- DeepSeek UserToken 为网页登录态凭据，会过期，需要在设置中重新粘贴。
 - 本机已完成 Windows 验证；macOS/Linux 实机验证由三平台 CI 承担。

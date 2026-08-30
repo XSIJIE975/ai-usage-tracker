@@ -24,3 +24,11 @@ release-body.md
 *.njsproj
 *.sln
 *.sw?
+
+# WorkBuddy / OMO 本地数据
+.workbuddy/
+.omo/
+
+# Updater 签名私钥（正式存放于仓库外 ~/.tauri/，此处为防御性条目）
+*.key
+*.key.pub

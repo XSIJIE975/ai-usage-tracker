@@ -1,0 +1,103 @@
+;0x0000606c;
+((self.$R = self.$R || {})["server-fn:1"] = [],
+($R => $R[0] = [$R[1] = {
+    id: "usg_01M0RQAHVRFTDQ51HDN47DM8CW",
+    workspaceID: "wrk_TESTWORKSPACE00000000000",
+    timeCreated: $R[2] = new Date("2026-08-24T01:49:24.000Z"),
+    timeUpdated: $R[3] = new Date("2026-08-24T01:49:24.745Z"),
+    timeDeleted: null,
+    model: "ox-alpha-free",
+    provider: "inf-go.oa-compat",
+    inputTokens: 328,
+    outputTokens: 376,
+    reasoningTokens: 24,
+    cacheReadTokens: 83520,
+    cacheWrite5mTokens: null,
+    cacheWrite1hTokens: null,
+    cost: 0,
+    keyID: "key_TESTKEYAAAAAAAAAAAAAAAAA",
+    sessionID: "ses_TESTSESSION00000000001",
+    enrichment: $R[4] = {
+        plan: "lite"
+    }
+}, $R[5] = {
+    id: "usg_01M0RQ9YV4KAVD40E5AGMHNRHG",
+    workspaceID: "wrk_TESTWORKSPACE00000000000",
+    timeCreated: $R[6] = new Date("2026-08-24T01:49:05.000Z"),
+    timeUpdated: $R[7] = new Date("2026-08-24T01:49:05.268Z"),
+    timeDeleted: null,
+    model: "ox-alpha-free",
+    provider: "inf-go.oa-compat",
+    inputTokens: 206,
+    outputTokens: 147,
+    reasoningTokens: 0,
+    cacheReadTokens: 83328,
+    cacheWrite5mTokens: null,
+    cacheWrite1hTokens: null,
+    cost: 0,
+    keyID: "key_TESTKEYAAAAAAAAAAAAAAAAA",
+    sessionID: "",
+    enrichment: $R[8] = {
+        plan: "lite"
+    }
+}, $R[9] = {
+    id: "usg_01M0RQ7Y5D0HMQFCMN48H0FD00",
+    workspaceID: "wrk_TESTWORKSPACE00000000000",
+    timeCreated: $R[10] = new Date("2026-08-24T01:47:59.000Z"),
+    timeUpdated: $R[11] = new Date("2026-08-24T01:47:59.039Z"),
+    timeDeleted: null,
+    model: "ox-alpha-free",
+    provider: "inf-go.oa-compat",
+    inputTokens: 538,
+    outputTokens: 33,
+    reasoningTokens: 0,
+    cacheReadTokens: 81600,
+    cacheWrite5mTokens: null,
+    cacheWrite1hTokens: null,
+    cost: 0,
+    keyID: "key_TESTKEYAAAAAAAAAAAAAAAAA",
+    sessionID: "",
+    enrichment: $R[12] = {
+        plan: "lite"
+    }
+}, $R[13] = {
+    id: "usg_01M0RQ31RM38J3J2A6XVFPQGS2",
+    workspaceID: "wrk_TESTWORKSPACE00000000000",
+    timeCreated: $R[14] = new Date("2026-08-24T01:45:18.000Z"),
+    timeUpdated: $R[15] = new Date("2026-08-24T01:45:18.887Z"),
+    timeDeleted: null,
+    model: "mimo-v2.5",
+    provider: "inf-go.oa-compat",
+    inputTokens: 420,
+    outputTokens: 72,
+    reasoningTokens: 0,
+    cacheReadTokens: 46272,
+    cacheWrite5mTokens: null,
+    cacheWrite1hTokens: null,
+    cost: 20852,
+    keyID: "key_TESTKEYAAAAAAAAAAAAAAAAA",
+    sessionID: "",
+    enrichment: $R[16] = {
+        plan: "lite"
+    }
+}, $R[17] = {
+    id: "usg_01M0RPW7E6M2F597D8EVXF0YZ2",
+    workspaceID: "wrk_TESTWORKSPACE00000000000",
+    timeCreated: $R[18] = new Date("2026-08-24T01:41:35.000Z"),
+    timeUpdated: $R[19] = new Date("2026-08-24T01:41:35.336Z"),
+    timeDeleted: null,
+    model: "mimo-v2.5",
+    provider: "inf-go.oa-compat",
+    inputTokens: 1311,
+    outputTokens: 187,
+    reasoningTokens: 0,
+    cacheReadTokens: 44544,
+    cacheWrite5mTokens: null,
+    cacheWrite1hTokens: null,
+    cost: 36062,
+    keyID: "key_TESTKEYAAAAAAAAAAAAAAAAA",
+    sessionID: "ses_TESTSESSION00000000002",
+    enrichment: $R[20] = {
+        plan: "lite"
+    }
+}])($R["server-fn:1"]))

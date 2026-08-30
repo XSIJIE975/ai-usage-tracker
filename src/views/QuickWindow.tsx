@@ -2,9 +2,11 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { GripHorizontal, RefreshCw, Settings, X } from "lucide-react";
+import { Gauge, Lock, RefreshCw, X } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import { Button } from "../components/ui/button";
+import { IconButton } from "../components/ui/icon-button";
+import { BrandIcon } from "../components/BrandIcon";
 import { ProviderCard } from "../components/ProviderCard";
 import { cn } from "../lib/utils";
 
@@ -70,59 +72,64 @@ export function QuickWindow() {
   }
 
   const anyProviderRefreshing = Object.values(refreshingProviders).some(Boolean);
+  const refreshing = loading || anyProviderRefreshing;
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl">
+    <div className="flex h-screen flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-pop">
       <header
         data-tauri-drag-region
-        className="flex h-12 shrink-0 items-center justify-between border-b border-slate-100 bg-slate-50 px-3"
+        className="flex h-11 shrink-0 items-center justify-between border-b border-line bg-surface-2/60 px-3"
       >
         <div className="flex items-center gap-2" data-tauri-drag-region>
-          <GripHorizontal className="h-4 w-4 text-slate-400" />
-          <span className="text-sm font-semibold text-slate-800">AI 用量助手</span>
+          <BrandIcon size={20} className="rounded-[5px]" />
+          <span className="text-[13px] font-semibold text-fg">AI 用量助手</span>
         </div>
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
+        <div className="flex items-center gap-0.5">
+          <IconButton
             onClick={() => void refreshAll(true)}
-            disabled={loading || anyProviderRefreshing}
-            className="flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-200 disabled:opacity-50"
+            disabled={refreshing}
             title="刷新"
+            aria-label="刷新"
           >
-            <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
-          </button>
-          <button
-            type="button"
-            onClick={openMain}
-            className="flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-200"
-            title="打开主窗口"
-          >
-            <Settings className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            onClick={hideQuick}
-            className="flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-200"
-            title="隐藏"
-          >
-            <X className="h-4 w-4" />
-          </button>
+            <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
+          </IconButton>
+          <IconButton onClick={openMain} title="打开主窗口" aria-label="打开主窗口">
+            <Gauge className="h-3.5 w-3.5" />
+          </IconButton>
+          <IconButton onClick={hideQuick} title="隐藏" aria-label="隐藏">
+            <X className="h-3.5 w-3.5" />
+          </IconButton>
         </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto bg-slate-50 p-3">
+      <main className="flex-1 overflow-y-auto bg-canvas p-3">
         {!ready ? (
-          <div className="flex h-40 items-center justify-center text-sm text-slate-400">加载中...</div>
+          <div className="flex h-40 items-center justify-center">
+            <span className="h-5 w-5 animate-spin rounded-full border-2 border-line-strong border-t-brand" />
+          </div>
         ) : !vaultStatus?.unlocked ? (
-          <div className="flex h-52 flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-slate-300 bg-white p-4 text-center">
-            <p className="text-sm text-slate-600">Credential Vault 未解锁</p>
+          <div className="flex h-52 flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-line-strong bg-surface p-4 text-center">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-surface-2 text-fg-muted">
+              <Lock className="h-5 w-5" />
+            </div>
+            <p className="text-[13px] text-fg-secondary">
+              {vaultStatus?.needsMigration ? "凭据库待迁移" : "凭据库不可用"}
+            </p>
+            <p className="text-xs leading-relaxed text-fg-muted">
+              {vaultStatus?.needsMigration
+                ? "打开主窗口完成一次性迁移（最后一次输入旧主密码）"
+                : "打开主窗口，在设置中重新录入凭据"}
+            </p>
             <Button size="sm" onClick={openMain}>
-              打开主窗口解锁
+              打开主窗口
             </Button>
           </div>
         ) : snapshots.length === 0 ? (
-          <div className="flex h-52 flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-slate-300 bg-white p-4 text-center">
-            <p className="text-sm text-slate-600">还没有用量数据</p>
+          <div className="flex h-52 flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-line-strong bg-surface p-4 text-center">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-surface-2 text-fg-muted">
+              <Gauge className="h-5 w-5" />
+            </div>
+            <p className="text-[13px] text-fg-secondary">还没有用量数据</p>
             <Button size="sm" onClick={() => void refreshAll(true)}>
               立即刷新
             </Button>

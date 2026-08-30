@@ -39,6 +39,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "category": "DeveloperTool",
     "shortDescription": "跨平台 AI 订阅与 API 用量监控工具",
     "longDescription": "在系统托盘快速查看 OpenCode Go 和 DeepSeek 等 AI 服务的用量、额度和余额。",
@@ -49,5 +50,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/XSIJIE975/ai-usage-tracker/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENBNTUxQzk0RDVGNzVCOTcKUldTWFcvZlZsQnhWeXIwRTJSRE50TllJUG9CMVd0Y3hUWGY1SHF3VzJzcDRseklnVmI0NjFmK0YK"
+    }
   }
 }

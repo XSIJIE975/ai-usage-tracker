@@ -1,13 +1,317 @@
 @import "tailwindcss";
 
-:root {
-  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
-  color: #1f2937;
-  background: #f8fafc;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
+/* ============================================================
+ * AI 用量助手 · 设计规范 (Design Tokens)
+ * 单一事实来源。所有界面禁止硬编码颜色/圆角/阴影，
+ * 只允许使用此处定义的语义化 Token（对应 Tailwind 工具类）。
+ * 详见 docs/DESIGN.md
+ * ========================================================== */
+
+/* ---------- 静态 Token：不随主题变化 ---------- */
+@theme {
+  /* 字体 */
+  --font-sans: "Inter", "PingFang SC", "HarmonyOS Sans SC", "Microsoft YaHei",
+    system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas,
+    monospace;
+
+  /* 圆角（radius-sm/md/lg/xl 覆盖 Tailwind 默认值） */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+
+  /* 品牌色阶（鸢尾紫 Iris） */
+  --color-iris-50: #eef0ff;
+  --color-iris-100: #e0e3ff;
+  --color-iris-200: #c6ccff;
+  --color-iris-300: #a3a8fc;
+  --color-iris-400: #8183f8;
+  --color-iris-500: #6a63f0;
+  --color-iris-600: #5a48e2;
+  --color-iris-700: #4b3bc7;
+  --color-iris-800: #3d32a0;
+  --color-iris-900: #342f7e;
+
+  /* 数据可视化色阶（16 色，用于图表序列，确保同一图表内高区分度） */
+  --color-data-1: #6366f1;
+  --color-data-2: #14b8a6;
+  --color-data-3: #f59e0b;
+  --color-data-4: #ef4444;
+  --color-data-5: #0ea5e9;
+  --color-data-6: #84cc16;
+  --color-data-7: #8b5cf6;
+  --color-data-8: #f97316;
+  --color-data-9: #06b6d4;
+  --color-data-10: #ec4899;
+  --color-data-11: #eab308;
+  --color-data-12: #a855f7;
+  --color-data-13: #10b981;
+  --color-data-14: #3b82f6;
+  --color-data-15: #f43f5e;
+  --color-data-16: #22c55e;
+
+  /* 动效时长 */
+  --transition-duration-fast: 120ms;
+  --transition-duration-normal: 200ms;
 }
 
+/* ---------- 语义 Token：浅色主题（默认） ---------- */
+:root {
+  color-scheme: light;
+
+  /* 背景层级：canvas(应用底) < surface(卡片) < surface-2(凹陷/悬浮底) */
+  --canvas: #f5f6fa;
+  --surface: #ffffff;
+  --surface-2: #f1f2f8;
+
+  /* 文字：fg(主) > fg-secondary(次) > fg-muted(弱) */
+  --fg: #191c26;
+  --fg-secondary: #4d5566;
+  --fg-muted: #8b93a5;
+
+  /* 描边：line(默认) / line-strong(强调) */
+  --line: #e6e8f0;
+  --line-strong: #d5d9e4;
+
+  /* 品牌 */
+  --brand: var(--color-iris-600);
+  --brand-hover: var(--color-iris-700);
+  --brand-active: var(--color-iris-800);
+  --brand-soft: var(--color-iris-50);
+  --brand-fg: #ffffff;
+
+  /* 状态色：solid(图形) / soft(底) / soft-fg(底上文) */
+  --success: #16a34a;
+  --success-soft: #e9f7ee;
+  --success-soft-fg: #15803d;
+  --warning: #d97706;
+  --warning-soft: #fdf3e3;
+  --warning-soft-fg: #b45309;
+  --danger: #dc2626;
+  --danger-soft: #fdecec;
+  --danger-soft-fg: #b91c1c;
+  --info: #2563eb;
+  --info-soft: #e8f0fe;
+  --info-soft-fg: #1d4ed8;
+
+  /* 阴影 */
+  --shadow-card: 0 1px 2px rgb(25 28 38 / 0.04), 0 2px 8px rgb(25 28 38 / 0.05);
+  --shadow-pop: 0 4px 12px rgb(25 28 38 / 0.08), 0 12px 32px rgb(25 28 38 / 0.12);
+
+  /* 焦点环 */
+  --ring: rgb(90 72 226 / 0.35);
+
+  /* 选中文字底色 */
+  --selection: rgb(90 72 226 / 0.16);
+
+  /* 图表色板（16 色，按序列顺序取色，禁止图表内另造颜色） */
+  --chart-1: var(--color-data-1);
+  --chart-2: var(--color-data-2);
+  --chart-3: var(--color-data-3);
+  --chart-4: var(--color-data-4);
+  --chart-5: var(--color-data-5);
+  --chart-6: var(--color-data-6);
+  --chart-7: var(--color-data-7);
+  --chart-8: var(--color-data-8);
+  --chart-9: var(--color-data-9);
+  --chart-10: var(--color-data-10);
+  --chart-11: var(--color-data-11);
+  --chart-12: var(--color-data-12);
+  --chart-13: var(--color-data-13);
+  --chart-14: var(--color-data-14);
+  --chart-15: var(--color-data-15);
+  --chart-16: var(--color-data-16);
+
+  /* 哈希取色参数（用于超出 12 色板之外的模型，保证主题适配） */
+  --chart-hash-s: 68%;
+  --chart-hash-l: 52%;
+}
+
+/* ---------- 语义 Token：深色主题 ---------- */
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --canvas: #0e1016;
+  --surface: #171a23;
+  --surface-2: #1f2330;
+
+  --fg: #e9ebf2;
+  --fg-secondary: #a7aebf;
+  --fg-muted: #697183;
+
+  --line: #262b38;
+  --line-strong: #363d4e;
+
+  --brand: var(--color-iris-400);
+  --brand-hover: var(--color-iris-300);
+  --brand-active: var(--color-iris-200);
+  --brand-soft: rgb(129 131 248 / 0.14);
+  --brand-fg: #14152b;
+
+  --success: #4ade80;
+  --success-soft: rgb(74 222 128 / 0.12);
+  --success-soft-fg: #6ee7a0;
+  --warning: #fbbf24;
+  --warning-soft: rgb(251 191 36 / 0.12);
+  --warning-soft-fg: #fcd34d;
+  --danger: #f87171;
+  --danger-soft: rgb(248 113 113 / 0.12);
+  --danger-soft-fg: #fca5a5;
+  --info: #60a5fa;
+  --info-soft: rgb(96 165 250 / 0.12);
+  --info-soft-fg: #93c5fd;
+
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.32), 0 2px 8px rgb(0 0 0 / 0.24);
+  --shadow-pop: 0 4px 12px rgb(0 0 0 / 0.4), 0 16px 40px rgb(0 0 0 / 0.48);
+
+  --ring: rgb(129 131 248 / 0.45);
+  --selection: rgb(129 131 248 / 0.28);
+
+  --chart-1: #8183f8;
+  --chart-2: #2dd4bf;
+  --chart-3: #fbbf24;
+  --chart-4: #fb7185;
+  --chart-5: #38bdf8;
+  --chart-6: #a3e635;
+  --chart-7: #a78bfa;
+  --chart-8: #fb923c;
+  --chart-9: #67e8f9;
+  --chart-10: #f472b6;
+  --chart-11: #facc15;
+  --chart-12: #d8b4fe;
+  --chart-13: #34d399;
+  --chart-14: #60a5fa;
+  --chart-15: #fda4af;
+  --chart-16: #4ade80;
+
+  --chart-hash-s: 65%;
+  --chart-hash-l: 60%;
+}
+
+/* 跟随系统主题（未手动指定 data-theme 时） */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not([data-theme="dark"]) {
+    color-scheme: dark;
+
+    --canvas: #0e1016;
+    --surface: #171a23;
+    --surface-2: #1f2330;
+
+    --fg: #e9ebf2;
+    --fg-secondary: #a7aebf;
+    --fg-muted: #697183;
+
+    --line: #262b38;
+    --line-strong: #363d4e;
+
+    --brand: var(--color-iris-400);
+    --brand-hover: var(--color-iris-300);
+    --brand-active: var(--color-iris-200);
+    --brand-soft: rgb(129 131 248 / 0.14);
+    --brand-fg: #14152b;
+
+    --success: #4ade80;
+    --success-soft: rgb(74 222 128 / 0.12);
+    --success-soft-fg: #6ee7a0;
+    --warning: #fbbf24;
+    --warning-soft: rgb(251 191 36 / 0.12);
+    --warning-soft-fg: #fcd34d;
+    --danger: #f87171;
+    --danger-soft: rgb(248 113 113 / 0.12);
+    --danger-soft-fg: #fca5a5;
+    --info: #60a5fa;
+    --info-soft: rgb(96 165 250 / 0.12);
+    --info-soft-fg: #93c5fd;
+
+    --shadow-card: 0 1px 2px rgb(0 0 0 / 0.32), 0 2px 8px rgb(0 0 0 / 0.24);
+    --shadow-pop: 0 4px 12px rgb(0 0 0 / 0.4), 0 16px 40px rgb(0 0 0 / 0.48);
+
+    --ring: rgb(129 131 248 / 0.45);
+    --selection: rgb(129 131 248 / 0.28);
+
+    --chart-1: #8183f8;
+    --chart-2: #2dd4bf;
+    --chart-3: #fbbf24;
+    --chart-4: #fb7185;
+    --chart-5: #38bdf8;
+    --chart-6: #a3e635;
+    --chart-7: #a78bfa;
+    --chart-8: #fb923c;
+    --chart-9: #67e8f9;
+    --chart-10: #f472b6;
+    --chart-11: #facc15;
+    --chart-12: #d8b4fe;
+    --chart-13: #34d399;
+    --chart-14: #60a5fa;
+    --chart-15: #fda4af;
+    --chart-16: #4ade80;
+
+    --chart-hash-s: 65%;
+    --chart-hash-l: 60%;
+  }
+}
+
+/* ---------- 语义 Token → Tailwind 工具类映射 ---------- */
+/* 生成：bg-canvas/surface/surface-2/brand/brand-soft/success-soft 等，
+   text-fg/fg-secondary/fg-muted/brand/success-soft-fg 等，
+   border-line/line-strong，shadow-card/pop，ring-focus */
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+
+  --color-fg: var(--fg);
+  --color-fg-secondary: var(--fg-secondary);
+  --color-fg-muted: var(--fg-muted);
+
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+
+  --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-active: var(--brand-active);
+  --color-brand-soft: var(--brand-soft);
+  --color-brand-fg: var(--brand-fg);
+
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-success-soft-fg: var(--success-soft-fg);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-warning-soft-fg: var(--warning-soft-fg);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-danger-soft-fg: var(--danger-soft-fg);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-info-soft-fg: var(--info-soft-fg);
+
+  --shadow-card: var(--shadow-card);
+  --shadow-pop: var(--shadow-pop);
+
+  --color-focus-ring: var(--ring);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
+  --color-chart-7: var(--chart-7);
+  --color-chart-8: var(--chart-8);
+  --color-chart-9: var(--chart-9);
+  --color-chart-10: var(--chart-10);
+  --color-chart-11: var(--chart-11);
+  --color-chart-12: var(--chart-12);
+  --color-chart-13: var(--chart-13);
+  --color-chart-14: var(--chart-14);
+  --color-chart-15: var(--chart-15);
+  --color-chart-16: var(--chart-16);
+}
+
+/* ---------- 基础样式 ---------- */
 * {
   box-sizing: border-box;
 }
@@ -22,6 +326,15 @@ body,
 body {
   min-width: 320px;
   overflow: hidden;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--fg);
+  background: var(--canvas);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 button,
@@ -29,7 +342,32 @@ input {
   font: inherit;
 }
 
+::selection {
+  background: var(--selection);
+}
+
 [data-tauri-drag-region] {
   -webkit-user-select: none;
   user-select: none;
+}
+
+/* 细滚动条，融入界面 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-muted);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 数字等宽（指标数值统一使用） */
+.tnum {
+  font-variant-numeric: tabular-nums;
 }

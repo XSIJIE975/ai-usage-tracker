@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
+import { emit } from "@tauri-apps/api/event";
 import type { AppSettings, ProviderSnapshot, StoredSnapshot, VaultStatus } from "../types/ipc";
 import { providerModules } from "../providers";
 
@@ -27,6 +28,10 @@ function waitForTauriRuntime(timeoutMs = 5_000) {
     };
     check();
   });
+}
+
+function emitRefreshCompleted(refreshedAt: number) {
+  void emit("refresh-completed", { refreshedAt }).catch(() => undefined);
 }
 
 async function invokeWithTimeout<T>(command: string, timeoutMs: number): Promise<T> {
@@ -69,8 +74,11 @@ interface AppStore {
   loading: boolean;
   refreshingProviders: Record<string, boolean>;
   error: string | null;
+  lastRefreshedAt: number;
+  /** 手动全局刷新序号（顶栏「刷新」）；统计页据此联动刷新。自动定时刷新不递增。 */
+  manualRefreshTick: number;
   loadInitial: () => Promise<void>;
-  refreshAll: (showLoading?: boolean) => Promise<void>;
+  refreshAll: (showLoading?: boolean, options?: { auto?: boolean }) => Promise<void>;
   refreshProvider: (providerId: string) => Promise<void>;
   saveSettings: (settings: AppSettings) => Promise<void>;
   setVaultStatus: (status: VaultStatus) => void;
@@ -81,6 +89,14 @@ function toProviderSnapshot(payload: ProviderSnapshot): ProviderSnapshot {
   return payload;
 }
 
+function vaultBlockedReason(status: VaultStatus | null): string | null {
+  if (!status) return "凭据库状态未知";
+  if (status.unlocked) return null;
+  if (status.needsMigration) return "凭据库待迁移，请在设置中完成一次性迁移";
+  if (status.keychainLost) return "本机设备密钥丢失，请在设置中重新录入凭据";
+  return "Credential Vault 未解锁";
+}
+
 export const useAppStore = create<AppStore>((set, get) => ({
   vaultStatus: null,
   settings: DEFAULT_SETTINGS,
@@ -88,6 +104,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   loading: false,
   refreshingProviders: {},
   error: null,
+  lastRefreshedAt: 0,
+  manualRefreshTick: 0,
 
   loadInitial: async () => {
     try {
@@ -120,17 +138,21 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   },
 
-  refreshAll: async (showLoading = true) => {
+  refreshAll: async (showLoading = true, options) => {
     if (showLoading) set({ loading: true, error: null });
+    if (!options?.auto) {
+      set((state) => ({ manualRefreshTick: state.manualRefreshTick + 1 }));
+    }
     const { settings, vaultStatus } = get();
-    if (!vaultStatus?.unlocked) {
-      set({ loading: false, error: "Credential Vault 未解锁" });
+    const blockedReason = vaultBlockedReason(vaultStatus);
+    if (blockedReason) {
+      set({ loading: false, error: blockedReason });
       return;
     }
 
     const results: ProviderSnapshot[] = [];
     for (const provider of providerModules) {
-      if (!settings.providers[provider.id]) continue;
+      if (options?.auto && !settings.providers[provider.id]) continue;
       try {
         const snapshot = await provider.fetch();
         results.push(snapshot);
@@ -147,27 +169,34 @@ export const useAppStore = create<AppStore>((set, get) => ({
       }
     }
 
+    let refreshedAt = Date.now();
     try {
       const stored = await invoke<StoredSnapshot[]>("get_latest_snapshots");
+      refreshedAt = Date.now();
       set({
         snapshots: stored.map((item) => toProviderSnapshot(item.payload)),
         loading: false,
         error: null,
+        lastRefreshedAt: refreshedAt,
       });
     } catch (error) {
+      refreshedAt = Date.now();
       set({
         snapshots: results,
         loading: false,
         error: error instanceof Error ? error.message : String(error),
+        lastRefreshedAt: refreshedAt,
       });
     }
+    emitRefreshCompleted(refreshedAt);
   },
 
   refreshProvider: async (providerId) => {
     const provider = providerModules.find((item) => item.id === providerId);
     if (!provider || get().refreshingProviders[providerId]) return;
-    if (!get().vaultStatus?.unlocked) {
-      set({ error: "Credential Vault 未解锁" });
+    const blockedReason = vaultBlockedReason(get().vaultStatus);
+    if (blockedReason) {
+      set({ error: blockedReason });
       return;
     }
 
@@ -190,22 +219,28 @@ export const useAppStore = create<AppStore>((set, get) => ({
       };
     }
 
+    let refreshedAt = Date.now();
     try {
       await invoke("save_snapshot", { providerId, payload: result });
       const stored = await invoke<StoredSnapshot[]>("get_latest_snapshots");
+      refreshedAt = Date.now();
       set({
         snapshots: stored.map((item) => toProviderSnapshot(item.payload)),
         error: null,
+        lastRefreshedAt: refreshedAt,
       });
     } catch (error) {
+      refreshedAt = Date.now();
       set({
         snapshots: [...get().snapshots.filter((item) => item.providerId !== providerId), result],
         error: error instanceof Error ? error.message : String(error),
+        lastRefreshedAt: refreshedAt,
       });
     } finally {
       set((state) => ({
         refreshingProviders: { ...state.refreshingProviders, [providerId]: false },
       }));
+      emitRefreshCompleted(refreshedAt);
     }
   },
 

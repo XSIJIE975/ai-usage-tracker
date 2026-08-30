@@ -33,14 +33,23 @@ describe("formatRefreshLabel", () => {
 describe("formatReset", () => {
   const now = new Date("2026-08-06T09:00:00.000Z").getTime();
 
-  it("shows precise countdowns matching the OpenCode Go dashboard", () => {
+  it("shows the same current-minute countdown as the OpenCode Go dashboard", () => {
     expect(formatReset(new Date(now + 104 * 60_000).toISOString(), now)).toBe("1 小时 44 分钟后重置");
+    expect(formatReset(new Date(now + 104 * 60_000 + 59_000).toISOString(), now)).toBe(
+      "1 小时 44 分钟后重置",
+    );
     expect(formatReset(new Date(now + (3 * 86_400 + 2 * 3_600) * 1000).toISOString(), now)).toBe(
       "3 天 2 小时后重置",
     );
+    expect(
+      formatReset(new Date(now + (3 * 86_400 + 2 * 3_600 + 59) * 1000).toISOString(), now),
+    ).toBe("3 天 2 小时后重置");
     expect(formatReset(new Date(now + (26 * 86_400 + 17 * 3_600) * 1000).toISOString(), now)).toBe(
       "26 天 17 小时后重置",
     );
+    expect(
+      formatReset(new Date(now + (26 * 86_400 + 17 * 3_600 + 59 * 60) * 1000).toISOString(), now),
+    ).toBe("26 天 17 小时后重置");
   });
 
   it("handles zero and missing reset times", () => {

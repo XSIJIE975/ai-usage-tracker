@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";
+import { AlertTriangle, CheckCircle2, RefreshCw, Settings2 } from "lucide-react";
 import type { MetricLine, ProviderSnapshot } from "../types/ipc";
 import { formatClock, formatReset } from "../lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Progress } from "./ui/progress";
+import { Badge } from "./ui/badge";
+import { IconButton } from "./ui/icon-button";
 import { cn } from "../lib/utils";
 
 function useNow(intervalMs = 30_000) {
@@ -15,6 +17,52 @@ function useNow(intervalMs = 30_000) {
   }, [intervalMs]);
 
   return now;
+}
+
+/** 由 providerId 生成稳定的品牌头像色（HSL），深浅主题均可读 */
+function providerAccent(providerId: string) {
+  let hash = 0;
+  for (const ch of providerId) hash = (hash * 31 + ch.charCodeAt(0)) | 0;
+  const hue = Math.abs(hash) % 360;
+  return {
+    bg: `hsl(${hue} 75% 55% / 0.12)`,
+    fg: `hsl(${hue} 65% 48%)`,
+  };
+}
+
+function ProviderAvatar({ providerId, name }: { providerId: string; name: string }) {
+  const accent = providerAccent(providerId);
+  return (
+    <span
+      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-sm font-bold"
+      style={{ background: accent.bg, color: accent.fg }}
+      aria-hidden
+    >
+      {name.trim().charAt(0).toUpperCase()}
+    </span>
+  );
+}
+
+function statusBadge(status: ProviderSnapshot["status"]) {
+  if (status === "ok") {
+    return (
+      <Badge variant="success">
+        <CheckCircle2 className="h-3 w-3" /> 正常
+      </Badge>
+    );
+  }
+  if (status === "needs_config") {
+    return (
+      <Badge variant="neutral">
+        <Settings2 className="h-3 w-3" /> 待配置
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="warning">
+      <AlertTriangle className="h-3 w-3" /> 异常
+    </Badge>
+  );
 }
 
 function MetricRow({ line, now }: { line: MetricLine; now: number }) {
@@ -29,25 +77,25 @@ function MetricRow({ line, now }: { line: MetricLine; now: number }) {
         }).format(new Date(line.resetsAt))
       : undefined;
     return (
-      <div className="space-y-1.5 py-2">
-        <div className="flex items-center justify-between gap-3 text-sm">
-          <span className="text-slate-600">{line.label}</span>
-          <span className="tabular-nums text-slate-900">
+      <div className="space-y-1.5 py-2.5">
+        <div className="flex items-center justify-between gap-3 text-[13px]">
+          <span className="text-fg-secondary">{line.label}</span>
+          <span className="tnum font-medium text-fg">
             {line.percentUsed !== undefined
-              ? `已用 ${line.percentUsed.toFixed(1)}% · 剩余 ${remaining?.toFixed(1)}%`
+              ? `已用 ${line.percentUsed.toFixed(1)}%`
               : `${line.suffix}${(line.used ?? 0).toFixed(2)} / ${line.suffix}${(line.limit ?? 0).toFixed(2)}`}
           </span>
         </div>
         <Progress
           value={percent}
-          barClassName={cn(percent >= 90 && "bg-red-500", percent >= 70 && percent < 90 && "bg-amber-500")}
+          barClassName={cn(percent >= 90 && "bg-danger", percent >= 70 && percent < 90 && "bg-warning")}
         />
-        <div className="flex items-center justify-between text-xs text-slate-400">
-          <span>{line.percentUsed !== undefined ? `剩余 ${remaining?.toFixed(1)}%` : `已用 ${percent}%`}</span>
+        <div className="flex items-center justify-between text-xs text-fg-muted">
+          <span className="tnum">
+            {line.percentUsed !== undefined ? `剩余 ${remaining?.toFixed(1)}%` : `已用 ${percent}%`}
+          </span>
           {line.resetsAt ? (
-            <span className="text-slate-500" title={resetTitle}>
-              {formatReset(line.resetsAt, now)}
-            </span>
+            <span title={resetTitle}>{formatReset(line.resetsAt, now)}</span>
           ) : null}
         </div>
       </div>
@@ -55,13 +103,10 @@ function MetricRow({ line, now }: { line: MetricLine; now: number }) {
   }
 
   return (
-    <div className="flex items-center justify-between gap-3 py-1.5 text-sm">
-      <span className="text-slate-600">{line.label}</span>
+    <div className="flex items-center justify-between gap-3 py-2 text-[13px]">
+      <span className="text-fg-secondary">{line.label}</span>
       <span
-        className={cn(
-          "font-medium tabular-nums",
-          line.color ? "" : "text-slate-900",
-        )}
+        className={cn("tnum font-medium", !line.color && "text-fg")}
         style={line.color ? { color: line.color } : undefined}
       >
         {line.value}
@@ -81,57 +126,56 @@ export function ProviderCard({
   refreshing?: boolean;
   onRefresh?: () => void;
 }) {
-  const isOk = snapshot.status === "ok";
   const needsConfig = snapshot.status === "needs_config";
   const now = useNow();
 
   return (
-    <Card className={cn(compact && "rounded-lg")}>
-      <CardHeader className={cn("flex-row items-start justify-between space-y-0", compact ? "p-4 pb-2" : "p-5 pb-3")}>
-        <div>
-          <CardTitle>{snapshot.providerName}</CardTitle>
-          {!compact && (
-            <p className="mt-1 text-xs text-slate-400">
-              更新于 {formatClock(snapshot.updatedAt)}
-            </p>
-          )}
+    <Card className="transition-shadow duration-normal hover:shadow-pop">
+      <CardHeader
+        className={cn("flex-row items-center justify-between space-y-0", compact ? "p-4 pb-2" : "p-5 pb-3")}
+      >
+        <div className="flex min-w-0 items-center gap-2.5">
+          <ProviderAvatar providerId={snapshot.providerId} name={snapshot.providerName} />
+          <div className="min-w-0">
+            <CardTitle className="truncate text-sm">{snapshot.providerName}</CardTitle>
+            {!compact && (
+              <p className="tnum mt-0.5 text-xs text-fg-muted">更新于 {formatClock(snapshot.updatedAt)}</p>
+            )}
+          </div>
         </div>
-        <div className="flex items-center gap-1.5">
-          {isOk ? (
-            <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-          ) : (
-            <AlertTriangle className="h-4 w-4 text-amber-600" />
-          )}
+        <div className="flex shrink-0 items-center gap-1.5">
+          {statusBadge(snapshot.status)}
           {onRefresh && (
-            <button
-              type="button"
+            <IconButton
+              size="sm"
               onClick={onRefresh}
               disabled={refreshing}
               aria-label={refreshing ? "刷新中" : "刷新此 Provider"}
               title={refreshing ? "刷新中" : "刷新此 Provider"}
-              className={cn(
-                "inline-flex items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-slate-200 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50",
-                compact ? "h-6 w-6" : "h-7 w-7",
-              )}
             >
               <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
-            </button>
+            </IconButton>
           )}
         </div>
       </CardHeader>
       <CardContent className={compact ? "px-4 pb-4" : "px-5 pb-5"}>
         {snapshot.message ? (
-          <p className={cn("rounded-md px-3 py-2 text-xs", needsConfig ? "bg-slate-50 text-slate-500" : "bg-amber-50 text-amber-700")}>
+          <p
+            className={cn(
+              "rounded-md px-3 py-2 text-xs leading-relaxed",
+              needsConfig ? "bg-info-soft text-info-soft-fg" : "bg-warning-soft text-warning-soft-fg",
+            )}
+          >
             {snapshot.message}
           </p>
         ) : null}
-        <div className={cn("divide-y divide-slate-100", snapshot.message ? "mt-2" : "")}>
+        <div className={cn("divide-y divide-line", snapshot.message ? "mt-2" : "")}>
           {snapshot.lines.map((line, index) => (
             <MetricRow key={`${line.label}-${index}`} line={line} now={now} />
           ))}
         </div>
         {snapshot.lines.length === 0 && !snapshot.message ? (
-          <p className="py-2 text-xs text-slate-400">暂无数据</p>
+          <p className="py-2 text-xs text-fg-muted">暂无数据</p>
         ) : null}
       </CardContent>
     </Card>

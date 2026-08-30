@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>AI 用量助手 · 品牌图标规格</title>
+<style>
+  :root { --line: #e6e8f0; }
+  * { box-sizing: border-box; font-family: "Inter", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; }
+  body { margin: 0; padding: 40px; background: #f5f6fa; color: #191c26; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 14px; margin: 32px 0 12px; color: #4d5566; }
+  p.sub { margin: 0 0 24px; font-size: 13px; color: #8b93a5; }
+  .row { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-end; }
+  .cell { text-align: center; }
+  .cell img { display: block; margin: 0 auto 6px; }
+  .cell span { font-size: 11px; color: #8b93a5; }
+  .panel { padding: 24px; border-radius: 16px; border: 1px solid var(--line); }
+  .light { background: #ffffff; }
+  .dark { background: #171a23; border-color: #262b38; }
+  .dark h2 { color: #a7aebf; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  code { background: #f1f2f8; border-radius: 4px; padding: 1px 6px; font-size: 12px; }
+</style>
+</head>
+<body>
+  <h1>品牌图标规格</h1>
+  <p class="sub">设计源：<code>app-icon.svg</code> · 渲染器：<code>scripts/generate-icons.mjs</code>（SDF + 超采样抗锯齿）· 语义：仪表盘 = AI 用量计量</p>
+
+  <div class="grid2">
+    <div class="panel light">
+      <h2>浅色背景</h2>
+      <div class="row">
+        <div class="cell"><img src="icon-16.png" width="16" height="16" alt="16" /><span>16</span></div>
+        <div class="cell"><img src="icon-32.png" width="32" height="32" alt="32" /><span>32</span></div>
+        <div class="cell"><img src="icon-64.png" width="64" height="64" alt="64" /><span>64</span></div>
+        <div class="cell"><img src="icon-128.png" width="128" height="128" alt="128" /><span>128</span></div>
+        <div class="cell"><img src="icon-256.png" width="256" height="256" alt="256" /><span>256</span></div>
+      </div>
+    </div>
+    <div class="panel dark">
+      <h2>深色背景</h2>
+      <div class="row">
+        <div class="cell"><img src="icon-16.png" width="16" height="16" alt="16" /><span>16</span></div>
+        <div class="cell"><img src="icon-32.png" width="32" height="32" alt="32" /><span>32</span></div>
+        <div class="cell"><img src="icon-64.png" width="64" height="64" alt="64" /><span>64</span></div>
+        <div class="cell"><img src="icon-128.png" width="128" height="128" alt="128" /><span>128</span></div>
+        <div class="cell"><img src="icon-256.png" width="256" height="256" alt="256" /><span>256</span></div>
+      </div>
+    </div>
+  </div>
+
+  <h2>矢量源（SVG，任意尺寸无损）</h2>
+  <div class="row" style="align-items:center; gap:24px;">
+    <img src="app-icon.svg" width="96" height="96" alt="svg" />
+    <p style="font-size:13px; color:#4d5566; max-width:520px; line-height:1.7;">
+      输出物：<code>src-tauri/icons/</code>（32/64/128/256/512 PNG、icon.ico 16–256 六合一、Windows Store 全套方标）<br />
+      展示件：<code>docs/design/icons/icon-16…512.png</code>。ICO 采用 PNG 内嵌容器，Windows Vista 及以上原生支持。
+    </p>
+  </div>
+</body>
+</html>
