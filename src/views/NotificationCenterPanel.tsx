@@ -28,8 +28,15 @@ function dayLabel(ts: number): string {
 /**
  * 通知中心面板：按日分组的时间线，未读高亮，支持全部已读/单条删除/清空。
  * 历史通知落库（30 天 / 200 条），跨重启保留。
+ * inline 模式用于快速面板内嵌展示（填满容器），默认为主窗口顶栏下拉。
  */
-export function NotificationCenterPanel({ onClose }: { onClose: () => void }) {
+export function NotificationCenterPanel({
+  onClose,
+  inline = false,
+}: {
+  onClose: () => void;
+  inline?: boolean;
+}) {
   const { items, loaded, load, markAllRead, removeOne, clearAll } = useNotificationStore();
   const unread = useMemo(() => items.filter((item) => !item.read).length, [items]);
 
@@ -49,7 +56,12 @@ export function NotificationCenterPanel({ onClose }: { onClose: () => void }) {
   }, [items]);
 
   return (
-    <div className="absolute right-0 top-full z-30 mt-2 w-[360px] overflow-hidden rounded-lg border border-line bg-surface shadow-pop">
+    <div
+      className={cn(
+        "flex flex-col overflow-hidden rounded-lg border border-line bg-surface shadow-pop",
+        inline ? "h-full w-full" : "absolute right-0 top-full z-30 mt-2 max-h-[380px] w-[360px]",
+      )}
+    >
       <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
         <div className="flex items-center gap-2 text-[13px] font-medium text-fg">
           通知中心
@@ -81,7 +93,7 @@ export function NotificationCenterPanel({ onClose }: { onClose: () => void }) {
         </div>
       </div>
 
-      <div className="max-h-[380px] overflow-y-auto">
+      <div className={cn("overflow-y-auto", inline ? "min-h-0 flex-1" : "max-h-[380px]")}>
         {!loaded ? (
           <p className="px-4 py-8 text-center text-xs text-fg-muted">加载中…</p>
         ) : items.length === 0 ? (
@@ -140,13 +152,13 @@ export function NotificationCenterPanel({ onClose }: { onClose: () => void }) {
         )}
       </div>
 
-      {items.length > 0 && (
+      {items.length > 0 || inline ? (
         <div className="border-t border-line px-4 py-2">
           <Button variant="ghost" size="sm" className="w-full" onClick={onClose}>
             关闭
           </Button>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

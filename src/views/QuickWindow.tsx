@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
 import { Bell, Gauge, Lock, RefreshCw, Timer, TriangleAlert, X } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import { useAlertStore } from "../store/useAlertStore";
@@ -10,6 +10,7 @@ import { Button } from "../components/ui/button";
 import { IconButton } from "../components/ui/icon-button";
 import { BrandIcon } from "../components/BrandIcon";
 import { ProviderCard } from "../components/ProviderCard";
+import { NotificationCenterPanel } from "./NotificationCenterPanel";
 import { cn, formatClock } from "../lib/utils";
 
 /** 下次自动刷新倒计时（mm:ss）；自动刷新关闭或尚无基准时间时返回 null */
@@ -45,6 +46,7 @@ export function QuickWindow() {
   const alertActiveMap = useAlertStore((state) => state.active);
   const countdown = useNextRefreshCountdown();
   const [ready, setReady] = useState(false);
+  const [noticeOpen, setNoticeOpen] = useState(false);
 
   const syncFromBackend = useCallback(async () => {
     await loadInitial();
@@ -67,9 +69,29 @@ export function QuickWindow() {
       const unlistenFocus = await window.onFocusChanged(({ payload: focused }) => {
         if (focused) {
           void syncFromBackend();
-        } else if (useAppStore.getState().settings.quickAutoHide) {
-          void invoke("hide_quick_window").catch(() => undefined);
+          return;
         }
+        // 失焦自动隐藏：仅当鼠标光标确实在窗口外时才收起。
+        // 点击标题栏拖动窗口时 Windows 会触发失焦（进入系统拖动循环），
+        // 此时光标仍在窗口内，不能隐藏——否则表现为"一点标题栏窗口就消失、无法拖动"。
+        if (!useAppStore.getState().settings.quickAutoHide) return;
+        void (async () => {
+          try {
+            const [cursor, position, size] = await Promise.all([
+              cursorPosition(),
+              window.outerPosition(),
+              window.outerSize(),
+            ]);
+            const inside =
+              cursor.x >= position.x &&
+              cursor.x <= position.x + size.width &&
+              cursor.y >= position.y &&
+              cursor.y <= position.y + size.height;
+            if (!inside) await invoke("hide_quick_window");
+          } catch {
+            // 查询失败时保守处理：不隐藏
+          }
+        })();
       });
       const unlistenVault = await listen("vault-status-changed", () => void syncFromBackend());
       const unlistenCredentials = await listen("credentials-changed", () => void syncFromBackend());
@@ -102,22 +124,19 @@ export function QuickWindow() {
     };
   }, [syncFromBackend]);
 
-  // Esc 关闭面板
+  // Esc：通知面板打开时先关面板，否则收起整个窗口
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if (event.key === "Escape") void invoke("hide_quick_window").catch(() => undefined);
+      if (event.key !== "Escape") return;
+      if (noticeOpen) setNoticeOpen(false);
+      else void invoke("hide_quick_window").catch(() => undefined);
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, []);
+  }, [noticeOpen]);
 
   async function openMain() {
     await invoke("open_main_window");
-  }
-
-  async function openMainNotifications() {
-    await invoke("open_main_window");
-    await import("@tauri-apps/api/event").then(({ emit }) => emit("open-notifications"));
   }
 
   async function hideQuick() {
@@ -129,7 +148,8 @@ export function QuickWindow() {
   const anyAlert = Object.values(alertActiveMap).some(Boolean);
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-pop">
+    // 窗口圆角由系统绘制，这里不再自绘圆角（避免滚动到底部时圆角与滚动内容错位）
+    <div className="relative flex h-screen flex-col overflow-hidden bg-surface shadow-pop">
       <header
         data-tauri-drag-region
         className="flex h-11 shrink-0 items-center justify-between border-b border-line bg-surface-2/60 px-3"
@@ -141,7 +161,7 @@ export function QuickWindow() {
         <div className="flex items-center gap-0.5">
           <div className="relative">
             <IconButton
-              onClick={() => void openMainNotifications()}
+              onClick={() => setNoticeOpen((open) => !open)}
               title="通知中心"
               aria-label={`通知中心${unread > 0 ? `（${unread} 条未读）` : ""}`}
             >
@@ -205,10 +225,16 @@ export function QuickWindow() {
           </div>
         ) : (
           <>
-            {anyAlert && (
+            {noticeOpen ? (
+              // 通知中心直接在快速面板内查看，无需跳转主窗口
+              <div className="absolute inset-x-2 top-12 bottom-2 z-40">
+                <NotificationCenterPanel inline onClose={() => setNoticeOpen(false)} />
+              </div>
+            ) : null}
+            {anyAlert && !noticeOpen && (
               <button
                 type="button"
-                onClick={() => void openMainNotifications()}
+                onClick={() => setNoticeOpen(true)}
                 className="mb-3 flex w-full items-center gap-2 rounded-md border border-warning/30 bg-warning-soft px-3 py-2 text-left text-xs text-warning-soft-fg transition-colors hover:bg-warning-soft/80"
               >
                 <TriangleAlert className="h-3.5 w-3.5 shrink-0" />
