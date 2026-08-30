@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Sparkles, TerminalSquare } from "lucide-react";
+import { DeepSeekLogo, OpenCodeLogo } from "../../components/brand/provider-logo";
 import { Tabs } from "../../components/ui/tabs";
 import { DeepSeekStats } from "./DeepSeekStats";
 import { OpenCodeStats } from "./OpenCodeStats";
@@ -19,8 +19,8 @@ export function StatsView() {
         value={tab}
         onChange={setTab}
         items={[
-          { value: "deepseek", label: "DeepSeek 官方", icon: <Sparkles className="h-3.5 w-3.5" /> },
-          { value: "opencode", label: "OpenCode Go", icon: <TerminalSquare className="h-3.5 w-3.5" /> },
+          { value: "deepseek", label: "DeepSeek 官方", icon: <DeepSeekLogo className="h-3.5 w-3.5" /> },
+          { value: "opencode", label: "OpenCode Go", icon: <OpenCodeLogo className="h-3.5 w-3.5" /> },
         ]}
       />
       {tab === "deepseek" ? <DeepSeekStats /> : <OpenCodeStats />}

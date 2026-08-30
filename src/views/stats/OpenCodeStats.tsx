@@ -191,7 +191,10 @@ export function OpenCodeStats() {
             />
           ) : (
             <>
-              <UsageHistoryTable records={visibleRecords} maxHeight={420} />
+              <div className="relative">
+                {history.loading && <RefreshOverlay />}
+                <UsageHistoryTable records={visibleRecords} maxHeight={420} page={history.currentPage} />
+              </div>
               {history.errorMessage ? (
                 <div className="flex items-center justify-center gap-2">
                   <span className="text-xs text-danger">{history.errorMessage}</span>

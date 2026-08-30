@@ -1,5 +1,25 @@
 export type TimeRange = "today" | "yesterday" | "7d" | "30d" | "month" | "lastMonth" | "custom";
 
+/** 自定义范围上限：官方接口仅支持动态 30 天 */
+export const MAX_CUSTOM_RANGE_DAYS = 30;
+
+/**
+ * 自定义范围校验：返回用户可读的错误文案，合法返回 null。
+ * 输入未填完整时返回 null（由 resolveRangeMs 的非法判断兜底）。
+ */
+export const customRangeError = (customFrom: string, customTo: string): string | null => {
+  const today = localMidnight(new Date());
+  const startMs = parseLocalDateMs(customFrom);
+  const toBase = parseLocalDateMs(customTo);
+  if (startMs === null || toBase === null) return null;
+  if (toBase < startMs) return "开始日期不能晚于结束日期";
+  if (toBase > today) return "结束日期不能晚于今天";
+  if (toBase - startMs > (MAX_CUSTOM_RANGE_DAYS - 1) * DAY_MS) {
+    return `自定义范围最多 ${MAX_CUSTOM_RANGE_DAYS} 天（官方接口限制）`;
+  }
+  return null;
+};
+
 export const timeRangeOptions: { value: TimeRange; label: string }[] = [
   { value: "today", label: "今天" },
   { value: "yesterday", label: "昨天" },
@@ -66,6 +86,9 @@ export const resolveRangeMs = (
       const startMs = parseLocalDateMs(customFrom);
       const toBase = parseLocalDateMs(customTo);
       if (startMs === null || toBase === null || toBase < startMs) return null;
+      // 官方接口仅支持动态 30 天：结束不晚于今天，且跨度（含首尾）最多 30 天
+      if (toBase > today) return null;
+      if (toBase - startMs > (MAX_CUSTOM_RANGE_DAYS - 1) * DAY_MS) return null;
       return { startMs, endMs: toBase + DAY_MS };
     }
   }

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { ComponentType } from "react";
 import { AlertTriangle, CheckCircle2, RefreshCw, Settings2 } from "lucide-react";
 import type { MetricLine, ProviderSnapshot } from "../types/ipc";
 import { formatClock, formatReset } from "../lib/utils";
@@ -6,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Progress } from "./ui/progress";
 import { Badge } from "./ui/badge";
 import { IconButton } from "./ui/icon-button";
+import { DeepSeekLogo, OpenCodeLogo } from "./brand/provider-logo";
 import { cn } from "../lib/utils";
 
 function useNow(intervalMs = 30_000) {
@@ -19,23 +21,28 @@ function useNow(intervalMs = 30_000) {
   return now;
 }
 
-/** 由 providerId 生成稳定的品牌头像色（HSL），深浅主题均可读 */
-function providerAccent(providerId: string) {
-  let hash = 0;
-  for (const ch of providerId) hash = (hash * 31 + ch.charCodeAt(0)) | 0;
-  const hue = Math.abs(hash) % 360;
-  return {
-    bg: `hsl(${hue} 75% 55% / 0.12)`,
-    fg: `hsl(${hue} 65% 48%)`,
-  };
-}
+/** 已知供应商使用官方标识，未识别的退回首字母头像 */
+const BRAND_LOGOS: Record<
+  string,
+  { Logo: ComponentType<{ className?: string }>; bg: string }
+> = {
+  deepseek: { Logo: DeepSeekLogo, bg: "bg-[#5786FE]/10" },
+  "opencode-go": { Logo: OpenCodeLogo, bg: "bg-fg/10" },
+};
 
 function ProviderAvatar({ providerId, name }: { providerId: string; name: string }) {
-  const accent = providerAccent(providerId);
+  const brand = BRAND_LOGOS[providerId];
+  if (brand) {
+    const { Logo, bg } = brand;
+    return (
+      <span className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-md", bg)} aria-hidden>
+        <Logo className="h-5 w-5" />
+      </span>
+    );
+  }
   return (
     <span
-      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-sm font-bold"
-      style={{ background: accent.bg, color: accent.fg }}
+      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-surface-2 text-sm font-bold text-fg-secondary"
       aria-hidden
     >
       {name.trim().charAt(0).toUpperCase()}

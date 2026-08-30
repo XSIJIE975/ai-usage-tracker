@@ -9,10 +9,16 @@ import { cn } from "../../lib/utils";
 export function DataTable({
   className,
   maxHeight,
+  viewportRef,
   ...props
-}: React.HTMLAttributes<HTMLTableElement> & { maxHeight?: number | string }) {
+}: React.HTMLAttributes<HTMLTableElement> & {
+  maxHeight?: number | string;
+  /** 滚动容器 ref，供外部在翻页等场景重置滚动位置 */
+  viewportRef?: React.Ref<HTMLDivElement>;
+}) {
   return (
     <div
+      ref={viewportRef}
       className={cn("overflow-x-auto", maxHeight !== undefined && "overflow-y-auto")}
       style={maxHeight !== undefined ? { maxHeight: typeof maxHeight === "number" ? `${maxHeight}px` : maxHeight } : undefined}
     >
