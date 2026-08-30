@@ -51,6 +51,7 @@ export const en: Record<string, string> = {
   "可用": "Available",
   "不可用": "Unavailable",
   "5 小时额度": "5-hour quota",
+  "本周额度": "Weekly quota",
   "即将重置": "Resets soon",
   "重置时间未知": "Reset time unknown",
   "天": "days",
@@ -239,5 +240,6 @@ export const en: Record<string, string> = {
   "发现新版本": "New version available",
   "已配置": "Set",
   "未配置": "Not set",
+  "快捷键可能与其他程序冲突，请更换": "Shortcut registration failed — it may conflict with another app. Please pick another.",
   "个月": "month",
 };
