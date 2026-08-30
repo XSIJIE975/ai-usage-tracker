@@ -89,7 +89,7 @@ jobs:
               const updated = await github.rest.repos.updateRelease({
                 owner,
                 repo,
-                release_id: release.data.id,
+                release_id: release.id,
                 name: tagName,
                 body,
                 draft: true,
