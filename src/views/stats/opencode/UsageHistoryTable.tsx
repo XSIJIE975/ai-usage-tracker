@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { DataTable, THead, TBody, Th, Tr, Td } from "../../../components/ui/data-table";
 import { modelColor } from "../../../components/charts/palette";
 import { formatInt } from "../../../lib/utils";
@@ -24,24 +25,34 @@ const formatRecordTime = (iso: string): string => {
 };
 
 /** 使用历史表：日期/模型/输入/输出/成本/会话。
- *  maxHeight 控制内部垂直滚动区域，表头粘性固定。 */
+ *  table-fixed 固定列宽，避免会话列有/无数据时整行宽度跳动；
+ *  maxHeight 控制内部垂直滚动区域，表头粘性固定；
+ *  page 变化时滚动回表格顶部。 */
 export function UsageHistoryTable({
   records,
   maxHeight = 420,
+  page,
 }: {
   records: OpenCodeUsageRecord[];
   maxHeight?: number;
+  page?: number;
 }) {
+  const viewportRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    viewportRef.current?.scrollTo({ top: 0 });
+  }, [page]);
+
   return (
-    <DataTable maxHeight={maxHeight}>
+    <DataTable className="table-fixed" maxHeight={maxHeight} viewportRef={viewportRef}>
       <THead>
         <tr>
-          <Th>日期</Th>
+          <Th className="w-[118px]">日期</Th>
           <Th>模型</Th>
-          <Th align="right">输入</Th>
-          <Th align="right">输出</Th>
-          <Th align="right">成本</Th>
-          <Th align="right">会话</Th>
+          <Th align="right" className="w-[92px]">输入</Th>
+          <Th align="right" className="w-[84px]">输出</Th>
+          <Th align="right" className="w-[92px]">成本</Th>
+          <Th align="right" className="w-[200px]">会话</Th>
         </tr>
       </THead>
       <TBody>
@@ -49,29 +60,34 @@ export function UsageHistoryTable({
           <Tr key={record.id || `${record.timeCreated}-${record.model}`}>
             <Td className="whitespace-nowrap text-fg-secondary">{formatRecordTime(record.timeCreated)}</Td>
             <Td>
-              <span className="inline-flex items-center gap-2">
+              <span className="inline-flex items-center gap-2 overflow-hidden">
                 <span
                   className="h-2.5 w-2.5 shrink-0 rounded-[3px]"
                   style={{ backgroundColor: modelColor(record.model) }}
                 />
-                <span className="font-mono text-xs">{record.model}</span>
+                <span className="truncate font-mono text-xs">{record.model}</span>
               </span>
             </Td>
             <Td align="right">
-              <span className="inline-flex items-center gap-1.5">
+              <span className="inline-flex items-center justify-end gap-1.5">
                 <InlineBars />
                 {formatInt(record.inputTokens)}
               </span>
             </Td>
             <Td align="right">
-              <span className="inline-flex items-center gap-1.5">
+              <span className="inline-flex items-center justify-end gap-1.5">
                 <InlineBars />
                 {formatInt(record.outputTokens)}
               </span>
             </Td>
             <Td align="right" className="whitespace-nowrap text-fg-secondary">${record.costUsd.toFixed(4)}</Td>
             <Td align="right">
-              <span className="font-mono text-xs text-fg-muted">{record.sessionId || "-"}</span>
+              <span
+                className="block truncate font-mono text-xs text-fg-muted"
+                title={record.sessionId || undefined}
+              >
+                {record.sessionId || "-"}
+              </span>
             </Td>
           </Tr>
         ))}

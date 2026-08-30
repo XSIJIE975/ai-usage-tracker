@@ -18,7 +18,7 @@ import { useAutoRefresh } from "./use-auto-refresh";
 import { useGlobalRefresh } from "./use-global-refresh";
 import { OverviewCards } from "./deepseek/OverviewCards";
 import { ModelUsageTable } from "./deepseek/ModelUsageTable";
-import { isoDate, resolveRangeMs, timeRangeOptions, type TimeRange } from "./deepseek/time-range";
+import { customRangeError, isoDate, resolveRangeMs, timeRangeOptions, type TimeRange } from "./deepseek/time-range";
 import {
   aggregateUsage,
   buildStackedSeries,
@@ -54,6 +54,7 @@ export function DeepSeekStats() {
   const [refreshTick, setRefreshTick] = useState(0);
 
   const rangeMs = useMemo(() => resolveRangeMs(range, customFrom, customTo), [range, customFrom, customTo]);
+  const customError = range === "custom" ? customRangeError(customFrom, customTo) : null;
   const { state, isRefreshing } = useStatsFetch(
     usageCache,
     rangeMs === null ? null : `${rangeMs.startMs}:${rangeMs.endMs}`,
@@ -115,6 +116,83 @@ export function DeepSeekStats() {
     />
   );
 
+  const filterToolbar = (
+    <Card className="p-4">
+      <div className="flex flex-wrap items-end gap-x-5 gap-y-3">
+        <div className="space-y-1.5">
+          <Label className="flex items-center gap-1">
+            <CalendarRange className="h-3.5 w-3.5" /> 时间范围
+          </Label>
+          <div className="flex items-center gap-2">
+            <Select options={timeRangeOptions} value={range} onChange={setRange} aria-label="时间范围" />
+            {range === "custom" && (
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="date"
+                  value={customFrom}
+                  max={customTo || isoDate(new Date())}
+                  onChange={(e) => setCustomFrom(e.currentTarget.value)}
+                  className="h-9 rounded-md border border-line bg-surface px-2 text-[13px] text-fg shadow-sm focus-visible:outline-none focus-visible:border-brand focus-visible:ring-2 focus-visible:ring-focus-ring"
+                  aria-label="开始日期"
+                />
+                <span className="text-fg-muted">–</span>
+                <input
+                  type="date"
+                  value={customTo}
+                  min={customFrom || undefined}
+                  max={isoDate(new Date())}
+                  onChange={(e) => setCustomTo(e.currentTarget.value)}
+                  className="h-9 rounded-md border border-line bg-surface px-2 text-[13px] text-fg shadow-sm focus-visible:outline-none focus-visible:border-brand focus-visible:ring-2 focus-visible:ring-focus-ring"
+                  aria-label="结束日期"
+                />
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label className="flex items-center gap-1">
+            <KeyRound className="h-3.5 w-3.5" /> API 密钥
+          </Label>
+          <Select options={keyOptions} value={apiKeyId} onChange={setApiKeyId} aria-label="API 密钥" />
+        </div>
+
+        <div className="space-y-1.5">
+          <Label className="flex items-center gap-1">统计指标</Label>
+          <Segmented value={metric} onChange={setMetric} options={metricOptions} />
+        </div>
+
+        <IconButton
+          onClick={refresh}
+          disabled={busy}
+          aria-label={busy ? "刷新中" : "刷新"}
+          title={busy ? "刷新中" : "刷新"}
+          className="mb-0.5"
+        >
+          <RefreshCw className={cn("h-4 w-4", busy && "animate-spin")} />
+        </IconButton>
+      </div>
+    </Card>
+  );
+
+  // 自定义范围无效：保留筛选工具条以便直接修正日期，给出具体原因，不发请求
+  if (customError) {
+    return (
+      <div className="space-y-4">
+        {filterToolbar}
+        <Card>
+          <CardContent>
+            <EmptyState
+              icon={<CalendarRange className="h-5 w-5" />}
+              title="时间范围无效"
+              description={customError}
+            />
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   if (state.kind !== "ready") {
     return <StatsStateCard state={state} onRetry={refresh} />;
   }
@@ -122,59 +200,7 @@ export function DeepSeekStats() {
   return (
     <div className="space-y-4">
       {/* 筛选工具条 */}
-      <Card className="p-4">
-        <div className="flex flex-wrap items-end gap-x-5 gap-y-3">
-          <div className="space-y-1.5">
-            <Label className="flex items-center gap-1">
-              <CalendarRange className="h-3.5 w-3.5" /> 时间范围
-            </Label>
-            <div className="flex items-center gap-2">
-              <Select options={timeRangeOptions} value={range} onChange={setRange} aria-label="时间范围" />
-              {range === "custom" && (
-                <div className="flex items-center gap-1.5">
-                  <input
-                    type="date"
-                    value={customFrom}
-                    onChange={(e) => setCustomFrom(e.currentTarget.value)}
-                    className="h-9 rounded-md border border-line bg-surface px-2 text-[13px] text-fg shadow-sm focus-visible:outline-none focus-visible:border-brand focus-visible:ring-2 focus-visible:ring-focus-ring"
-                    aria-label="开始日期"
-                  />
-                  <span className="text-fg-muted">–</span>
-                  <input
-                    type="date"
-                    value={customTo}
-                    onChange={(e) => setCustomTo(e.currentTarget.value)}
-                    className="h-9 rounded-md border border-line bg-surface px-2 text-[13px] text-fg shadow-sm focus-visible:outline-none focus-visible:border-brand focus-visible:ring-2 focus-visible:ring-focus-ring"
-                    aria-label="结束日期"
-                  />
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label className="flex items-center gap-1">
-              <KeyRound className="h-3.5 w-3.5" /> API 密钥
-            </Label>
-            <Select options={keyOptions} value={apiKeyId} onChange={setApiKeyId} aria-label="API 密钥" />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label className="flex items-center gap-1">统计指标</Label>
-            <Segmented value={metric} onChange={setMetric} options={metricOptions} />
-          </div>
-
-          <IconButton
-            onClick={refresh}
-            disabled={busy}
-            aria-label={busy ? "刷新中" : "刷新"}
-            title={busy ? "刷新中" : "刷新"}
-            className="mb-0.5"
-          >
-            <RefreshCw className={cn("h-4 w-4", busy && "animate-spin")} />
-          </IconButton>
-        </div>
-      </Card>
+      {filterToolbar}
 
       {/* 指标总览 */}
       <div className="relative">

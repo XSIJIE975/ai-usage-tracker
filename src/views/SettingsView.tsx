@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { AlertTriangle, Settings2, Sparkles, TerminalSquare } from "lucide-react";
+import { AlertTriangle, Settings2 } from "lucide-react";
+import { DeepSeekLogo, OpenCodeLogo } from "../components/brand/provider-logo";
 import { useAppStore } from "../store/useAppStore";
 import { Tabs } from "../components/ui/tabs";
 import { cn } from "../lib/utils";
@@ -83,14 +84,14 @@ export function SettingsView() {
             label: (
               <ProviderTabLabel name="DeepSeek 官方" showDot={unlocked} configured={deepseekConfigured} />
             ),
-            icon: <Sparkles className="h-3.5 w-3.5" />,
+            icon: <DeepSeekLogo className="h-3.5 w-3.5" />,
           },
           {
             value: "opencode",
             label: (
               <ProviderTabLabel name="OpenCode Go" showDot={unlocked} configured={opencodeConfigured} />
             ),
-            icon: <TerminalSquare className="h-3.5 w-3.5" />,
+            icon: <OpenCodeLogo className="h-3.5 w-3.5" />,
           },
         ]}
       />
