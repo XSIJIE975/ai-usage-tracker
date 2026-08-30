@@ -7,6 +7,7 @@ import { useAppStore } from "../../store/useAppStore";
 import { formatRefreshLabel } from "../../lib/utils";
 import type { AppSettings } from "../../types/ipc";
 import { AppearanceCard } from "./AppearanceCard";
+import { AboutCard } from "./AboutCard";
 import { UpdateCard } from "./UpdateCard";
 import { SavedHint, useSaveFlash } from "./save-flash";
 
@@ -77,6 +78,8 @@ export function GeneralSettings() {
       </Card>
 
       <AppearanceCard />
+
+      <AboutCard />
 
       <UpdateCard />
     </div>

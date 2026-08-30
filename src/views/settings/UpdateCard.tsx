@@ -33,7 +33,7 @@ export function UpdateCard() {
     <Card>
       <CardHeader className="flex-row items-start justify-between space-y-0">
         <div className="space-y-1.5">
-          <CardTitle>关于与更新</CardTitle>
+            <CardTitle>检查更新</CardTitle>
           <CardDescription>
             {currentVersion ? `当前版本 v${currentVersion}` : "更新会修复问题并带来新功能。"}
           </CardDescription>
