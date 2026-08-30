@@ -4,6 +4,12 @@ on:
   pull_request:
     types: [closed]
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "要构建的版本号（如 0.1.0），留空则使用 package.json 当前版本"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -14,7 +20,7 @@ concurrency:
 
 jobs:
   should-release:
-    if: github.event.pull_request.merged == true
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -29,6 +35,8 @@ jobs:
 
       - name: Check release version
         id: check
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
         run: node scripts/check-release.mjs >> "$GITHUB_OUTPUT"
 
   create-release:
@@ -50,6 +58,8 @@ jobs:
           node-version: 22
 
       - name: Build release body
+        env:
+          RELEASE_VERSION: ${{ needs.should-release.outputs.version }}
         run: node scripts/release-body.mjs
 
       - name: Create draft release
@@ -112,9 +122,15 @@ jobs:
         include:
           - platform: windows-latest
             args: --bundles nsis
+          - platform: windows-latest
+            args: --target aarch64-pc-windows-msvc --bundles nsis
+            targets: aarch64-pc-windows-msvc
           - platform: macos-latest
-            args: --bundles app,dmg
+            args: --target universal-apple-darwin --bundles app,dmg
+            targets: aarch64-apple-darwin,x86_64-apple-darwin
           - platform: ubuntu-latest
+            args: --bundles deb,appimage
+          - platform: ubuntu-24.04-arm
             args: --bundles deb,appimage
 
     steps:
@@ -133,9 +149,11 @@ jobs:
           cache: pnpm
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.targets }}
 
       - name: Install Linux dependencies
-        if: matrix.platform == 'ubuntu-latest'
+        if: startsWith(matrix.platform, 'ubuntu-')
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libxdo-dev libssl-dev
@@ -144,6 +162,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
+          cache-on-failure: true
 
       - run: pnpm install --frozen-lockfile
 
@@ -156,3 +175,29 @@ jobs:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.args }}
           projectPath: .
+
+  update-notes:
+    needs: [should-release, create-release, build]
+    if: needs.should-release.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build release notes
+        env:
+          RELEASE_VERSION: ${{ needs.should-release.outputs.version }}
+        run: node scripts/release-body.mjs
+
+      - name: Fill updater notes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+        run: node scripts/fill-updater-notes.mjs
