@@ -1,7 +1,7 @@
 {
   "$schema": "https://unpkg.com/@changesets/config@3.1.4/schema.json",
   "changelog": [
-    "./scripts/changeset-changelog.mjs",
+    "../scripts/changeset-changelog.mjs",
     {
       "repo": "XSIJIE975/ai-usage-tracker"
     }
