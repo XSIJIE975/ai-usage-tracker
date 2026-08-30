@@ -41,6 +41,7 @@
     "targets": "all",
     "createUpdaterArtifacts": true,
     "category": "DeveloperTool",
+    "publisher": "XSIJIE",
     "shortDescription": "跨平台 AI 订阅与 API 用量监控工具",
     "longDescription": "在系统托盘快速查看 OpenCode Go 和 DeepSeek 等 AI 服务的用量、额度和余额。",
     "icon": [
