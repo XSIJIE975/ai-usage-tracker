@@ -1,7 +1,8 @@
 import { readFileSync, writeFileSync } from "node:fs";
 
 const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
-const version = packageJson.version;
+const overrideVersion = (process.env.RELEASE_VERSION ?? "").trim();
+const version = overrideVersion || packageJson.version;
 const changelogPath = "CHANGELOG.md";
 
 function extractSection(content, version) {

@@ -45,10 +45,12 @@ pnpm tauri build --no-sign
 
 安装包与更新通道：
 
-- 三平台产物：Windows 为 NSIS（按当前用户安装，更新无需管理员权限）、macOS 为 DMG、Linux 为 DEB + AppImage。
+- 产物矩阵：Windows x64 / ARM64 为 NSIS（按当前用户安装，更新无需管理员权限）、macOS 为 Universal DMG（同一安装包同时支持 Intel 与 Apple Silicon）、Linux x64 / ARM64 为 DEB + AppImage。
 - 构建使用仓库 Secrets（`TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`）签名更新产物，并随安装包上传 `latest.json` 更新清单。
+- `latest.json` 中的更新说明在全部平台构建完成后自动回填当期 CHANGELOG，应用内更新对话框直接展示。
 - 手动发布 draft release 后，旧版本启动时会静默检测到新版本：顶栏出现「新版本」徽标，设置 → 通用 →「关于与更新」可下载并安装。
 - 0.1.0 及更早的安装没有更新能力，需要手动下载安装包重装一次；之后的版本均可自动更新。
+- 需要为已发布版本重新构建（如补齐某个平台的产物）时，在 Actions 页手动运行 Release workflow 并填入版本号，即可强制重建该版本的草稿 Release。
 
 ## 使用
 
@@ -89,4 +91,5 @@ OpenCode Go Auth Cookie 获取方式：
 - Auth Cookie 可能过期，出现 HTTP 401/403 时需要在设置中重新填写。
 - 统计页通过平台网页端私有接口取数（详见 ADR 0006）：opencode.ai 侧依赖构建产物中的 `x-server-id` 常量，平台重新部署可能使其失效；DeepSeek 平台网页接口同样无兼容性承诺。失效时会在界面给出明确错误提示。
 - DeepSeek UserToken 为网页登录态凭据，会过期，需要在设置中重新粘贴。
+- macOS 安装包未经 Apple 公证，首次打开需在 Finder 中右键选择「打开」以绕过 Gatekeeper。
 - 本机已完成 Windows 验证；macOS/Linux 实机验证由三平台 CI 承担。

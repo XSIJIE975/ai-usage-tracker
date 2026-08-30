@@ -32,3 +32,4 @@ release-body.md
 # Updater 签名私钥（正式存放于仓库外 ~/.tauri/，此处为防御性条目）
 *.key
 *.key.pub
+.zcode/

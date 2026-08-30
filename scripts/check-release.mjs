@@ -22,7 +22,9 @@ function compareVersions(left, right) {
 }
 
 const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
-const version = packageJson.version;
+const overrideVersion = (process.env.RELEASE_VERSION ?? "").trim();
+const forceBuild = overrideVersion !== "";
+const version = overrideVersion || packageJson.version;
 
 function readPreviousVersion() {
   try {
@@ -52,7 +54,7 @@ const changedFromPreviousCommit =
   compareVersions(version, previousVersion) > 0;
 const changedFromLatestTag =
   latestTag !== "" && compareVersions(version, latestTag) > 0;
-const shouldBuild = changedFromPreviousCommit || changedFromLatestTag;
+const shouldBuild = forceBuild || changedFromPreviousCommit || changedFromLatestTag;
 
 process.stdout.write(
   [
