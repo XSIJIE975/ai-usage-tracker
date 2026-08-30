@@ -44,7 +44,7 @@ export function UsageHistoryTable({
   }, [page]);
 
   return (
-    <DataTable className="table-fixed" maxHeight={maxHeight} viewportRef={viewportRef}>
+    <DataTable className="table-fixed min-w-[680px]" maxHeight={maxHeight} viewportRef={viewportRef}>
       <THead>
         <tr>
           <Th className="w-[118px]">日期</Th>
@@ -60,13 +60,13 @@ export function UsageHistoryTable({
           <Tr key={record.id || `${record.timeCreated}-${record.model}`}>
             <Td className="whitespace-nowrap text-fg-secondary">{formatRecordTime(record.timeCreated)}</Td>
             <Td>
-              <span className="inline-flex items-center gap-2 overflow-hidden">
+              <div className="flex items-center gap-2">
                 <span
                   className="h-2.5 w-2.5 shrink-0 rounded-[3px]"
                   style={{ backgroundColor: modelColor(record.model) }}
                 />
-                <span className="truncate font-mono text-xs">{record.model}</span>
-              </span>
+                <span className="min-w-0 flex-1 truncate font-mono text-xs">{record.model}</span>
+              </div>
             </Td>
             <Td align="right">
               <span className="inline-flex items-center justify-end gap-1.5">
