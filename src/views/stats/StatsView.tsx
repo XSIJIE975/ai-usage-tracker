@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { DeepSeekLogo, OpenCodeLogo } from "../../components/brand/provider-logo";
 import { Tabs } from "../../components/ui/tabs";
+import { useT } from "../../i18n";
 import { DeepSeekStats } from "./DeepSeekStats";
 import { OpenCodeStats } from "./OpenCodeStats";
 
@@ -12,6 +13,7 @@ type ProviderTab = "deepseek" | "opencode";
  */
 export function StatsView() {
   const [tab, setTab] = useState<ProviderTab>("deepseek");
+  const t = useT();
 
   return (
     <div className="space-y-4">
@@ -19,8 +21,8 @@ export function StatsView() {
         value={tab}
         onChange={setTab}
         items={[
-          { value: "deepseek", label: "DeepSeek 官方", icon: <DeepSeekLogo className="h-3.5 w-3.5" /> },
-          { value: "opencode", label: "OpenCode Go", icon: <OpenCodeLogo className="h-3.5 w-3.5" /> },
+          { value: "deepseek", label: t("DeepSeek 官方"), icon: <DeepSeekLogo className="h-3.5 w-3.5" /> },
+          { value: "opencode", label: t("OpenCode Go"), icon: <OpenCodeLogo className="h-3.5 w-3.5" /> },
         ]}
       />
       {tab === "deepseek" ? <DeepSeekStats /> : <OpenCodeStats />}

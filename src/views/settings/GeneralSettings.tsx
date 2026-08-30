@@ -10,6 +10,7 @@ import { AppearanceCard } from "./AppearanceCard";
 import { AboutCard } from "./AboutCard";
 import { UpdateCard } from "./UpdateCard";
 import { QuickPanelShortcutSetting } from "./QuickPanelShortcutSetting";
+import { useT } from "../../i18n";
 import { SavedHint, useSaveFlash } from "./save-flash";
 
 const INTERVAL_PRESETS = [5, 10, 15, 30, 60, 120];
@@ -18,6 +19,7 @@ export function GeneralSettings() {
   const settings = useAppStore((state) => state.settings);
   const saveSettings = useAppStore((state) => state.saveSettings);
   const { visible: savedVisible, flash } = useSaveFlash();
+  const t = useT();
 
   async function save(patch: Partial<AppSettings>) {
     const current = useAppStore.getState().settings;
@@ -35,11 +37,11 @@ export function GeneralSettings() {
       <Card>
         <CardHeader className="flex-row items-start justify-between space-y-0">
           <div className="space-y-1.5">
-            <CardTitle>自动刷新</CardTitle>
+            <CardTitle>{t("自动刷新")}</CardTitle>
             <CardDescription>
               {settings.refreshEnabled
-                ? `当前策略：每 ${formatRefreshLabel(interval)} 自动刷新。`
-                : "已关闭，仅手动刷新。"}
+                ? `${t("当前策略：每")} ${formatRefreshLabel(interval, t)} ${t("自动刷新。")}`
+                : t("已关闭，仅手动刷新。")}
             </CardDescription>
           </div>
           <SavedHint visible={savedVisible} />
@@ -47,8 +49,8 @@ export function GeneralSettings() {
         <CardContent className="space-y-5">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <Label>自动刷新总开关</Label>
-              <p className="mt-1 text-[13px] text-fg-muted">关闭后所有供应商与统计页均不再自动刷新。</p>
+              <Label>{t("自动刷新总开关")}</Label>
+              <p className="mt-1 text-[13px] text-fg-muted">{t("关闭后所有供应商与统计页均不再自动刷新。")}</p>
             </div>
             <Switch
               checked={settings.refreshEnabled}
@@ -60,8 +62,8 @@ export function GeneralSettings() {
 
           <div className="flex items-center justify-between gap-4">
             <div>
-              <Label htmlFor="refresh-interval">刷新间隔</Label>
-              <p className="mt-1 text-[13px] text-fg-muted">所有供应商共用同一间隔。</p>
+              <Label htmlFor="refresh-interval">{t("刷新间隔")}</Label>
+              <p className="mt-1 text-[13px] text-fg-muted">{t("所有供应商共用同一间隔。")}</p>
             </div>
             <Select
               id="refresh-interval"
@@ -70,7 +72,7 @@ export function GeneralSettings() {
               onChange={(value) => void save({ refreshIntervalMinutes: Number(value) })}
               options={presets.map((minutes) => ({
                 value: String(minutes),
-                label: formatRefreshLabel(minutes),
+                label: formatRefreshLabel(minutes, t),
               }))}
               aria-label="刷新间隔"
             />
@@ -83,11 +85,11 @@ export function GeneralSettings() {
       <Card>
         <CardHeader className="flex-row items-start justify-between space-y-0">
           <div className="space-y-1.5">
-            <CardTitle>用量告警</CardTitle>
+            <CardTitle>{t("用量告警")}</CardTitle>
             <CardDescription>
               {settings.alertsEnabled
-                ? "余额/额度越过阈值时发送系统通知，并计入通知中心。"
-                : "已关闭，不会发送任何告警通知。"}
+                ? t("余额/额度越过阈值时发送系统通知，并计入通知中心。")
+                : t("已关闭，不会发送任何告警通知。")}
             </CardDescription>
           </div>
           <Switch
@@ -97,7 +99,7 @@ export function GeneralSettings() {
         </CardHeader>
         <CardContent>
           <p className="text-[13px] text-fg-muted">
-            各供应商的阈值在其页签中设置；触发后 6 小时内不会重复通知，恢复到阈值以上会自动解除。
+            {t("各供应商的阈值在其页签中设置；触发后 6 小时内不会重复通知，恢复到阈值以上会自动解除。")}
           </p>
         </CardContent>
       </Card>
@@ -105,8 +107,8 @@ export function GeneralSettings() {
       <Card>
         <CardHeader className="flex-row items-start justify-between space-y-0 pb-3">
           <div className="space-y-1.5">
-            <CardTitle>快速面板</CardTitle>
-            <CardDescription>全局快捷键与窗口行为。</CardDescription>
+            <CardTitle>{t("快速面板")}</CardTitle>
+            <CardDescription>{t("全局快捷键与窗口行为。")}</CardDescription>
           </div>
         </CardHeader>
         <CardContent>

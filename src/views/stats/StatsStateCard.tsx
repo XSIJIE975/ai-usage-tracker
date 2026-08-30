@@ -2,6 +2,7 @@ import { AlertTriangle, KeyRound, LoaderCircle } from "lucide-react";
 import { Card } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
 import { EmptyState } from "../../components/ui/empty-state";
+import { useT } from "../../i18n";
 
 export type StatsAsyncState<T> =
   | { kind: "loading" }
@@ -14,11 +15,12 @@ export type StatsAsyncState<T> =
  * loading 轻量占位 / needs_config 引导前往设置页配置凭据 / error 展示原因并可重试。
  */
 export function StatsStateCard<T>({ state, onRetry }: { state: StatsAsyncState<T>; onRetry?: () => void }) {
+  const t = useT();
   if (state.kind === "loading") {
     return (
       <Card className="flex items-center justify-center gap-2 p-10 text-[13px] text-fg-muted">
         <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden />
-        正在加载用量数据…
+        {t("正在加载用量数据…")}
       </Card>
     );
   }
@@ -29,7 +31,7 @@ export function StatsStateCard<T>({ state, onRetry }: { state: StatsAsyncState<T
         <EmptyState
           icon={<KeyRound className="h-5 w-5" />}
           title={state.message}
-          description="请前往设置页配置对应凭据后回来重试。"
+          description={t("请前往设置页配置对应凭据后回来重试。")}
         />
       </Card>
     );
@@ -40,12 +42,12 @@ export function StatsStateCard<T>({ state, onRetry }: { state: StatsAsyncState<T
       <Card className="p-5">
         <EmptyState
           icon={<AlertTriangle className="h-5 w-5" />}
-          title="用量数据加载失败"
+          title={t("用量数据加载失败")}
           description={state.message}
           action={
             onRetry ? (
               <Button variant="outline" size="sm" onClick={onRetry}>
-                重试
+                {t("重试")}
               </Button>
             ) : undefined
           }

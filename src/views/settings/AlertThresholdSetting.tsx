@@ -1,6 +1,7 @@
 import { useAppStore } from "../../store/useAppStore";
 import { Label } from "../../components/ui/label";
 import { SavedHint, useSaveFlash } from "./save-flash";
+import { useT } from "../../i18n";
 
 interface ThresholdConfig {
   label: string;
@@ -29,6 +30,7 @@ export function AlertThresholdSetting({ providerId }: { providerId: "deepseek" |
   const settings = useAppStore((state) => state.settings);
   const saveSettings = useAppStore((state) => state.saveSettings);
   const { visible, flash } = useSaveFlash();
+  const t = useT();
   const config = CONFIGS[providerId];
 
   const value =
@@ -55,10 +57,10 @@ export function AlertThresholdSetting({ providerId }: { providerId: "deepseek" |
     <div className="flex items-center justify-between gap-4">
       <div>
         <div className="flex items-center gap-2">
-          <Label htmlFor={`alert-threshold-${providerId}`}>{config.label}</Label>
+          <Label htmlFor={`alert-threshold-${providerId}`}>{t(config.label)}</Label>
           <SavedHint visible={visible} />
         </div>
-        <p className="mt-1 text-[13px] text-fg-muted">{config.hint}</p>
+        <p className="mt-1 text-[13px] text-fg-muted">{t(config.hint)}</p>
       </div>
       <input
         id={`alert-threshold-${providerId}`}

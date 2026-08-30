@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Check, Eye, EyeOff, X } from "lucide-react";
 import { Input } from "../../components/ui/input";
 import { Badge } from "../../components/ui/badge";
+import { useT } from "../../i18n";
 
 interface SecretFieldProps {
   id: string;
@@ -61,11 +62,12 @@ export function SecretField({
 }
 
 export function StatusBadge({ configured }: { configured: boolean }) {
+  const t = useT();
   return configured ? (
     <Badge variant="success">
-      <Check className="h-3 w-3" /> 已配置
+      <Check className="h-3 w-3" /> {t("已配置")}
     </Badge>
   ) : (
-    <Badge variant="neutral">未配置</Badge>
+    <Badge variant="neutral">{t("未配置")}</Badge>
   );
 }

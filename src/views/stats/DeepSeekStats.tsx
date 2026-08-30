@@ -19,6 +19,7 @@ import { useGlobalRefresh } from "./use-global-refresh";
 import { OverviewCards } from "./deepseek/OverviewCards";
 import { ModelUsageTable } from "./deepseek/ModelUsageTable";
 import { customRangeError, isoDate, resolveRangeMs, timeRangeOptions, type TimeRange } from "./deepseek/time-range";
+import { useT } from "../../i18n";
 import {
   aggregateUsage,
   buildStackedSeries,
@@ -55,6 +56,7 @@ export function DeepSeekStats() {
 
   const rangeMs = useMemo(() => resolveRangeMs(range, customFrom, customTo), [range, customFrom, customTo]);
   const customError = range === "custom" ? customRangeError(customFrom, customTo) : null;
+  const t = useT();
   const { state, isRefreshing } = useStatsFetch(
     usageCache,
     rangeMs === null ? null : `${rangeMs.startMs}:${rangeMs.endMs}`,
@@ -111,8 +113,8 @@ export function DeepSeekStats() {
   const emptyUsageHint = (
     <EmptyState
       icon={<Activity className="h-5 w-5" />}
-      title="所选时间范围内暂无用量数据"
-      description="调整时间范围，或在设置页确认 DeepSeek UserToken 有效。"
+      title={t("所选时间范围内暂无用量数据")}
+      description={t("调整时间范围，或在设置页确认 DeepSeek UserToken 有效。")}
     />
   );
 
@@ -121,10 +123,15 @@ export function DeepSeekStats() {
       <div className="flex flex-wrap items-end gap-x-5 gap-y-3">
         <div className="space-y-1.5">
           <Label className="flex items-center gap-1">
-            <CalendarRange className="h-3.5 w-3.5" /> 时间范围
+            <CalendarRange className="h-3.5 w-3.5" /> {t("时间范围")}
           </Label>
           <div className="flex items-center gap-2">
-            <Select options={timeRangeOptions} value={range} onChange={setRange} aria-label="时间范围" />
+            <Select
+              options={timeRangeOptions.map((option) => ({ ...option, label: t(option.label) }))}
+              value={range}
+              onChange={setRange}
+              aria-label="时间范围"
+            />
             {range === "custom" && (
               <div className="flex items-center gap-1.5">
                 <input
@@ -133,7 +140,7 @@ export function DeepSeekStats() {
                   max={customTo || isoDate(new Date())}
                   onChange={(e) => setCustomFrom(e.currentTarget.value)}
                   className="h-9 rounded-md border border-line bg-surface px-2 text-[13px] text-fg shadow-sm focus-visible:outline-none focus-visible:border-brand focus-visible:ring-2 focus-visible:ring-focus-ring"
-                  aria-label="开始日期"
+                  aria-label={t("开始日期")}
                 />
                 <span className="text-fg-muted">–</span>
                 <input
@@ -143,7 +150,7 @@ export function DeepSeekStats() {
                   max={isoDate(new Date())}
                   onChange={(e) => setCustomTo(e.currentTarget.value)}
                   className="h-9 rounded-md border border-line bg-surface px-2 text-[13px] text-fg shadow-sm focus-visible:outline-none focus-visible:border-brand focus-visible:ring-2 focus-visible:ring-focus-ring"
-                  aria-label="结束日期"
+                  aria-label={t("结束日期")}
                 />
               </div>
             )}
@@ -152,21 +159,30 @@ export function DeepSeekStats() {
 
         <div className="space-y-1.5">
           <Label className="flex items-center gap-1">
-            <KeyRound className="h-3.5 w-3.5" /> API 密钥
+            <KeyRound className="h-3.5 w-3.5" /> {t("API 密钥")}
           </Label>
-          <Select options={keyOptions} value={apiKeyId} onChange={setApiKeyId} aria-label="API 密钥" />
+          <Select
+              options={keyOptions.map((option) => ({ ...option, label: t(option.label) }))}
+              value={apiKeyId}
+              onChange={setApiKeyId}
+              aria-label="API 密钥"
+            />
         </div>
 
         <div className="space-y-1.5">
-          <Label className="flex items-center gap-1">统计指标</Label>
-          <Segmented value={metric} onChange={setMetric} options={metricOptions} />
+          <Label className="flex items-center gap-1">{t("统计指标")}</Label>
+          <Segmented
+              value={metric}
+              onChange={setMetric}
+              options={metricOptions.map((option) => ({ ...option, label: t(option.label) }))}
+            />
         </div>
 
         <IconButton
           onClick={refresh}
           disabled={busy}
-          aria-label={busy ? "刷新中" : "刷新"}
-          title={busy ? "刷新中" : "刷新"}
+          aria-label={busy ? t("刷新中") : t("刷新")}
+          title={busy ? t("刷新中") : t("刷新")}
           className="mb-0.5"
         >
           <RefreshCw className={cn("h-4 w-4", busy && "animate-spin")} />
@@ -184,7 +200,7 @@ export function DeepSeekStats() {
           <CardContent>
             <EmptyState
               icon={<CalendarRange className="h-5 w-5" />}
-              title="时间范围无效"
+              title={t("时间范围无效")}
               description={customError}
             />
           </CardContent>
@@ -213,8 +229,8 @@ export function DeepSeekStats() {
         <Card className="relative xl:col-span-3">
           {busy && <RefreshOverlay />}
           <CardHeader>
-            <CardTitle>{chartTitle}</CardTitle>
-            <CardDescription>按模型堆叠，悬停查看每日明细。</CardDescription>
+            <CardTitle>{t(chartTitle)}</CardTitle>
+            <CardDescription>{t("按模型堆叠，悬停查看每日明细。")}</CardDescription>
           </CardHeader>
           <CardContent className="px-4 pb-4">
             {hasUsage ? (
@@ -228,14 +244,14 @@ export function DeepSeekStats() {
         <Card className="relative xl:col-span-2">
           {busy && <RefreshOverlay />}
           <CardHeader>
-            <CardTitle>模型 Token 占比</CardTitle>
-            <CardDescription>所选时间范围内的消耗构成。</CardDescription>
+            <CardTitle>{t("模型 Token 占比")}</CardTitle>
+            <CardDescription>{t("所选时间范围内的消耗构成。")}</CardDescription>
           </CardHeader>
           <CardContent className="flex min-h-[300px] items-center px-4 pb-4">
             {hasUsage ? (
               <Donut
                 className="w-full"
-                centerLabel="总 Token"
+                centerLabel={t("总 Token")}
                 format={formatCompact}
                 segments={aggregates.perModel.map((model) => ({ name: model.model, value: model.totalTokens }))}
               />
@@ -250,8 +266,8 @@ export function DeepSeekStats() {
       <Card className="relative">
         {busy && <RefreshOverlay />}
         <CardHeader>
-          <CardTitle>模型明细</CardTitle>
-          <CardDescription>各模型的 token 消耗、缓存命中与费用。</CardDescription>
+          <CardTitle>{t("模型明细")}</CardTitle>
+          <CardDescription>{t("各模型的 token 消耗、缓存命中与费用。")}</CardDescription>
         </CardHeader>
         <CardContent>
           {hasUsage ? (

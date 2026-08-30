@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { DataTable, THead, TBody, Th, Tr, Td } from "../../../components/ui/data-table";
 import { modelColor } from "../../../components/charts/palette";
 import { formatInt } from "../../../lib/utils";
+import { useT } from "../../../i18n";
 import type { OpenCodeUsageRecord } from "../../../providers/opencode-stats";
 
 /** 表格内 token 数前的迷你柱状 glyph（参照产品截图形态） */
@@ -38,6 +39,7 @@ export function UsageHistoryTable({
   page?: number;
 }) {
   const viewportRef = useRef<HTMLDivElement>(null);
+  const t = useT();
 
   useEffect(() => {
     viewportRef.current?.scrollTo({ top: 0 });
@@ -47,12 +49,12 @@ export function UsageHistoryTable({
     <DataTable className="table-fixed min-w-[680px]" maxHeight={maxHeight} viewportRef={viewportRef}>
       <THead>
         <tr>
-          <Th className="w-[118px]">日期</Th>
-          <Th>模型</Th>
-          <Th align="right" className="w-[92px]">输入</Th>
-          <Th align="right" className="w-[84px]">输出</Th>
-          <Th align="right" className="w-[92px]">成本</Th>
-          <Th align="right" className="w-[200px]">会话</Th>
+          <Th className="w-[118px]">{t("日期")}</Th>
+          <Th>{t("模型")}</Th>
+          <Th align="right" className="w-[92px]">{t("输入")}</Th>
+          <Th align="right" className="w-[84px]">{t("输出")}</Th>
+          <Th align="right" className="w-[92px]">{t("成本")}</Th>
+          <Th align="right" className="w-[200px]">{t("会话")}</Th>
         </tr>
       </THead>
       <TBody>

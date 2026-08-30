@@ -12,6 +12,7 @@ import { BrandIcon } from "../components/BrandIcon";
 import { ProviderCard } from "../components/ProviderCard";
 import { NotificationCenterPanel } from "./NotificationCenterPanel";
 import { cn, formatClock } from "../lib/utils";
+import { useT } from "../i18n";
 
 /** 下次自动刷新倒计时（mm:ss）；自动刷新关闭或尚无基准时间时返回 null */
 function useNextRefreshCountdown(): string | null {
@@ -47,6 +48,7 @@ export function QuickWindow() {
   const countdown = useNextRefreshCountdown();
   const [ready, setReady] = useState(false);
   const [noticeOpen, setNoticeOpen] = useState(false);
+  const t = useT();
 
   const syncFromBackend = useCallback(async () => {
     await loadInitial();
@@ -156,14 +158,14 @@ export function QuickWindow() {
       >
         <div className="flex items-center gap-2" data-tauri-drag-region>
           <BrandIcon size={20} className="rounded-[5px]" />
-          <span className="text-[13px] font-semibold text-fg">AI 用量助手</span>
+          <span className="text-[13px] font-semibold text-fg">{t("AI 用量助手")}</span>
         </div>
         <div className="flex items-center gap-0.5">
           <div className="relative">
             <IconButton
               onClick={() => setNoticeOpen((open) => !open)}
-              title="通知中心"
-              aria-label={`通知中心${unread > 0 ? `（${unread} 条未读）` : ""}`}
+              title={t("通知中心")}
+              aria-label={`${t("通知中心")}${unread > 0 ? `（${unread} ${t("条未读")}）` : ""}`}
             >
               <Bell className="h-3.5 w-3.5" />
               {unread > 0 && (
@@ -176,15 +178,15 @@ export function QuickWindow() {
           <IconButton
             onClick={() => void refreshAll(true)}
             disabled={refreshing}
-            title="刷新"
-            aria-label="刷新"
+            title={t("刷新")}
+            aria-label={t("刷新")}
           >
             <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
           </IconButton>
-          <IconButton onClick={openMain} title="打开主窗口" aria-label="打开主窗口">
+          <IconButton onClick={openMain} title={t("打开主窗口")} aria-label={t("打开主窗口")}>
             <Gauge className="h-3.5 w-3.5" />
           </IconButton>
-          <IconButton onClick={hideQuick} title="隐藏" aria-label="隐藏">
+          <IconButton onClick={hideQuick} title={t("隐藏")} aria-label={t("隐藏")}>
             <X className="h-3.5 w-3.5" />
           </IconButton>
         </div>
@@ -194,10 +196,10 @@ export function QuickWindow() {
       <div className="flex shrink-0 items-center justify-between border-b border-line bg-surface-2/40 px-3 py-1.5 text-[11px] text-fg-muted">
         <span className="flex items-center gap-1">
           <Timer className="h-3 w-3" />
-          {countdown ? `${countdown} 后自动刷新` : "自动刷新已关闭"}
+          {countdown ? `${countdown} ${t("后自动刷新")}` : t("自动刷新已关闭")}
         </span>
         <span className="tnum">
-          {snapshots.length > 0 ? `最近更新 ${formatClock(Math.max(...snapshots.map((item) => item.updatedAt)))}` : "等待刷新"}
+          {snapshots.length > 0 ? `${t("最近更新")} ${formatClock(Math.max(...snapshots.map((item) => item.updatedAt)))}` : t("等待刷新")}
         </span>
       </div>
 
@@ -212,15 +214,15 @@ export function QuickWindow() {
               <Lock className="h-5 w-5" />
             </div>
             <p className="text-[13px] text-fg-secondary">
-              {vaultStatus?.needsMigration ? "凭据库待迁移" : "凭据库不可用"}
+              {vaultStatus?.needsMigration ? t("凭据库待迁移") : t("凭据库不可用")}
             </p>
             <p className="text-xs leading-relaxed text-fg-muted">
               {vaultStatus?.needsMigration
-                ? "打开主窗口完成一次性迁移（最后一次输入旧主密码）"
-                : "打开主窗口，在设置中重新录入凭据"}
+                ? t("打开主窗口完成一次性迁移（最后一次输入旧主密码）")
+                : t("打开主窗口，在设置中重新录入凭据")}
             </p>
             <Button size="sm" onClick={openMain}>
-              打开主窗口
+              {t("打开主窗口")}
             </Button>
           </div>
         ) : (
@@ -238,7 +240,7 @@ export function QuickWindow() {
                 className="mb-3 flex w-full items-center gap-2 rounded-md border border-warning/30 bg-warning-soft px-3 py-2 text-left text-xs text-warning-soft-fg transition-colors hover:bg-warning-soft/80"
               >
                 <TriangleAlert className="h-3.5 w-3.5 shrink-0" />
-                有额度告警待处理，点击查看通知中心
+                {t("有额度告警待处理，点击查看通知中心")}
               </button>
             )}
             {snapshots.length === 0 ? (
@@ -246,9 +248,9 @@ export function QuickWindow() {
                 <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-surface-2 text-fg-muted">
                   <Gauge className="h-5 w-5" />
                 </div>
-                <p className="text-[13px] text-fg-secondary">还没有用量数据</p>
+                <p className="text-[13px] text-fg-secondary">{t("还没有用量数据")}</p>
                 <Button size="sm" onClick={() => void refreshAll(true)}>
-                  立即刷新
+                  {t("立即刷新")}
                 </Button>
               </div>
             ) : (
