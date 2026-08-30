@@ -1,13 +1,24 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ComponentType } from "react";
-import { AlertTriangle, CheckCircle2, RefreshCw, Settings2 } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  RefreshCw,
+  Settings2,
+  TrendingDown,
+  TrendingUp,
+} from "lucide-react";
 import type { MetricLine, ProviderSnapshot } from "../types/ipc";
 import { formatClock, formatReset } from "../lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Progress } from "./ui/progress";
 import { Badge } from "./ui/badge";
 import { IconButton } from "./ui/icon-button";
+import { Sparkline } from "./charts/Sparkline";
 import { DeepSeekLogo, OpenCodeLogo } from "./brand/provider-logo";
+import { loadProviderHistory, type ProviderHistory } from "../stats/snapshot-history";
+import { analyzeBurnRate } from "../stats/burn-rate";
+import { describeBurnRate } from "../stats/burn-rate-format";
 import { cn } from "../lib/utils";
 
 function useNow(intervalMs = 30_000) {
@@ -122,6 +133,27 @@ function MetricRow({ line, now }: { line: MetricLine; now: number }) {
   );
 }
 
+/** 拉取供应商快照历史；每次快照更新（新数据落库）后自动重新加载 */
+function useProviderHistory(providerId: string, updatedAt: number): ProviderHistory | null {
+  const [history, setHistory] = useState<ProviderHistory | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadProviderHistory(providerId)
+      .then((result) => {
+        if (!cancelled) setHistory(result);
+      })
+      .catch(() => {
+        if (!cancelled) setHistory(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [providerId, updatedAt]);
+
+  return history;
+}
+
 export function ProviderCard({
   snapshot,
   compact = false,
@@ -135,6 +167,29 @@ export function ProviderCard({
 }) {
   const needsConfig = snapshot.status === "needs_config";
   const now = useNow();
+  const history = useProviderHistory(snapshot.providerId, snapshot.updatedAt);
+
+  // 有重置时间的指标（额度窗口）按"用满"预测，否则按"耗尽"预测（余额）
+  const fillMode = Boolean(history?.resetsAt);
+  const burn = useMemo(() => {
+    if (!history || history.points.length < 2 || snapshot.status !== "ok") return null;
+    return analyzeBurnRate(
+      history.points,
+      fillMode ? { mode: "fill", resetsAt: history.resetsAt } : { mode: "deplete" },
+    );
+  }, [history, fillMode, snapshot.status]);
+  const burnText = useMemo(
+    () =>
+      burn
+        ? describeBurnRate(
+            burn,
+            fillMode ? { noun: "本月额度", verb: "用完" } : { noun: "余额", verb: "耗尽" },
+          )
+        : null,
+    [burn, fillMode],
+  );
+  const trend = history && history.points.length >= 2 ? history : null;
+  const sparkColor = snapshot.providerId === "deepseek" ? "#5786FE" : undefined;
 
   return (
     <Card className="transition-shadow duration-normal hover:shadow-pop">
@@ -181,6 +236,23 @@ export function ProviderCard({
             <MetricRow key={`${line.label}-${index}`} line={line} now={now} />
           ))}
         </div>
+        {snapshot.status === "ok" && (burnText || trend) ? (
+          <div className="mt-2 space-y-2">
+            {burnText ? (
+              <p className="flex items-start gap-1.5 text-[11px] leading-relaxed text-fg-muted">
+                {fillMode ? (
+                  <TrendingUp className="mt-0.5 h-3 w-3 shrink-0" />
+                ) : (
+                  <TrendingDown className="mt-0.5 h-3 w-3 shrink-0" />
+                )}
+                {burnText}
+              </p>
+            ) : null}
+            {trend ? (
+              <Sparkline points={trend.points} color={sparkColor} height={compact ? 44 : 56} />
+            ) : null}
+          </div>
+        ) : null}
         {snapshot.lines.length === 0 && !snapshot.message ? (
           <p className="py-2 text-xs text-fg-muted">暂无数据</p>
         ) : null}
