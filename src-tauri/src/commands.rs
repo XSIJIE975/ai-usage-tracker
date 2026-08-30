@@ -215,6 +215,17 @@ pub fn get_latest_snapshots(state: State<'_, AppState>) -> Result<Vec<db::Stored
 }
 
 #[tauri::command]
+pub fn list_snapshots(
+    state: State<'_, AppState>,
+    provider_id: String,
+    since_ms: Option<i64>,
+    limit: Option<i64>,
+) -> Result<Vec<db::StoredSnapshot>, String> {
+    let db = state.db.lock().expect("db lock poisoned");
+    db.list_snapshots(&provider_id, since_ms.unwrap_or(0), limit.unwrap_or(2000))
+}
+
+#[tauri::command]
 pub async fn provider_request(
     state: State<'_, AppState>,
     provider_id: String,

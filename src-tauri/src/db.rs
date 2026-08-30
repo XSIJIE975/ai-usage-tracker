@@ -4,6 +4,9 @@ use rusqlite::Connection;
 use serde::Serialize;
 use serde_json::Value;
 
+/// 快照保留期：90 天，打开数据库时清理更早的历史
+const SNAPSHOT_RETENTION_MS: i64 = 90 * 24 * 60 * 60 * 1000;
+
 #[derive(Serialize)]
 pub struct StoredSnapshot {
     pub provider_id: String,
@@ -39,6 +42,15 @@ impl Db {
             "#,
         )
         .map_err(|error| error.to_string())?;
+
+        // 历史快照用于趋势与耗尽预测，超过保留期的旧数据没有价值，打开时顺带清理
+        let cutoff = chrono_utc_now() - SNAPSHOT_RETENTION_MS;
+        if let Err(error) =
+            conn.execute("DELETE FROM snapshots WHERE captured_at < ?1", [cutoff])
+        {
+            eprintln!("清理历史快照失败：{error}");
+        }
+
         Ok(Self { conn })
     }
 
@@ -126,6 +138,46 @@ impl Db {
         for row in rows {
             result.push(row.map_err(|error| error.to_string())?);
         }
+        Ok(result)
+    }
+
+    /// 查询某供应商在 since_ms 之后的历史快照，最多 limit 条，按时间正序返回（供趋势图/预测使用）
+    pub fn list_snapshots(
+        &self,
+        provider_id: &str,
+        since_ms: i64,
+        limit: i64,
+    ) -> Result<Vec<StoredSnapshot>, String> {
+        let mut statement = self
+            .conn
+            .prepare(
+                r#"
+                SELECT provider_id, captured_at, payload
+                FROM snapshots
+                WHERE provider_id = ?1 AND captured_at >= ?2
+                ORDER BY captured_at DESC
+                LIMIT ?3
+                "#,
+            )
+            .map_err(|error| error.to_string())?;
+
+        let rows = statement
+            .query_map(rusqlite::params![provider_id, since_ms, limit], |row| {
+                Ok(StoredSnapshot {
+                    provider_id: row.get(0)?,
+                    captured_at: row.get(1)?,
+                    payload: serde_json::from_str(&row.get::<_, String>(2)?)
+                        .unwrap_or_else(|_| Value::Null),
+                })
+            })
+            .map_err(|error| error.to_string())?;
+
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row.map_err(|error| error.to_string())?);
+        }
+        // SQL 按时间倒序取最新 N 条，返回时转为时间正序
+        result.reverse();
         Ok(result)
     }
 }

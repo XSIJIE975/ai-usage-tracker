@@ -69,6 +69,7 @@ pub fn run() {
             commands::save_settings,
             commands::save_snapshot,
             commands::get_latest_snapshots,
+            commands::list_snapshots,
             commands::provider_request,
             commands::open_main_window,
             commands::hide_quick_window,
