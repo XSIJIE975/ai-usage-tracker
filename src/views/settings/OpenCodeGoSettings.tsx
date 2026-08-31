@@ -11,6 +11,7 @@ import { AlertThresholdSetting } from "./AlertThresholdSetting";
 import { DiagnosisButton } from "./DiagnosisButton";
 import { testOpenCodeApiKey, testOpenCodeConnection } from "../../diagnostics";
 import { SaveMessageBanner, type ProviderSettingsProps, type SaveMessage } from "./provider-settings";
+import { useT } from "../../i18n";
 import { normalizeOpenCodeAuthCookie } from "../../lib/utils";
 import type { CredentialsInput } from "../../types/ipc";
 
@@ -28,6 +29,7 @@ export function OpenCodeGoSettings({
   const [apiKey, setApiKey] = useState("");
   const [message, setMessage] = useState<SaveMessage>(null);
   const [saving, setSaving] = useState(false);
+  const t = useT();
 
   useEffect(() => {
     setWorkspaceId(credentials?.opencodeGoWorkspaceId ?? "");
@@ -45,7 +47,7 @@ export function OpenCodeGoSettings({
       await invoke("vault_save_credentials", { credentials: input });
       await onChanged();
       await onReload();
-      setMessage({ kind: "success", text: "凭据已保存，已刷新用量" });
+      setMessage({ kind: "success", text: t("凭据已保存，已刷新用量") });
     } catch (error) {
       setMessage({ kind: "error", text: error instanceof Error ? error.message : String(error) });
     } finally {
@@ -59,7 +61,7 @@ export function OpenCodeGoSettings({
       await invoke("vault_save_credentials", { credentials: { [field]: null } });
       await onChanged();
       await onReload();
-      setMessage({ kind: "success", text: "凭据已清除" });
+      setMessage({ kind: "success", text: t("凭据已清除") });
     } catch (error) {
       setMessage({ kind: "error", text: error instanceof Error ? error.message : String(error) });
     } finally {
@@ -70,8 +72,8 @@ export function OpenCodeGoSettings({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>OpenCode Go 凭据</CardTitle>
-        <CardDescription>Workspace ID 与 Auth Cookie 为必填，API Key 可选。</CardDescription>
+        <CardTitle>{t("OpenCode Go 凭据")}</CardTitle>
+        <CardDescription>{t("Workspace ID 与 Auth Cookie 为必填，API Key 可选。")}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
         {notice && (
@@ -84,7 +86,7 @@ export function OpenCodeGoSettings({
 
         <div className="space-y-2.5">
           <div className="flex items-center justify-between">
-            <Label htmlFor="workspaceId">OpenCode Go Workspace ID</Label>
+            <Label htmlFor="workspaceId">{t("OpenCode Go Workspace ID")}</Label>
             <StatusBadge configured={Boolean(credentialStatus?.opencodeGoWorkspaceId)} />
           </div>
           <SecretField
@@ -100,20 +102,22 @@ export function OpenCodeGoSettings({
 
         <div className="space-y-2.5">
           <div className="flex items-center justify-between">
-            <Label htmlFor="authCookie">OpenCode Auth Cookie</Label>
+            <Label htmlFor="authCookie">{t("OpenCode Auth Cookie")}</Label>
             <StatusBadge configured={Boolean(credentialStatus?.opencodeGoAuthCookie)} />
           </div>
           <SecretField
             id="authCookie"
             value={authCookie}
-            placeholder="只粘贴 auth Cookie 的 Value"
+            placeholder={t("只粘贴 auth Cookie 的 Value")}
             disabled={saveDisabled}
             onChange={setAuthCookie}
             onClear={() => void clearCredential("opencodeGoAuthCookie")}
             clearDisabled={!authCookie}
           />
           <p className="text-xs leading-relaxed text-fg-muted">
-            获取方式：打开 opencode.ai 后台，按 F12 → Application → Cookies → opencode.ai，复制名为 auth 的 Value；不要带 Cookie: 或 auth= 前缀。
+            {t(
+              "获取方式：打开 opencode.ai 后台，按 F12 → Application → Cookies → opencode.ai，复制名为 auth 的 Value；不要带 Cookie: 或 auth= 前缀。",
+            )}
           </p>
           <DiagnosisButton
             test={() => testOpenCodeConnection(workspaceId, authCookie)}
@@ -123,13 +127,13 @@ export function OpenCodeGoSettings({
 
         <div className="space-y-2.5">
           <div className="flex items-center justify-between">
-            <Label htmlFor="apiKey">OpenCode Go API Key（可选）</Label>
+            <Label htmlFor="apiKey">{t("OpenCode Go API Key（可选）")}</Label>
             <StatusBadge configured={Boolean(credentialStatus?.opencodeGoApiKey)} />
           </div>
           <SecretField
             id="apiKey"
             value={apiKey}
-            placeholder="官方 /usage 接口上线后使用"
+            placeholder={t("官方 /usage 接口上线后使用")}
             disabled={saveDisabled}
             onChange={setApiKey}
             onClear={() => void clearCredential("opencodeGoApiKey")}
@@ -144,11 +148,11 @@ export function OpenCodeGoSettings({
         <Button disabled={saveDisabled || saving} onClick={() => void saveCredentials()}>
           {saving ? (
             <>
-              <LoaderCircle className="h-4 w-4 animate-spin" /> 保存中…
+              <LoaderCircle className="h-4 w-4 animate-spin" /> {t("保存中…")}
             </>
           ) : (
             <>
-              <Save className="h-4 w-4" /> 保存凭据
+              <Save className="h-4 w-4" /> {t("保存凭据")}
             </>
           )}
         </Button>

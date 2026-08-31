@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { LoaderCircle, PlugZap } from "lucide-react";
-import { type DiagnosisResult } from "../../diagnostics";
+import { describeDiagnosis, type DiagnosisResult } from "../../diagnostics";
 import { Button } from "../../components/ui/button";
 import { cn } from "../../lib/utils";
 import { useT } from "../../i18n";
@@ -30,7 +30,8 @@ export function DiagnosisButton({
         ok: false,
         status: 0,
         latencyMs: 0,
-        message: error instanceof Error ? error.message : String(error),
+        code: "unknown",
+        detail: error instanceof Error ? error.message : String(error),
       });
     } finally {
       setRunning(false);
@@ -52,7 +53,7 @@ export function DiagnosisButton({
           )}
         >
           {result.ok ? "✓ " : "✗ "}
-          {result.message}
+          {describeDiagnosis(result, t)}
         </span>
       )}
     </div>

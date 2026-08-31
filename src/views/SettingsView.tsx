@@ -23,14 +23,15 @@ function ProviderTabLabel({
   showDot: boolean;
   configured: boolean;
 }) {
+  const t = useT();
   return (
     <span className="inline-flex items-center gap-1.5">
       {name}
       {showDot && (
         <span
           className={cn("h-1.5 w-1.5 rounded-full", configured ? "bg-success" : "bg-warning")}
-          title={configured ? "凭据已配置" : "凭据未配置"}
-          aria-label={configured ? "凭据已配置" : "凭据未配置"}
+          title={configured ? t("凭据已配置") : t("凭据未配置")}
+          aria-label={configured ? t("凭据已配置") : t("凭据未配置")}
         />
       )}
     </span>
@@ -56,7 +57,7 @@ export function SettingsView() {
     saveDisabled: pendingMigration,
     notice:
       vaultStatus && !vaultStatus.unlocked && !vaultStatus.keychainLost
-        ? "凭据库待迁移，请先完成上方的一次性迁移，再保存凭据。"
+        ? t("凭据库待迁移，请先完成上方的一次性迁移，再保存凭据。")
         : undefined,
     credentials,
     credentialStatus,

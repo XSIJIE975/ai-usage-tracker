@@ -24,6 +24,7 @@ export function SecretField({
   clearDisabled = false,
 }: SecretFieldProps) {
   const [visible, setVisible] = useState(false);
+  const t = useT();
 
   return (
     <div className="relative">
@@ -42,8 +43,8 @@ export function SecretField({
         onClick={() => setVisible((current) => !current)}
         disabled={disabled}
         className="absolute right-8 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-surface-2 hover:text-fg disabled:pointer-events-none disabled:opacity-40"
-        title={visible ? "隐藏" : "显示"}
-        aria-label={visible ? "隐藏" : "显示"}
+        title={visible ? t("隐藏") : t("显示")}
+        aria-label={visible ? t("隐藏") : t("显示")}
       >
         {visible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
       </button>
@@ -52,8 +53,8 @@ export function SecretField({
         onClick={onClear}
         disabled={disabled || clearDisabled}
         className="absolute right-1 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-danger-soft hover:text-danger-soft-fg disabled:pointer-events-none disabled:opacity-40"
-        title="清除"
-        aria-label="清除"
+        title={t("清除")}
+        aria-label={t("清除")}
       >
         <X className="h-4 w-4" />
       </button>

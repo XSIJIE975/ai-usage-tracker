@@ -11,6 +11,7 @@ import { AlertThresholdSetting } from "./AlertThresholdSetting";
 import { DiagnosisButton } from "./DiagnosisButton";
 import { testDeepSeekApiKey, testDeepSeekUserToken } from "../../diagnostics";
 import { SaveMessageBanner, type ProviderSettingsProps, type SaveMessage } from "./provider-settings";
+import { useT } from "../../i18n";
 import type { CredentialsInput } from "../../types/ipc";
 
 export function DeepSeekSettings({
@@ -26,6 +27,7 @@ export function DeepSeekSettings({
   const [userToken, setUserToken] = useState("");
   const [message, setMessage] = useState<SaveMessage>(null);
   const [saving, setSaving] = useState(false);
+  const t = useT();
 
   useEffect(() => {
     setApiKey(credentials?.deepseekApiKey ?? "");
@@ -41,7 +43,7 @@ export function DeepSeekSettings({
       await invoke("vault_save_credentials", { credentials: input });
       await onChanged();
       await onReload();
-      setMessage({ kind: "success", text: "凭据已保存，已刷新用量" });
+      setMessage({ kind: "success", text: t("凭据已保存，已刷新用量") });
     } catch (error) {
       setMessage({ kind: "error", text: error instanceof Error ? error.message : String(error) });
     } finally {
@@ -55,7 +57,7 @@ export function DeepSeekSettings({
       await invoke("vault_save_credentials", { credentials: { [field]: null } });
       await onChanged();
       await onReload();
-      setMessage({ kind: "success", text: "凭据已清除" });
+      setMessage({ kind: "success", text: t("凭据已清除") });
     } catch (error) {
       setMessage({ kind: "error", text: error instanceof Error ? error.message : String(error) });
     } finally {
@@ -66,8 +68,8 @@ export function DeepSeekSettings({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>DeepSeek 凭据</CardTitle>
-        <CardDescription>API Key 用于余额查询，UserToken 用于用量统计；两者互不通用。</CardDescription>
+        <CardTitle>{t("DeepSeek 凭据")}</CardTitle>
+        <CardDescription>{t("API Key 用于余额查询，UserToken 用于用量统计；两者互不通用。")}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
         {notice && (
@@ -80,7 +82,7 @@ export function DeepSeekSettings({
 
         <div className="space-y-2.5">
           <div className="flex items-center justify-between">
-            <Label htmlFor="deepseekKey">DeepSeek API Key</Label>
+            <Label htmlFor="deepseekKey">{t("DeepSeek API Key")}</Label>
             <StatusBadge configured={Boolean(credentialStatus?.deepseekApiKey)} />
           </div>
           <SecretField
@@ -100,13 +102,13 @@ export function DeepSeekSettings({
 
         <div className="space-y-2.5">
           <div className="flex items-center justify-between">
-            <Label htmlFor="deepseekUserToken">DeepSeek UserToken</Label>
+            <Label htmlFor="deepseekUserToken">{t("DeepSeek UserToken")}</Label>
             <StatusBadge configured={Boolean(credentialStatus?.deepseekUserToken)} />
           </div>
           <SecretField
             id="deepseekUserToken"
             value={userToken}
-            placeholder="platform.deepseek.com 登录令牌"
+            placeholder={t("platform.deepseek.com 登录令牌")}
             disabled={saveDisabled}
             onChange={setUserToken}
             onClear={() => void clearCredential("deepseekUserToken")}
@@ -117,20 +119,20 @@ export function DeepSeekSettings({
             disabled={saveDisabled || saving || !userToken.trim()}
           />
           <p className="text-xs leading-relaxed text-fg-muted">
-            获取方式：打开 platform.deepseek.com 并登录 → F12 打开开发者工具 → Application(应用)
-            → Local Storage → https://platform.deepseek.com → 找到键 userToken，其值为 JSON
-            对象，复制其中 token 字段的字符串值。
+            {t(
+              "获取方式：打开 platform.deepseek.com 并登录 → F12 打开开发者工具 → Application(应用) → Local Storage → https://platform.deepseek.com → 找到键 userToken，其值为 JSON 对象，复制其中 token 字段的字符串值。",
+            )}
           </p>
         </div>
 
         <Button disabled={saveDisabled || saving} onClick={() => void saveCredentials()}>
           {saving ? (
             <>
-              <LoaderCircle className="h-4 w-4 animate-spin" /> 保存中…
+              <LoaderCircle className="h-4 w-4 animate-spin" /> {t("保存中…")}
             </>
           ) : (
             <>
-              <Save className="h-4 w-4" /> 保存凭据
+              <Save className="h-4 w-4" /> {t("保存凭据")}
             </>
           )}
         </Button>
