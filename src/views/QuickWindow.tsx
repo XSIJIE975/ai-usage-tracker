@@ -13,6 +13,7 @@ import { ProviderCard } from "../components/ProviderCard";
 import { NotificationCenterPanel } from "./NotificationCenterPanel";
 import { cn, formatClock } from "../lib/utils";
 import { useT } from "../i18n";
+import { applyTheme } from "../lib/theme";
 
 /** 下次自动刷新倒计时（mm:ss）；自动刷新关闭或尚无基准时间时返回 null */
 function useNextRefreshCountdown(): string | null {
@@ -97,7 +98,11 @@ export function QuickWindow() {
       });
       const unlistenVault = await listen("vault-status-changed", () => void syncFromBackend());
       const unlistenCredentials = await listen("credentials-changed", () => void syncFromBackend());
-      const unlistenQuickShown = await listen("quick-shown", () => void syncFromBackend());
+      const unlistenQuickShown = await listen("quick-shown", () => {
+        // 兜底：每次显示前重读主题，防止错过广播事件
+        applyTheme();
+        void syncFromBackend();
+      });
       // 主窗口上下文刷新产生的告警态变化同步到本窗口
       const unlistenAlert = await listen<{ providerId: string; active: boolean }>(
         "alert-state-changed",
