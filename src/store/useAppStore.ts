@@ -274,6 +274,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   saveSettings: async (settings) => {
     set({ settings });
     await invoke("save_settings", { settings });
+    // 广播到所有窗口（含本窗口）：快速面板等常驻窗口靠它实时跟随界面语言等设置变化
+    void emit("settings-changed", settings);
   },
 
   setVaultStatus: (vaultStatus) => set({ vaultStatus }),

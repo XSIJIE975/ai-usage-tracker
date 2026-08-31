@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { useT } from "../../i18n";
 
 /** 即时保存后的短暂成功反馈，约 2 秒自动消失 */
 export function useSaveFlash(durationMs = 2_000) {
@@ -24,6 +25,7 @@ export function useSaveFlash(durationMs = 2_000) {
 }
 
 export function SavedHint({ visible }: { visible: boolean }) {
+  const t = useT();
   return (
     <span
       aria-live="polite"
@@ -32,7 +34,7 @@ export function SavedHint({ visible }: { visible: boolean }) {
         visible ? "opacity-100" : "opacity-0",
       )}
     >
-      <Check className="h-3.5 w-3.5" /> 已保存
+      <Check className="h-3.5 w-3.5" /> {t("已保存")}
     </span>
   );
 }

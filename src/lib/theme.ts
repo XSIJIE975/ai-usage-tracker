@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { emit, listen } from "@tauri-apps/api/event";
 
 /**
  * 主题模式：
@@ -20,6 +21,8 @@ export function setThemeMode(mode: ThemeMode) {
   localStorage.setItem(STORAGE_KEY, mode);
   applyTheme(mode);
   listeners.forEach((fn) => fn());
+  // 广播到所有窗口（含本窗口，收到后幂等重放）：快速面板等常驻窗口靠它实时跟随主题
+  void emit("theme-changed", mode);
 }
 
 export function applyTheme(mode: ThemeMode = getThemeMode()) {
@@ -29,6 +32,17 @@ export function applyTheme(mode: ThemeMode = getThemeMode()) {
   } else {
     root.setAttribute("data-theme", mode);
   }
+}
+
+/** 应用来自其他窗口的主题变更（设置 data-theme 并通知本窗口的订阅者） */
+function applyRemoteTheme(mode: ThemeMode) {
+  applyTheme(mode);
+  listeners.forEach((fn) => fn());
+}
+
+/** 监听其他窗口的主题变更；在每份前端入口（main.tsx）初始化一次 */
+export function initThemeSync(): Promise<() => void> {
+  return listen<ThemeMode>("theme-changed", (event) => applyRemoteTheme(event.payload));
 }
 
 function subscribe(fn: () => void) {

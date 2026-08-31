@@ -12,7 +12,7 @@ interface ProviderAutoRefreshProps {
 
 /**
  * 供应商自动刷新区块：受「自动刷新总开关」门控。
- * 总开关关闭时开关禁用置灰（保留原值），并给出可跳转{t("「通用」页签")}的提示。
+ * 总开关关闭时开关禁用置灰（保留原值），并给出可跳转「通用」页签的提示。
  */
 export function ProviderAutoRefresh({ providerId, onOpenGeneral }: ProviderAutoRefreshProps) {
   const settings = useAppStore((state) => state.settings);
@@ -44,13 +44,13 @@ export function ProviderAutoRefresh({ providerId, onOpenGeneral }: ProviderAutoR
       </div>
       {!masterOn && (
         <p className="text-xs text-fg-muted">
-          需先在{" "}
+          {t("需先在")}{" "}
           <button
             type="button"
             onClick={onOpenGeneral}
             className="rounded-sm font-medium text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring"
           >
-            「通用」页签
+            {t("「通用」页签")}
           </button>{" "}
           {t("开启自动刷新总开关。")}
         </p>

@@ -317,11 +317,27 @@ pub fn register_quick_shortcut(app: AppHandle, shortcut: String) -> Result<(), S
 // ─── 连通性诊断 ───
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DiagnosisResult {
     pub ok: bool,
     pub status: u16,
     pub latency_ms: u64,
-    pub message: String,
+    /// 机器可读结果码，前端据此用界面语言组装文案（见 src/diagnostics.ts 的 describeDiagnosis）
+    pub code: String,
+    /// 附加细节（如网络错误的原始错误文本），可为空
+    pub detail: Option<String>,
+}
+
+impl DiagnosisResult {
+    fn new(ok: bool, status: u16, latency_ms: u64, code: &str, detail: Option<String>) -> Self {
+        Self {
+            ok,
+            status,
+            latency_ms,
+            code: code.to_string(),
+            detail,
+        }
+    }
 }
 
 /// 用"刚输入、尚未保存"的凭据值发起一次真实探测请求，验证连通性。
@@ -341,16 +357,18 @@ pub async fn diagnose_request(
     let mut request = client.request(Method::GET, &url);
     match auth.as_deref() {
         Some("bearer") => {
-            let key = credential
-                .filter(|value| !value.trim().is_empty())
-                .ok_or_else(|| "请先填写凭据值".to_string())?;
+            let key = match credential.filter(|value| !value.trim().is_empty()) {
+                Some(key) => key,
+                None => return Ok(DiagnosisResult::new(false, 0, 0, "missing-credential", None)),
+            };
             let key = key.trim();
             request = request.header("Authorization", format!("Bearer {key}"));
         }
         Some("cookie") => {
-            let cookie = credential
-                .filter(|value| !value.trim().is_empty())
-                .ok_or_else(|| "请先填写凭据值".to_string())?;
+            let cookie = match credential.filter(|value| !value.trim().is_empty()) {
+                Some(cookie) => cookie,
+                None => return Ok(DiagnosisResult::new(false, 0, 0, "missing-credential", None)),
+            };
             let normalized = normalize_auth_cookie(&cookie);
             request = request.header("Cookie", format!("auth={normalized}"));
             request = request.header(
@@ -368,36 +386,32 @@ pub async fn diagnose_request(
     let response = match response {
         Ok(response) => response,
         Err(error) => {
-            return Ok(DiagnosisResult {
-                ok: false,
-                status: 0,
+            return Ok(DiagnosisResult::new(
+                false,
+                0,
                 latency_ms,
-                message: format!("网络请求失败：{error}"),
-            });
+                "network-error",
+                Some(error.to_string()),
+            ));
         }
     };
 
     let status = response.status().as_u16();
     let body = response.text().await.unwrap_or_default();
 
-    let (ok, message) = if status == 200 {
+    let (ok, code) = if status == 200 {
         if expect_html == Some(true) && body.contains("openauth") {
-            (false, "Cookie 已失效（页面跳转到登录）".to_string())
+            (false, "login-redirect")
         } else {
-            (true, format!("连接正常（{latency_ms}ms）"))
+            (true, "ok")
         }
     } else if status == 401 || status == 403 {
-        (false, format!("凭据无效或已过期（HTTP {status}）"))
+        (false, "invalid-credentials")
     } else {
-        (false, format!("接口返回 HTTP {status}"))
+        (false, "http-error")
     };
 
-    Ok(DiagnosisResult {
-        ok,
-        status,
-        latency_ms,
-        message,
-    })
+    Ok(DiagnosisResult::new(ok, status, latency_ms, code, None))
 }
 
 /// 按界面语言重建托盘右键菜单（zh/en）；菜单事件处理在托盘创建时已注册，重建菜单不影响

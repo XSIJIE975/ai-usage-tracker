@@ -66,6 +66,26 @@ describe("analyzeBurnRate", () => {
     expect(noRisk.kind).toBe("no-risk");
   });
 
+  it("斜率来自浮点抵消噪声的平稳序列 → stable（回归：etaMs 越出 Date 范围致白屏）", () => {
+    const now = 1_780_000_000_000;
+    // 余额连续 15 小时完全不变，仅采集时间有秒级抖动：
+    // n·Σxy − Σx·Σy 灾难性抵消得到 ~1e-15 的伪斜率，外推 ETA 超出 ±8.64e15 ms
+    const points: MetricPoint[] = Array.from({ length: 15 }, (_, i) => ({
+      t: now - (14 - i) * HOUR - 9970 * (i + 1),
+      v: 1234.56,
+    }));
+    const result = analyzeBurnRate(points, { mode: "deplete", now });
+    expect(result.kind).toBe("stable");
+  });
+
+  it("外推视野超出上限 → stable", () => {
+    const now = 1_780_000_000_000;
+    // 每小时 1e-6 的真实微幅漂移：按当前速率需 4e7 小时才用满，无实际预测价值
+    const points = series([10, 10.000001, 10.000002, 10.000003, 10.000004, 10.000005], now - 5 * HOUR);
+    const result = analyzeBurnRate(points, { mode: "fill", now });
+    expect(result.kind).toBe("stable");
+  });
+
   it("数值平稳（斜率不指向目标）→ stable", () => {
     const points = series([50, 50.2, 49.8, 50, 50.1, 49.9]);
     const now = points[points.length - 1].t;

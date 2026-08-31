@@ -8,6 +8,14 @@ DeepSeek 开放平台网页（platform.deepseek.com）登录后保存在浏览�
 
 `sk-...` 形式的密钥，用于调用 DeepSeek 官方推理 API 与余额查询接口。与 UserToken 是两种不同凭据：API Key 授权程序访问账号的推理能力，UserToken 代表用户本人对开放平台控制台的会话。
 
+## OpenCode Go
+
+第二个受支持的供应商（provider 标识 `opencode-go`），基于 opencode.ai 的用量服务。凭据为 Workspace ID 与 Auth Cookie（两者必填），可选配 API Key 供官方 usage 接口上线后使用。设置页中与 DeepSeek 并列的供应商页签即指它。
+
+## 快速面板
+
+常驻后台的独立桌面小窗（代码中为 QuickWindow，窗口标识 `quick`）：全局快捷键唤起、失焦自动隐藏，集中展示各供应商用量概要、告警与通知中心。与主窗口共用同一前端界面代码，是除主窗口外唯一的独立窗口——主题、语言等纯界面偏好需要跨窗口保持一致。
+
 ## 凭据库
 
 Rust 后端管理的加密存储（实现名 Credential Vault），统一保存 DeepSeek API Key、UserToken 等凭据，前端不接触明文凭据。密文文件保存在应用数据目录下，用设备密钥加密。

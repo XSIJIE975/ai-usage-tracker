@@ -13,6 +13,8 @@ import { ProviderCard } from "../components/ProviderCard";
 import { NotificationCenterPanel } from "./NotificationCenterPanel";
 import { cn, formatClock } from "../lib/utils";
 import { useT } from "../i18n";
+import { applyTheme } from "../lib/theme";
+import type { AppSettings } from "../types/ipc";
 
 /** 下次自动刷新倒计时（mm:ss）；自动刷新关闭或尚无基准时间时返回 null */
 function useNextRefreshCountdown(): string | null {
@@ -97,7 +99,15 @@ export function QuickWindow() {
       });
       const unlistenVault = await listen("vault-status-changed", () => void syncFromBackend());
       const unlistenCredentials = await listen("credentials-changed", () => void syncFromBackend());
-      const unlistenQuickShown = await listen("quick-shown", () => void syncFromBackend());
+      const unlistenQuickShown = await listen("quick-shown", () => {
+        // 兜底：每次显示前重读主题，防止错过广播事件
+        applyTheme();
+        void syncFromBackend();
+      });
+      // 主窗口保存设置（界面语言、自动刷新等）时实时同步到本窗口，无需等聚焦重载
+      const unlistenSettings = await listen<AppSettings>("settings-changed", (event) => {
+        useAppStore.setState({ settings: event.payload });
+      });
       // 主窗口上下文刷新产生的告警态变化同步到本窗口
       const unlistenAlert = await listen<{ providerId: string; active: boolean }>(
         "alert-state-changed",
@@ -114,10 +124,11 @@ export function QuickWindow() {
         unlistenCredentials();
         unlistenQuickShown();
         unlistenAlert();
+        unlistenSettings();
         return;
       }
 
-      unlisteners.push(unlistenFocus, unlistenVault, unlistenCredentials, unlistenQuickShown, unlistenAlert);
+      unlisteners.push(unlistenFocus, unlistenVault, unlistenCredentials, unlistenQuickShown, unlistenAlert, unlistenSettings);
     })();
 
     return () => {

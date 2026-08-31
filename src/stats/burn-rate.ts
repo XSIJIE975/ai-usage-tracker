@@ -30,6 +30,12 @@ const MIN_POINTS = 6;
 const MIN_SPAN_MS = 3_600_000;
 /** R² 低于该值视为波动占主导，不做预测 */
 const MIN_R2 = 0.5;
+/**
+ * 预测视野上限（小时）：超出即视为趋势无实际预测价值。
+ * 同时保证 etaMs 落在 Date 可表示范围（±8.64e15 ms）内——
+ * 72 小时窗口拟合出的微幅斜率外推可达 1e16 小时，new Date() 会得到 Invalid Date。
+ */
+const MAX_HORIZON_HOURS = 90 * 24;
 
 /**
  * 耗尽预测：对最近窗口内的快照序列做最小二乘线性拟合，
@@ -38,6 +44,7 @@ const MIN_R2 = 0.5;
  * 边界守则（宁可不给预测也不瞎猜）：
  * - 样本 < 6 或时间跨度 < 1 小时 → insufficient
  * - R² 过低（波动占主导）或数值不在向目标移动 → stable
+ * - 外推超出预测视野（含浮点噪声斜率算出的荒谬 ETA）→ stable
  * - 当前已越过目标 → at-target（卡片本身已展示现状，无需预测行）
  * - fill 模式下预计用满时间不早于重置时间 → no-risk
  */
@@ -103,7 +110,7 @@ export function analyzeBurnRate(
 
   const hoursLeft =
     options.mode === "deplete" ? (last - target) / -slope : (target - last) / slope;
-  if (!Number.isFinite(hoursLeft) || hoursLeft <= 0) {
+  if (!Number.isFinite(hoursLeft) || hoursLeft <= 0 || hoursLeft > MAX_HORIZON_HOURS) {
     return { kind: "stable" };
   }
 

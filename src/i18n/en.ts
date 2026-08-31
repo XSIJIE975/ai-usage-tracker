@@ -189,6 +189,26 @@ export const en: Record<string, string> = {
   "OpenCode Go API Key（可选）": "OpenCode Go API Key (optional)",
   "获取方式：打开 opencode.ai 后台，按 F12 → Application → Cookies → opencode.ai，复制名为 auth 的 Value；不要带 Cookie: 或 auth= 前缀。": "How to get: open the opencode.ai console, F12 → Application → Cookies → opencode.ai, copy the auth cookie's Value; don't include a Cookie: or auth= prefix.",
   "官方 /usage 接口上线后使用": "For when the official /usage API ships",
+  "platform.deepseek.com 登录令牌": "platform.deepseek.com login token",
+  "只粘贴 auth Cookie 的 Value": "Paste only the auth cookie's Value",
+  "凭据已配置": "Credentials set",
+  "凭据未配置": "Credentials not set",
+  "凭据库待迁移，请先完成上方的一次性迁移，再保存凭据。":
+    "Credential vault needs migration — finish the one-time migration above before saving credentials.",
+  "显示": "Show",
+  "清除": "Clear",
+  "已保存": "Saved",
+
+  // ── 凭据诊断 ──
+  "请先填写 API Key": "Fill in the API Key first",
+  "请先填写 UserToken": "Fill in the UserToken first",
+  "请先填写 Workspace ID 和 Auth Cookie": "Fill in the Workspace ID and Auth Cookie first",
+  "请先填写凭据值": "Fill in the credential value first",
+  "网络请求失败：{detail}": "Network request failed: {detail}",
+  "连接正常（{latency}ms）": "Connection OK ({latency}ms)",
+  "Cookie 已失效（页面跳转到登录）": "Cookie expired (redirected to login)",
+  "凭据无效或已过期（HTTP {status}）": "Invalid or expired credentials (HTTP {status})",
+  "接口返回 HTTP {status}": "Endpoint returned HTTP {status}",
 
   // ── 统计页 ──
   "DeepSeek 官方": "DeepSeek",
