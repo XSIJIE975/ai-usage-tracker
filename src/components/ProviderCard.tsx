@@ -15,7 +15,7 @@ import { Progress } from "./ui/progress";
 import { Badge } from "./ui/badge";
 import { IconButton } from "./ui/icon-button";
 import { Sparkline } from "./charts/Sparkline";
-import { DeepSeekLogo, OpenCodeLogo } from "./brand/provider-logo";
+import { DeepSeekLogo, GlmLogo, OpenCodeLogo } from "./brand/provider-logo";
 import { loadProviderHistory, type ProviderHistory } from "../stats/snapshot-history";
 import { analyzeBurnRate } from "../stats/burn-rate";
 import { describeBurnRate } from "../stats/burn-rate-format";
@@ -41,6 +41,13 @@ const BRAND_LOGOS: Record<
 > = {
   deepseek: { Logo: DeepSeekLogo, bg: "bg-[#5786FE]/10" },
   "opencode-go": { Logo: OpenCodeLogo, bg: "bg-fg/10" },
+  glm: { Logo: GlmLogo, bg: "bg-[#3B5BFF]/10" },
+};
+
+/** 各供应商 sparkline 配色（品牌色） */
+const SPARK_COLORS: Record<string, string> = {
+  deepseek: "#5786FE",
+  glm: "#3B5BFF",
 };
 
 function ProviderAvatar({ providerId, name }: { providerId: string; name: string }) {
@@ -230,7 +237,7 @@ export function ProviderCard({
     [burn, fillMode, language],
   );
   const trend = history && history.points.length >= 2 ? history : null;
-  const sparkColor = snapshot.providerId === "deepseek" ? "#5786FE" : undefined;
+  const sparkColor = SPARK_COLORS[snapshot.providerId];
 
   return (
     <Card className="transition-shadow duration-normal hover:shadow-pop">

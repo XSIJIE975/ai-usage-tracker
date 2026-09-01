@@ -10,7 +10,7 @@ interface ThresholdConfig {
   max: number;
 }
 
-const CONFIGS: Record<"deepseek" | "opencode-go", ThresholdConfig> = {
+const CONFIGS: Record<"deepseek" | "opencode-go" | "glm", ThresholdConfig> = {
   deepseek: {
     label: "余额告警阈值（元）",
     hint: "余额低于该值时发送系统通知。",
@@ -23,10 +23,20 @@ const CONFIGS: Record<"deepseek" | "opencode-go", ThresholdConfig> = {
     min: 1,
     max: 100,
   },
+  glm: {
+    label: "Coding Plan 配额告警阈值（%）",
+    hint: "Coding Plan 配额已用达到该百分比时发送系统通知。",
+    min: 1,
+    max: 100,
+  },
 };
 
 /** 供应商告警阈值输入：失焦保存并夹取到合理范围；受告警总开关门控 */
-export function AlertThresholdSetting({ providerId }: { providerId: "deepseek" | "opencode-go" }) {
+export function AlertThresholdSetting({
+  providerId,
+}: {
+  providerId: "deepseek" | "opencode-go" | "glm";
+}) {
   const settings = useAppStore((state) => state.settings);
   const saveSettings = useAppStore((state) => state.saveSettings);
   const { visible, flash } = useSaveFlash();
@@ -36,7 +46,9 @@ export function AlertThresholdSetting({ providerId }: { providerId: "deepseek" |
   const value =
     providerId === "deepseek"
       ? settings.alertThresholds.deepseekBalanceBelowCny
-      : settings.alertThresholds.opencodeMonthlyUsedPercent;
+      : providerId === "glm"
+        ? settings.alertThresholds.glmQuotaUsedPercent
+        : settings.alertThresholds.opencodeMonthlyUsedPercent;
 
   async function save(raw: string) {
     const parsed = Number(raw);
@@ -46,6 +58,8 @@ export function AlertThresholdSetting({ providerId }: { providerId: "deepseek" |
     const alertThresholds = { ...current.alertThresholds };
     if (providerId === "deepseek") {
       alertThresholds.deepseekBalanceBelowCny = clamped;
+    } else if (providerId === "glm") {
+      alertThresholds.glmQuotaUsedPercent = clamped;
     } else {
       alertThresholds.opencodeMonthlyUsedPercent = clamped;
     }

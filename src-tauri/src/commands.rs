@@ -24,6 +24,8 @@ pub struct CredentialStatus {
     pub opencode_go_workspace_id: bool,
     pub opencode_go_auth_cookie: bool,
     pub opencode_go_api_key: bool,
+    pub glm_coding_plan_key: bool,
+    pub glm_web_token: bool,
 }
 
 #[derive(Serialize)]
@@ -34,6 +36,8 @@ pub struct VaultCredentials {
     pub opencode_go_workspace_id: Option<String>,
     pub opencode_go_auth_cookie: Option<String>,
     pub opencode_go_api_key: Option<String>,
+    pub glm_coding_plan_key: Option<String>,
+    pub glm_web_token: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -119,6 +123,8 @@ pub fn vault_credentials(state: State<'_, AppState>) -> Result<VaultCredentials,
         opencode_go_workspace_id: credential_text(credentials, "opencodeGoWorkspaceId"),
         opencode_go_auth_cookie: credential_text(credentials, "opencodeGoAuthCookie"),
         opencode_go_api_key: credential_text(credentials, "opencodeGoApiKey"),
+        glm_coding_plan_key: credential_text(credentials, "glmCodingPlanKey"),
+        glm_web_token: credential_text(credentials, "glmWebToken"),
     })
 }
 
@@ -132,6 +138,8 @@ pub fn vault_credential_status(state: State<'_, AppState>) -> Result<CredentialS
             opencode_go_workspace_id: false,
             opencode_go_auth_cookie: false,
             opencode_go_api_key: false,
+            glm_coding_plan_key: false,
+            glm_web_token: false,
         });
     }
     let credentials = vault.credentials()?;
@@ -141,6 +149,8 @@ pub fn vault_credential_status(state: State<'_, AppState>) -> Result<CredentialS
         opencode_go_workspace_id: has_text(credentials, "opencodeGoWorkspaceId"),
         opencode_go_auth_cookie: has_text(credentials, "opencodeGoAuthCookie"),
         opencode_go_api_key: has_text(credentials, "opencodeGoApiKey"),
+        glm_coding_plan_key: has_text(credentials, "glmCodingPlanKey"),
+        glm_web_token: has_text(credentials, "glmWebToken"),
     })
 }
 
@@ -512,6 +522,23 @@ pub async fn provider_request(
                     .get("opencodeGoApiKey")
                     .and_then(Value::as_str)
                     .ok_or_else(|| "缺少 OpenCode Go API Key".to_string())?,
+                // 智谱 Coding Plan 配额查询：Coding Plan Key 优先，缺失时降用控制台登录 JWT（实测两者皆可查配额）
+                "glm" => credentials
+                    .get("glmCodingPlanKey")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.is_empty())
+                    .or_else(|| {
+                        credentials
+                            .get("glmWebToken")
+                            .and_then(Value::as_str)
+                            .filter(|value| !value.is_empty())
+                    })
+                    .ok_or_else(|| "缺少智谱 Coding Plan Key 或控制台登录 JWT".to_string())?,
+                "glm-web" => credentials
+                    .get("glmWebToken")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| "缺少智谱控制台登录 JWT".to_string())?,
                 _ => return Err("不支持的 provider bearer auth".to_string()),
             };
             headers.insert("Authorization".to_string(), format!("Bearer {key}"));
@@ -635,6 +662,8 @@ mod tests {
             opencode_go_workspace_id: false,
             opencode_go_auth_cookie: false,
             opencode_go_api_key: false,
+            glm_coding_plan_key: false,
+            glm_web_token: false,
         })
         .expect("credential status should serialize");
         assert_eq!(status["deepseekUserToken"], false);
@@ -645,9 +674,40 @@ mod tests {
             opencode_go_workspace_id: None,
             opencode_go_auth_cookie: None,
             opencode_go_api_key: None,
+            glm_coding_plan_key: None,
+            glm_web_token: None,
         })
         .expect("vault credentials should serialize");
         assert_eq!(credentials["deepseekUserToken"], "token");
+    }
+
+    #[test]
+    fn credential_payloads_expose_glm_fields() {
+        let status = serde_json::to_value(CredentialStatus {
+            deepseek_api_key: false,
+            deepseek_user_token: false,
+            opencode_go_workspace_id: false,
+            opencode_go_auth_cookie: false,
+            opencode_go_api_key: false,
+            glm_coding_plan_key: true,
+            glm_web_token: true,
+        })
+        .expect("credential status should serialize");
+        assert_eq!(status["glmCodingPlanKey"], true);
+        assert_eq!(status["glmWebToken"], true);
+
+        let credentials = serde_json::to_value(VaultCredentials {
+            deepseek_api_key: None,
+            deepseek_user_token: None,
+            opencode_go_workspace_id: None,
+            opencode_go_auth_cookie: None,
+            opencode_go_api_key: None,
+            glm_coding_plan_key: Some("plan-key".to_string()),
+            glm_web_token: Some("web-token".to_string()),
+        })
+        .expect("vault credentials should serialize");
+        assert_eq!(credentials["glmCodingPlanKey"], "plan-key");
+        assert_eq!(credentials["glmWebToken"], "web-token");
     }
 
     #[test]

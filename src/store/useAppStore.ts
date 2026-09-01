@@ -13,6 +13,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   alertThresholds: {
     deepseekBalanceBelowCny: 50,
     opencodeMonthlyUsedPercent: 80,
+    glmQuotaUsedPercent: 80,
   },
   quickPanelShortcut: "Alt+KeyU",
   quickAutoHide: true,

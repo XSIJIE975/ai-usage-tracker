@@ -52,6 +52,12 @@ export const en: Record<string, string> = {
   "不可用": "Unavailable",
   "5 小时额度": "5-hour quota",
   "本周额度": "Weekly quota",
+  "套餐档位": "Plan tier",
+  "5 小时请求配额": "5-hour request quota",
+  "每周请求配额": "Weekly request quota",
+  "未订阅 Coding Plan 或暂无配额数据": "Coding Plan not subscribed or no quota data yet",
+  "请在设置中填写智谱凭据（Coding Plan Key 或控制台登录 JWT）":
+    "Fill in Zhipu credentials in Settings (Coding Plan Key or console login JWT)",
   "即将重置": "Resets soon",
   "重置时间未知": "Reset time unknown",
   "天": "days",
@@ -111,6 +117,7 @@ export const en: Record<string, string> = {
   "请及时充值。": " Please top up soon.",
   "OpenCode Go 额度告警": "OpenCode Go quota alert",
   "注意分配剩余用量。": " Plan the remaining quota carefully.",
+  "智谱配额告警": "Zhipu quota alert",
 
   // ── 设置 ──
   "自动刷新": "Auto refresh",
@@ -177,6 +184,8 @@ export const en: Record<string, string> = {
   "余额低于该值时发送系统通知。": "Notify when balance drops below this value.",
   "本月额度告警阈值（%）": "Monthly quota alert threshold (%)",
   "本月额度已用达到该百分比时发送系统通知。": "Notify when monthly usage reaches this percent.",
+  "Coding Plan 配额告警阈值（%）": "Coding Plan quota alert threshold (%)",
+  "Coding Plan 配额已用达到该百分比时发送系统通知。": "Notify when Coding Plan quota usage reaches this percent.",
   "DeepSeek 凭据": "DeepSeek credentials",
   "API Key 用于余额查询，UserToken 用于用量统计；两者互不通用。": "API Key queries balance; UserToken reads usage stats. They are not interchangeable.",
   "DeepSeek API Key": "DeepSeek API Key",
@@ -191,6 +200,16 @@ export const en: Record<string, string> = {
   "官方 /usage 接口上线后使用": "For when the official /usage API ships",
   "platform.deepseek.com 登录令牌": "platform.deepseek.com login token",
   "只粘贴 auth Cookie 的 Value": "Paste only the auth cookie's Value",
+  "智谱 GLM 凭据": "Zhipu GLM credentials",
+  "Coding Plan Key 用于订阅配额查询，控制台登录 JWT 用于按量付费余额查询；两者互不通用。":
+    "Coding Plan Key queries subscription quota; the console login JWT queries pay-as-you-go balance. They are not interchangeable.",
+  "智谱 Coding Plan Key": "Zhipu Coding Plan Key",
+  "控制台登录 JWT（会过期）": "Console login JWT (expires)",
+  "bigmodel.cn 控制台登录令牌": "bigmodel.cn console login token",
+  "获取方式：打开 bigmodel.cn 控制台 → Coding Plan 页 → 「生成 API Key」，复制生成的 JWT 形态密钥。":
+    "How to get: open the bigmodel.cn console → Coding Plan page → \"Generate API Key\", then copy the generated JWT-shaped key.",
+  "获取方式：浏览器登录 bigmodel.cn → F12 打开开发者工具 → Application(应用) → Cookies → https://www.bigmodel.cn → 复制键 bigmodel_token_production 的值。该登录态会过期，余额查询失败时请重新粘贴。":
+    "How to get: sign in to bigmodel.cn in your browser → F12 dev tools → Application → Cookies → https://www.bigmodel.cn → copy the value of the bigmodel_token_production key. The login state expires — re-paste it when balance queries fail.",
   "凭据已配置": "Credentials set",
   "凭据未配置": "Credentials not set",
   "凭据库待迁移，请先完成上方的一次性迁移，再保存凭据。":
@@ -213,6 +232,7 @@ export const en: Record<string, string> = {
   // ── 统计页 ──
   "DeepSeek 官方": "DeepSeek",
   "OpenCode Go": "OpenCode Go",
+  "智谱 GLM": "Zhipu GLM",
   "时间范围": "Time range",
   "近 7 天": "Last 7 days",
   "近 30 天": "Last 30 days",

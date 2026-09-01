@@ -12,6 +12,26 @@ DeepSeek 开放平台网页（platform.deepseek.com）登录后保存在浏览�
 
 第二个受支持的供应商（provider 标识 `opencode-go`），基于 opencode.ai 的用量服务。凭据为 Workspace ID 与 Auth Cookie（两者必填），可选配 API Key 供官方 usage 接口上线后使用。设置页中与 DeepSeek 并列的供应商页签即指它。
 
+## 智谱 GLM
+
+第三个受支持的供应商（provider 标识 `glm`），覆盖智谱 bigmodel.cn 的两种付费形态：Coding Plan 订阅配额与 API 按量付费余额。数据来自控制台私有接口（见 ADR-0009），无官方查询 API。
+
+## Coding Plan
+
+智谱的订阅制编码套餐，分 Lite / Pro / Max 档（快照上以小写 `level` 显示，如 `lite`）。额度机制为「5 小时窗口 + 周配额」双窗口的请求点数（接口类型 `CREDIT_LIMIT`）。
+
+## 5 小时窗口
+
+Coding Plan 的滚动 5 小时请求配额窗口（接口字段 `unit=3, number=5`）：任意时刻的配额按最近 5 小时内的消耗计算，窗口内点数用尽需等最早的消耗滑出窗口。与 OpenCode Go 的 5 小时额度同义。
+
+## 周配额
+
+Coding Plan 的滚动 7 天请求配额窗口（接口字段 `unit=6, number=1`）：重置时间由服务端下发（`nextResetTime`），不是自然周一。快照主指标与告警阈值取该窗口的已用百分比——它是重置周期最长的窗口，代表最紧的约束。
+
+## 控制台登录 JWT
+
+智谱 bigmodel.cn 控制台的网页登录态（浏览器 Cookie 键 `bigmodel_token_production`），用于余额查询等私有接口。会过期，过期后需重新从浏览器提取；与 Coding Plan Key（长期有效，专用于 Coding Plan 配额查询）是两种不同凭据。
+
 ## 快速面板
 
 常驻后台的独立桌面小窗（代码中为 QuickWindow，窗口标识 `quick`）：全局快捷键唤起、失焦自动隐藏，集中展示各供应商用量概要、告警与通知中心。与主窗口共用同一前端界面代码，是除主窗口外唯一的独立窗口——主题、语言等纯界面偏好需要跨窗口保持一致。

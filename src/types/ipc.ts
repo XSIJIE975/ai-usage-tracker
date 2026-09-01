@@ -11,6 +11,8 @@ export interface CredentialStatus {
   opencodeGoWorkspaceId: boolean;
   opencodeGoAuthCookie: boolean;
   opencodeGoApiKey: boolean;
+  glmCodingPlanKey: boolean;
+  glmWebToken: boolean;
 }
 
 export interface VaultCredentials {
@@ -19,6 +21,8 @@ export interface VaultCredentials {
   opencodeGoWorkspaceId?: string;
   opencodeGoAuthCookie?: string;
   opencodeGoApiKey?: string;
+  glmCodingPlanKey?: string;
+  glmWebToken?: string;
 }
 
 export interface CredentialsInput {
@@ -27,6 +31,8 @@ export interface CredentialsInput {
   opencodeGoWorkspaceId?: string | null;
   opencodeGoAuthCookie?: string | null;
   opencodeGoApiKey?: string | null;
+  glmCodingPlanKey?: string | null;
+  glmWebToken?: string | null;
 }
 
 export interface HttpResult {
@@ -74,6 +80,8 @@ export interface AlertThresholds {
   deepseekBalanceBelowCny: number;
   /** OpenCode Go 本月额度已用达到该百分比时告警 */
   opencodeMonthlyUsedPercent: number;
+  /** 智谱 Coding Plan 配额已用达到该百分比时告警 */
+  glmQuotaUsedPercent: number;
 }
 
 export interface AppSettings {

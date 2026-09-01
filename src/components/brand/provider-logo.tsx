@@ -22,3 +22,13 @@ export function OpenCodeLogo({ className }: { className?: string }) {
     </svg>
   );
 }
+
+/** 智谱 GLM 标识（简化 Z 字形，品牌深蓝 #3B5BFF） */
+export function GlmLogo({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="#3B5BFF" className={className} role="img" aria-label="智谱 GLM">
+      <title>智谱 GLM</title>
+      <path d="M4 5h16v2.9l-10.6 8.2H20V19H4v-2.9l10.6-8.2H4z" />
+    </svg>
+  );
+}
