@@ -41,13 +41,13 @@ const BRAND_LOGOS: Record<
 > = {
   deepseek: { Logo: DeepSeekLogo, bg: "bg-[#5786FE]/10" },
   "opencode-go": { Logo: OpenCodeLogo, bg: "bg-fg/10" },
-  glm: { Logo: GlmLogo, bg: "bg-[#3B5BFF]/10" },
+  glm: { Logo: GlmLogo, bg: "bg-[#3859FF]/10" },
 };
 
 /** 各供应商 sparkline 配色（品牌色） */
 const SPARK_COLORS: Record<string, string> = {
   deepseek: "#5786FE",
-  glm: "#3B5BFF",
+  glm: "#3859FF",
 };
 
 function ProviderAvatar({ providerId, name }: { providerId: string; name: string }) {
