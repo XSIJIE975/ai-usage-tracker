@@ -59,7 +59,7 @@ describe("glmProvider.fetch", () => {
     expect(snapshot.status).toBe("ok");
     expect(snapshot.message).toBeUndefined();
     expect(snapshot.lines).toHaveLength(4);
-    expect(snapshot.lines[0]).toMatchObject({ type: "badge", label: "套餐档位", value: "lite" });
+    expect(snapshot.lines[0]).toMatchObject({ type: "badge", label: "套餐档位", value: "Lite" });
 
     const [fiveHour, weekly] = snapshot.lines.slice(1);
     expect(fiveHour).toMatchObject({
@@ -166,7 +166,7 @@ describe("parseQuotaLimits", () => {
     const json = loadQuotaFixture() as { data?: GlmQuotaData };
     const lines = parseQuotaLimits(json.data);
     expect(lines).toHaveLength(3);
-    expect(lines[0]).toMatchObject({ type: "badge", value: "lite" });
+    expect(lines[0]).toMatchObject({ type: "badge", value: "Lite" });
     expect(lines[1]).toMatchObject({ label: "5 小时请求配额", used: 0, limit: 2000, percentUsed: 0 });
     expect(lines[2]).toMatchObject({
       label: "每周请求配额",
@@ -189,7 +189,7 @@ describe("parseQuotaLimits", () => {
       ],
     });
     expect(lines).toHaveLength(2);
-    expect(lines[0]).toMatchObject({ type: "badge", value: "pro" });
+    expect(lines[0]).toMatchObject({ type: "badge", value: "Pro" });
     expect(lines[1]).toMatchObject({ label: "5 小时请求配额", used: 600, limit: 1000 });
   });
 

@@ -60,12 +60,19 @@ function windowLabel(limit: QuotaLimit): string | null {
   return null;
 }
 
+/** 档位名按官方习惯首字母大写显示（接口返回小写，如 "lite" → "Lite"） */
+function formatLevel(level: string): string {
+  const text = level.trim();
+  if (!text) return text;
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
 /** 解析 quota/limit 响应为卡片指标行（实测结构见计划文档 3.3；未知 type/unit 忽略） */
 export function parseQuotaLimits(data: GlmQuotaData | undefined): MetricLine[] {
   const lines: MetricLine[] = [];
   if (!data) return lines;
   if (data.level) {
-    lines.push({ type: "badge", label: "套餐档位", value: String(data.level) });
+    lines.push({ type: "badge", label: "套餐档位", value: formatLevel(data.level) });
   }
   for (const limit of data.limits ?? []) {
     if (limit.type !== "CREDIT_LIMIT") continue;
