@@ -480,6 +480,32 @@ pub fn clear_notifications(state: State<'_, AppState>) -> Result<(), String> {
     db.clear_notifications()
 }
 
+/// bearer auth 的凭据注入：按 providerId 从凭据库查 key（空串视为未配置，与
+/// vault_credential_status 的 has_text 语义一致），缺失时返回面向用户的错误。
+/// glm：Coding Plan Key 优先，缺失时降用控制台登录 JWT（实测两者皆可查配额）。
+fn resolve_bearer_key<'a>(provider_id: &str, credentials: &'a Value) -> Result<&'a str, String> {
+    let get_str = |key: &str| -> Option<&'a str> {
+        credentials
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+    };
+    match provider_id {
+        "deepseek" => get_str("deepseekApiKey").ok_or_else(|| "缺少 DeepSeek API Key".to_string()),
+        "deepseek-platform" => {
+            get_str("deepseekUserToken").ok_or_else(|| "缺少 DeepSeek UserToken".to_string())
+        }
+        "opencode-go" => {
+            get_str("opencodeGoApiKey").ok_or_else(|| "缺少 OpenCode Go API Key".to_string())
+        }
+        "glm" => get_str("glmCodingPlanKey")
+            .or_else(|| get_str("glmWebToken"))
+            .ok_or_else(|| "缺少智谱 Coding Plan Key 或控制台登录 JWT".to_string()),
+        "glm-web" => get_str("glmWebToken").ok_or_else(|| "缺少智谱控制台登录 JWT".to_string()),
+        _ => Err("不支持的 provider bearer auth".to_string()),
+    }
+}
+
 #[tauri::command]
 pub async fn provider_request(
     state: State<'_, AppState>,
@@ -509,38 +535,7 @@ pub async fn provider_request(
 
     match auth.as_deref() {
         Some("bearer") => {
-            let key = match provider_id.as_str() {
-                "deepseek" => credentials
-                    .get("deepseekApiKey")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| "缺少 DeepSeek API Key".to_string())?,
-                "deepseek-platform" => credentials
-                    .get("deepseekUserToken")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| "缺少 DeepSeek UserToken".to_string())?,
-                "opencode-go" => credentials
-                    .get("opencodeGoApiKey")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| "缺少 OpenCode Go API Key".to_string())?,
-                // 智谱 Coding Plan 配额查询：Coding Plan Key 优先，缺失时降用控制台登录 JWT（实测两者皆可查配额）
-                "glm" => credentials
-                    .get("glmCodingPlanKey")
-                    .and_then(Value::as_str)
-                    .filter(|value| !value.is_empty())
-                    .or_else(|| {
-                        credentials
-                            .get("glmWebToken")
-                            .and_then(Value::as_str)
-                            .filter(|value| !value.is_empty())
-                    })
-                    .ok_or_else(|| "缺少智谱 Coding Plan Key 或控制台登录 JWT".to_string())?,
-                "glm-web" => credentials
-                    .get("glmWebToken")
-                    .and_then(Value::as_str)
-                    .filter(|value| !value.is_empty())
-                    .ok_or_else(|| "缺少智谱控制台登录 JWT".to_string())?,
-                _ => return Err("不支持的 provider bearer auth".to_string()),
-            };
+            let key = resolve_bearer_key(&provider_id, &credentials)?;
             headers.insert("Authorization".to_string(), format!("Bearer {key}"));
         }
         Some("cookie") if provider_id == "opencode-go" => {
@@ -708,6 +703,51 @@ mod tests {
         .expect("vault credentials should serialize");
         assert_eq!(credentials["glmCodingPlanKey"], "plan-key");
         assert_eq!(credentials["glmWebToken"], "web-token");
+    }
+
+    #[test]
+    fn resolves_bearer_keys_by_provider() {
+        let creds = serde_json::json!({
+            "deepseekApiKey": "sk-1",
+            "deepseekUserToken": "tok-1",
+            "opencodeGoApiKey": "oc-1",
+            "glmCodingPlanKey": "plan",
+            "glmWebToken": "web"
+        });
+        assert_eq!(resolve_bearer_key("deepseek", &creds).unwrap(), "sk-1");
+        assert_eq!(resolve_bearer_key("deepseek-platform", &creds).unwrap(), "tok-1");
+        assert_eq!(resolve_bearer_key("opencode-go", &creds).unwrap(), "oc-1");
+        assert_eq!(resolve_bearer_key("glm", &creds).unwrap(), "plan");
+        assert_eq!(resolve_bearer_key("glm-web", &creds).unwrap(), "web");
+    }
+
+    #[test]
+    fn glm_bearer_falls_back_to_web_token_when_plan_key_missing_or_blank() {
+        let no_plan = serde_json::json!({ "glmWebToken": "web" });
+        assert_eq!(resolve_bearer_key("glm", &no_plan).unwrap(), "web");
+
+        // 与 vault 侧 has_text 语义一致：空串视为未配置（保存端已 trim，不会存入空白串）
+        let blank_plan = serde_json::json!({ "glmCodingPlanKey": "", "glmWebToken": "web" });
+        assert_eq!(resolve_bearer_key("glm", &blank_plan).unwrap(), "web");
+
+        let only_plan = serde_json::json!({ "glmCodingPlanKey": "plan" });
+        assert_eq!(resolve_bearer_key("glm", &only_plan).unwrap(), "plan");
+        assert!(resolve_bearer_key("glm-web", &only_plan).is_err());
+    }
+
+    #[test]
+    fn bearer_key_errors_name_the_missing_credential() {
+        let creds = serde_json::json!({});
+        assert!(resolve_bearer_key("glm", &creds)
+            .unwrap_err()
+            .contains("Coding Plan Key"));
+        assert!(resolve_bearer_key("glm-web", &creds)
+            .unwrap_err()
+            .contains("控制台登录 JWT"));
+        assert!(resolve_bearer_key("deepseek", &creds)
+            .unwrap_err()
+            .contains("DeepSeek"));
+        assert!(resolve_bearer_key("unknown", &creds).is_err());
     }
 
     #[test]
