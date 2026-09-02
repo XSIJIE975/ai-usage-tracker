@@ -33,6 +33,7 @@ export const en: Record<string, string> = {
   "编辑配置": "Edit settings",
   "查看统计": "View stats",
   "获取数据后可查看统计": "Available after data is fetched",
+  "用量统计": "Usage stats",
   "还没有供应商": "No providers yet",
   "添加一份凭据，开始追踪该供应商的用量。": "Add credentials to start tracking this provider.",
   "添加供应商": "Add provider",

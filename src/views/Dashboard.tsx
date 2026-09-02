@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentPropsWithoutRef, ComponentType } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -49,10 +49,7 @@ import { IconButton } from "../components/ui/icon-button";
 import { ProviderCard } from "../components/ProviderCard";
 import { NotificationCenterPanel } from "./NotificationCenterPanel";
 import { SettingsView } from "./SettingsView";
-// ECharts 仅统计页使用，懒加载避免主窗口启动时解析大依赖
-const StatsView = lazy(() =>
-  import("./stats/StatsView").then((module) => ({ default: module.StatsView })),
-);
+import { StatsSheet } from "./stats/StatsSheet";
 import { formatClock } from "../lib/utils";
 import { cn } from "../lib/utils";
 import { selectOrderedInstances } from "../lib/instance";
@@ -60,7 +57,7 @@ import type { ProviderInstance, ProviderKind } from "../types/ipc";
 import { updateSupported, useUpdateStore } from "../store/useUpdateStore";
 import { useLanguage, useT } from "../i18n";
 
-type ViewKey = "overview" | "stats" | "settings";
+type ViewKey = "overview" | "settings";
 
 /** 可排序卡片：拖拽手柄在卡片头部左侧，排序变更提交后端持久化 */
 function SortableProviderCard({
@@ -137,6 +134,7 @@ export function Dashboard() {
   const [creatingKind, setCreatingKind] = useState<ProviderKind | null>(null);
   const [editing, setEditing] = useState<ProviderInstance | null>(null);
   const [deleting, setDeleting] = useState<ProviderInstance | null>(null);
+  const [statsInstance, setStatsInstance] = useState<ProviderInstance | null>(null);
 
   const ordered = useMemo(() => selectOrderedInstances(instances), [instances]);
   const snapshotOf = (instanceId: string) =>
@@ -328,7 +326,7 @@ export function Dashboard() {
         </div>
         <div className="flex items-center gap-2.5">
           <Segmented<ViewKey>
-            value={view === "stats" ? "overview" : view}
+            value={view}
             onChange={setView}
             options={[
               { value: "overview", label: t("总览"), icon: <LayoutGrid className="h-3.5 w-3.5" /> },
@@ -406,12 +404,7 @@ export function Dashboard() {
       </header>
 
       <main className="flex-1 overflow-y-auto p-6">
-        <div
-          className={cn(
-            view === "stats" && "mx-auto max-w-5xl",
-            view === "settings" && "mx-auto max-w-3xl",
-          )}
-        >
+        <div className={cn(view === "settings" && "mx-auto max-w-3xl")}>
           {error && (
             <div className="mb-4 flex items-center justify-between gap-3 rounded-md border border-danger/20 bg-danger-soft px-4 py-2.5 text-[13px] text-danger-soft-fg">
               <span className="flex items-center gap-2">
@@ -467,7 +460,7 @@ export function Dashboard() {
                         }
                         onEdit={() => setEditing(instance)}
                         onDelete={() => setDeleting(instance)}
-                        onOpenStats={() => setView("stats")}
+                        onOpenStats={() => setStatsInstance(instance)}
                       />
                     ))}
                   </div>
@@ -484,16 +477,6 @@ export function Dashboard() {
                 </DragOverlay>
               </DndContext>
             )
-          ) : view === "stats" ? (
-            <Suspense
-              fallback={
-                <div className="flex h-40 items-center justify-center">
-                  <span className="h-5 w-5 animate-spin rounded-full border-2 border-line-strong border-t-brand" />
-                </div>
-              }
-            >
-              <StatsView />
-            </Suspense>
           ) : (
             <SettingsView />
           )}
@@ -515,6 +498,13 @@ export function Dashboard() {
         }}
         instance={editing}
         providerId={editing?.providerId ?? "deepseek"}
+      />
+      <StatsSheet
+        instance={statsInstance}
+        open={statsInstance !== null}
+        onOpenChange={(open) => {
+          if (!open) setStatsInstance(null);
+        }}
       />
       <DeleteInstanceDialog
         instance={deleting}
