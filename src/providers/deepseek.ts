@@ -1,5 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { CredentialStatus, HttpResult, ProviderSnapshot } from "../types/ipc";
+import type {
+  HttpResult,
+  InstanceCredentialStatus,
+  ProviderInstance,
+  ProviderSnapshot,
+} from "../types/ipc";
 import type { ProviderModule } from "./types";
 
 interface DeepSeekBalanceResponse {
@@ -12,11 +17,14 @@ interface DeepSeekBalanceResponse {
   }>;
 }
 
-async function fetchBalance(): Promise<ProviderSnapshot> {
-  const status = await invoke<CredentialStatus>("vault_credential_status");
+async function fetchBalance(instance: ProviderInstance): Promise<ProviderSnapshot> {
+  const status = await invoke<InstanceCredentialStatus>("vault_credential_status", {
+    instanceId: instance.id,
+  });
   const updatedAt = Date.now();
-  if (!status.deepseekApiKey) {
+  if (!status.apiKey) {
     return {
+      instanceId: instance.id,
       providerId: "deepseek",
       providerName: "DeepSeek",
       status: "needs_config",
@@ -27,7 +35,7 @@ async function fetchBalance(): Promise<ProviderSnapshot> {
   }
 
   const result = await invoke<HttpResult>("provider_request", {
-    providerId: "deepseek",
+    instanceId: instance.id,
     url: "https://api.deepseek.com/user/balance",
     method: "GET",
     auth: "bearer",
@@ -37,6 +45,7 @@ async function fetchBalance(): Promise<ProviderSnapshot> {
   if (result.status !== 200) {
     const detail = result.bodyText?.trim() || "";
     return {
+      instanceId: instance.id,
       providerId: "deepseek",
       providerName: "DeepSeek",
       status: "error",
@@ -53,6 +62,7 @@ async function fetchBalance(): Promise<ProviderSnapshot> {
     const infos = data.balance_infos ?? [];
     if (infos.length === 0) {
       return {
+        instanceId: instance.id,
         providerId: "deepseek",
         providerName: "DeepSeek",
         status: data.is_available === false ? "error" : "ok",
@@ -89,6 +99,7 @@ async function fetchBalance(): Promise<ProviderSnapshot> {
     }
 
     return {
+      instanceId: instance.id,
       providerId: "deepseek",
       providerName: "DeepSeek",
       status: "ok",
@@ -97,6 +108,7 @@ async function fetchBalance(): Promise<ProviderSnapshot> {
     };
   } catch (error) {
     return {
+      instanceId: instance.id,
       providerId: "deepseek",
       providerName: "DeepSeek",
       status: "error",

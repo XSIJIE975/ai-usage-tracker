@@ -184,6 +184,7 @@ export const en: Record<string, string> = {
   "开启自动刷新总开关。": "first.",
   "余额告警阈值（元）": "Balance alert threshold (CNY)",
   "余额低于该值时发送系统通知。": "Notify when balance drops below this value.",
+  "不告警": "No alert",
   "本月额度告警阈值（%）": "Monthly quota alert threshold (%)",
   "本月额度已用达到该百分比时发送系统通知。": "Notify when monthly usage reaches this percent.",
   "Coding Plan 配额告警阈值（%）": "Coding Plan quota alert threshold (%)",

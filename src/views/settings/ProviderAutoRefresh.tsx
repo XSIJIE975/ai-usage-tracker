@@ -1,12 +1,14 @@
+// 过渡适配：读写「该种类的第一个实例」的自动刷新开关；阶段 ③ 配置弹窗上线后本组件被实例版取代
 import { Label } from "../../components/ui/label";
 import { Switch } from "../../components/ui/switch";
 import { useAppStore } from "../../store/useAppStore";
 import { formatRefreshLabel } from "../../lib/utils";
 import { SavedHint, useSaveFlash } from "./save-flash";
 import { useT } from "../../i18n";
+import type { ProviderKind } from "../../types/ipc";
 
 interface ProviderAutoRefreshProps {
-  providerId: string;
+  providerId: ProviderKind;
   onOpenGeneral: () => void;
 }
 
@@ -15,18 +17,21 @@ interface ProviderAutoRefreshProps {
  * 总开关关闭时开关禁用置灰（保留原值），并给出可跳转「通用」页签的提示。
  */
 export function ProviderAutoRefresh({ providerId, onOpenGeneral }: ProviderAutoRefreshProps) {
+  const instance = useAppStore((state) =>
+    state.instances.find((item) => item.providerId === providerId),
+  );
   const settings = useAppStore((state) => state.settings);
-  const saveSettings = useAppStore((state) => state.saveSettings);
+  const updateInstance = useAppStore((state) => state.updateInstance);
   const { visible, flash } = useSaveFlash();
   const t = useT();
   const masterOn = settings.refreshEnabled;
-  const enabled = Boolean(settings.providers[providerId]);
+  if (!instance) return null;
+  const enabled = instance.autoRefresh;
 
-  async function toggle(value: boolean) {
-    const current = useAppStore.getState().settings;
-    await saveSettings({ ...current, providers: { ...current.providers, [providerId]: value } });
+  const toggle = async (value: boolean) => {
+    await updateInstance(instance.id, { autoRefresh: value });
     flash();
-  }
+  };
 
   return (
     <div className="space-y-2">

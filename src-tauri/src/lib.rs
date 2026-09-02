@@ -7,6 +7,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 mod commands;
 mod db;
+mod instances;
 mod vault;
 
 use db::Db;
@@ -43,6 +44,10 @@ pub fn run() {
             let mut vault = Vault::new(app_data.join("vault.json"), Box::new(keystore));
             if let Err(error) = vault.open() {
                 eprintln!("Credential Vault 打开失败：{error}");
+            }
+            // 静默的一次性迁移：扁平凭据 → 供应商实例（幂等；vault 未解锁时由 vault_migrate 补跑）
+            if let Err(error) = instances::migrate_to_instances(&mut vault, &db) {
+                eprintln!("供应商实例迁移失败：{error}");
             }
             app.manage(AppState {
                 vault: Mutex::new(vault),
@@ -85,9 +90,13 @@ pub fn run() {
             commands::vault_credential_status,
             commands::get_settings,
             commands::save_settings,
+            commands::list_instances,
+            commands::create_instance,
+            commands::update_instance,
+            commands::reorder_instances,
+            commands::delete_instance,
             commands::save_snapshot,
             commands::get_latest_snapshots,
-            commands::list_snapshots,
             commands::set_tray_alert,
             commands::add_notification,
             commands::list_notifications,

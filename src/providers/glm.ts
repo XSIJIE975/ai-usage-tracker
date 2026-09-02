@@ -1,5 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { CredentialStatus, HttpResult, MetricLine, ProviderSnapshot } from "../types/ipc";
+import type {
+  HttpResult,
+  InstanceCredentialStatus,
+  MetricLine,
+  ProviderInstance,
+  ProviderSnapshot,
+} from "../types/ipc";
 import type { ProviderModule } from "./types";
 
 // 端点与响应结构以 GLM_PROVIDER_PLAN.md 3.2/3.3/3.4 的实测结论为准（2026-09-01）：
@@ -149,11 +155,14 @@ function processQuota(result: HttpResult): { ok: boolean; lines: MetricLine[]; e
   }
 }
 
-async function fetchGlmSnapshot(): Promise<ProviderSnapshot> {
-  const status = await invoke<CredentialStatus>("vault_credential_status");
+async function fetchGlmSnapshot(instance: ProviderInstance): Promise<ProviderSnapshot> {
+  const status = await invoke<InstanceCredentialStatus>("vault_credential_status", {
+    instanceId: instance.id,
+  });
   const updatedAt = Date.now();
-  if (!status.glmCodingPlanKey) {
+  if (!status.planKey) {
     return {
+      instanceId: instance.id,
       providerId: "glm",
       providerName: PROVIDER_NAME,
       status: "needs_config",
@@ -166,7 +175,7 @@ async function fetchGlmSnapshot(): Promise<ProviderSnapshot> {
   let outcome: { ok: boolean; lines: MetricLine[]; error?: string };
   try {
     const result = await invoke<HttpResult>("provider_request", {
-      providerId: "glm",
+      instanceId: instance.id,
       url: QUOTA_URL,
       method: "GET",
       auth: "bearer",
@@ -179,6 +188,7 @@ async function fetchGlmSnapshot(): Promise<ProviderSnapshot> {
 
   if (!outcome.ok) {
     return {
+      instanceId: instance.id,
       providerId: "glm",
       providerName: PROVIDER_NAME,
       status: "error",
@@ -189,6 +199,7 @@ async function fetchGlmSnapshot(): Promise<ProviderSnapshot> {
   }
 
   return {
+    instanceId: instance.id,
     providerId: "glm",
     providerName: PROVIDER_NAME,
     status: "ok",

@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { CredentialStatus, HttpResult } from "../types/ipc";
+import type { HttpResult, InstanceCredentialStatus, ProviderInstance } from "../types/ipc";
 import type { StatsResult } from "./stats-result";
 
 // 端点与响应结构以 2026-09-02 实测为准（GLM_PROVIDER_PLAN.md 第 0 节 Spike 回填）：
@@ -214,9 +214,9 @@ export function parseToolUsage(data: GlmToolUsageRaw | undefined): GlmToolUsage 
   return { buckets, granularity: data?.granularity ?? "", fixed, tools, totals, totalCalls };
 }
 
-const requestGlm = (url: string): Promise<HttpResult> =>
+const requestGlm = (instanceId: string, url: string): Promise<HttpResult> =>
   invoke<HttpResult>("provider_request", {
-    providerId: "glm",
+    instanceId,
     url,
     method: "GET",
     auth: "bearer",
@@ -240,19 +240,22 @@ const emptyToolUsage = (): GlmToolUsage => ({
  * （失败降级为空工具数据，不拖垮模型统计）。
  */
 export const fetchGlmUsage = async (
+  instance: ProviderInstance,
   startMs: number,
   endMs: number,
 ): Promise<StatsResult<GlmUsageBundle>> => {
   try {
-    const status = await invoke<CredentialStatus>("vault_credential_status");
-    if (!status.glmCodingPlanKey) {
+    const status = await invoke<InstanceCredentialStatus>("vault_credential_status", {
+      instanceId: instance.id,
+    });
+    if (!status.planKey) {
       return { status: "needs_config", message: "请在设置中填写智谱 Coding Plan API Key" };
     }
 
     const query = buildGlmUsageQuery(startMs, endMs);
     const [modelHttp, toolHttp] = await Promise.all([
-      requestGlm(queryUrl(MODEL_USAGE_URL, query)),
-      requestGlm(queryUrl(TOOL_USAGE_URL, query)),
+      requestGlm(instance.id, queryUrl(MODEL_USAGE_URL, query)),
+      requestGlm(instance.id, queryUrl(TOOL_USAGE_URL, query)),
     ]);
 
     if (modelHttp.status !== 200) {

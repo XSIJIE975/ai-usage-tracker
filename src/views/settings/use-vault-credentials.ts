@@ -1,26 +1,26 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { CredentialStatus, VaultCredentials } from "../../types/ipc";
+import type { InstanceCredentialStatus, InstanceCredentials } from "../../types/ipc";
 
 /**
- * 设置页共享的凭据加载：页签状态点与各供应商表单复用同一份数据。
- * 凭据库解锁时加载，凭据/保险库状态变化事件触发重载；未解锁时清空。
+ * 设置页共享的凭据加载：按实例加载凭据与配置状态。
+ * 凭据库解锁时加载，凭据/保险库状态变化事件触发重载；未解锁或无实例时清空。
  */
-export function useVaultCredentials(unlocked: boolean) {
-  const [credentials, setCredentials] = useState<VaultCredentials | null>(null);
-  const [credentialStatus, setCredentialStatus] = useState<CredentialStatus | null>(null);
+export function useVaultCredentials(unlocked: boolean, instanceId: string | null) {
+  const [credentials, setCredentials] = useState<InstanceCredentials | null>(null);
+  const [credentialStatus, setCredentialStatus] = useState<InstanceCredentialStatus | null>(null);
 
   const reload = useCallback(async () => {
-    if (!unlocked) {
+    if (!unlocked || !instanceId) {
       setCredentials(null);
       setCredentialStatus(null);
       return;
     }
     try {
       const [stored, status] = await Promise.all([
-        invoke<VaultCredentials>("vault_credentials"),
-        invoke<CredentialStatus>("vault_credential_status"),
+        invoke<InstanceCredentials>("vault_credentials", { instanceId }),
+        invoke<InstanceCredentialStatus>("vault_credential_status", { instanceId }),
       ]);
       setCredentials(stored);
       setCredentialStatus(status);
@@ -28,7 +28,7 @@ export function useVaultCredentials(unlocked: boolean) {
       setCredentials(null);
       setCredentialStatus(null);
     }
-  }, [unlocked]);
+  }, [unlocked, instanceId]);
 
   useEffect(() => {
     void reload();

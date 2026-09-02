@@ -9,6 +9,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { HttpResult } from "../types/ipc";
 import { glmProvider, parseQuotaLimits } from "./glm";
 import type { GlmQuotaData } from "./glm";
+import type { ProviderInstance } from "../types/ipc";
 
 const mockInvoke = vi.mocked(invoke);
 
@@ -25,14 +26,17 @@ const httpResult = (body: unknown, status = 200): HttpResult => ({
   bodyText: typeof body === "string" ? body : JSON.stringify(body),
 });
 
-const credentialStatus = (fields: { planKey?: boolean }) => ({
-  deepseekApiKey: false,
-  deepseekUserToken: false,
-  opencodeGoWorkspaceId: false,
-  opencodeGoAuthCookie: false,
-  opencodeGoApiKey: false,
-  glmCodingPlanKey: fields.planKey ?? false,
-});
+const glmInstance: ProviderInstance = {
+  id: "glm",
+  providerId: "glm",
+  note: "",
+  sortOrder: 0,
+  pinned: false,
+  autoRefresh: true,
+  threshold: 80,
+};
+
+const credentialStatus = (fields: { planKey?: boolean }) => ({ planKey: fields.planKey ?? false });
 
 describe("glmProvider.fetch", () => {
   beforeEach(() => {
@@ -42,7 +46,7 @@ describe("glmProvider.fetch", () => {
   it("returns needs_config when the Coding Plan API Key is missing", async () => {
     mockInvoke.mockResolvedValueOnce(credentialStatus({}));
 
-    const snapshot = await glmProvider.fetch();
+    const snapshot = await glmProvider.fetch(glmInstance);
     expect(snapshot.status).toBe("needs_config");
     expect(snapshot.message).toContain("Coding Plan API Key");
     expect(mockInvoke).toHaveBeenCalledTimes(1);
@@ -53,7 +57,7 @@ describe("glmProvider.fetch", () => {
       .mockResolvedValueOnce(credentialStatus({ planKey: true }))
       .mockResolvedValueOnce(httpResult(loadQuotaFixture()));
 
-    const snapshot = await glmProvider.fetch();
+    const snapshot = await glmProvider.fetch(glmInstance);
     expect(snapshot.status).toBe("ok");
     expect(snapshot.message).toBeUndefined();
     expect(snapshot.lines).toHaveLength(3);
@@ -82,7 +86,7 @@ describe("glmProvider.fetch", () => {
     expect(mockInvoke).toHaveBeenLastCalledWith(
       "provider_request",
       expect.objectContaining({
-        providerId: "glm",
+        instanceId: "glm",
         url: "https://open.bigmodel.cn/api/monitor/usage/quota/limit",
         method: "GET",
         auth: "bearer",
@@ -95,7 +99,7 @@ describe("glmProvider.fetch", () => {
       .mockResolvedValueOnce(credentialStatus({ planKey: true }))
       .mockResolvedValueOnce(httpResult(loadUnsubscribedFixture()));
 
-    const snapshot = await glmProvider.fetch();
+    const snapshot = await glmProvider.fetch(glmInstance);
     expect(snapshot.status).toBe("error");
     expect(snapshot.lines).toHaveLength(0);
     expect(snapshot.message).toContain("403");
@@ -109,7 +113,7 @@ describe("glmProvider.fetch", () => {
         httpResult({ code: 200, success: true, data: { level: "lite", limits: [{ type: "FUTURE_LIMIT" }] } }),
       );
 
-    const snapshot = await glmProvider.fetch();
+    const snapshot = await glmProvider.fetch(glmInstance);
     expect(snapshot.status).toBe("error");
     expect(snapshot.message).toContain("未识别的窗口类型");
   });
@@ -119,7 +123,7 @@ describe("glmProvider.fetch", () => {
       .mockResolvedValueOnce(credentialStatus({ planKey: true }))
       .mockResolvedValueOnce(httpResult("unauthorized", 401));
 
-    const snapshot = await glmProvider.fetch();
+    const snapshot = await glmProvider.fetch(glmInstance);
     expect(snapshot.status).toBe("error");
     expect(snapshot.message).toContain("401");
   });
@@ -129,7 +133,7 @@ describe("glmProvider.fetch", () => {
       .mockResolvedValueOnce(credentialStatus({ planKey: true }))
       .mockRejectedValueOnce(new Error("network down"));
 
-    const snapshot = await glmProvider.fetch();
+    const snapshot = await glmProvider.fetch(glmInstance);
     expect(snapshot.status).toBe("error");
     expect(snapshot.message).toContain("network down");
   });

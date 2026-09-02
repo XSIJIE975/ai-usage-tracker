@@ -1,11 +1,12 @@
 import { AlertCircle, CheckCircle2 } from "lucide-react";
-import type { CredentialStatus, VaultCredentials } from "../../types/ipc";
+import type { InstanceCredentialStatus, InstanceCredentials, ProviderInstance } from "../../types/ipc";
 
 export interface ProviderSettingsProps {
+  instance: ProviderInstance | null;
   saveDisabled: boolean;
   notice?: string;
-  credentials: VaultCredentials | null;
-  credentialStatus: CredentialStatus | null;
+  credentials: InstanceCredentials | null;
+  credentialStatus: InstanceCredentialStatus | null;
   onChanged: () => Promise<void>;
   onReload: () => Promise<void>;
   onOpenGeneral: () => void;

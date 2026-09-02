@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 
 use reqwest::Method;
+use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::{db, AppState};
+use crate::db::{self, chrono_utc_now};
+use crate::{instances, AppState};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -14,28 +16,6 @@ pub struct VaultStatusResponse {
     pub unlocked: bool,
     pub needs_migration: bool,
     pub keychain_lost: bool,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CredentialStatus {
-    pub deepseek_api_key: bool,
-    pub deepseek_user_token: bool,
-    pub opencode_go_workspace_id: bool,
-    pub opencode_go_auth_cookie: bool,
-    pub opencode_go_api_key: bool,
-    pub glm_coding_plan_key: bool,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct VaultCredentials {
-    pub deepseek_api_key: Option<String>,
-    pub deepseek_user_token: Option<String>,
-    pub opencode_go_workspace_id: Option<String>,
-    pub opencode_go_auth_cookie: Option<String>,
-    pub opencode_go_api_key: Option<String>,
-    pub glm_coding_plan_key: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -67,6 +47,11 @@ pub fn vault_migrate(
     {
         let mut vault = state.vault.lock().expect("vault lock poisoned");
         vault.migrate(&password)?;
+        // 主密码迁移解锁后补跑实例迁移（启动时因 vault 未解锁被跳过的场景）
+        let db = state.db.lock().expect("db lock poisoned");
+        if let Err(error) = instances::migrate_to_instances(&mut vault, &db) {
+            eprintln!("实例迁移失败：{error}");
+        }
     }
     let _ = app.emit("vault-status-changed", ());
     let _ = app.emit("credentials-changed", ());
@@ -77,7 +62,20 @@ pub fn vault_migrate(
 pub fn vault_save_credentials(
     app: AppHandle,
     state: State<'_, AppState>,
+    instance_id: String,
     credentials: Value,
+) -> Result<(), String> {
+    save_instance_credentials(state, &instance_id, &credentials)?;
+    let _ = app.emit("vault-status-changed", ());
+    let _ = app.emit("credentials-changed", ());
+    Ok(())
+}
+
+/// 把 {slot: value|null} 合并进 vault.instances[instance_id]；null 删除槽位，空串跳过
+fn save_instance_credentials(
+    state: State<'_, AppState>,
+    instance_id: &str,
+    credentials: &Value,
 ) -> Result<(), String> {
     let mut vault = state.vault.lock().expect("vault lock poisoned");
     vault.ensure_unlocked()?;
@@ -85,82 +83,84 @@ pub fn vault_save_credentials(
     let current_object = current
         .as_object_mut()
         .ok_or_else(|| "Credential Vault 数据格式错误".to_string())?;
+    let instance_map = current_object
+        .entry(instance_id.to_string())
+        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    let instance_object = instance_map
+        .as_object_mut()
+        .ok_or_else(|| "Credential Vault 数据格式错误".to_string())?;
     if let Some(input) = credentials.as_object() {
-        apply_credentials(current_object, input);
+        apply_credentials(instance_object, input);
     }
-    vault.save_credentials(&current)?;
-    drop(vault);
-    let _ = app.emit("vault-status-changed", ());
-    let _ = app.emit("credentials-changed", ());
-    Ok(())
+    vault.save_credentials(&current)
 }
 
+/// 把 {slot: value|null} 合并进单个实例的凭据 map：null 删除槽位、空白串跳过、其余 trim 后写入
 fn apply_credentials(
     current: &mut serde_json::Map<String, Value>,
     input: &serde_json::Map<String, Value>,
 ) {
     for (key, value) in input {
-        if value.is_null() {
+        let normalized = match value.as_str() {
+            Some(text) if text.trim().is_empty() => continue,
+            Some(text) => Value::String(text.trim().to_string()),
+            None => value.clone(),
+        };
+        if normalized.is_null() {
             current.remove(key);
         } else {
-            current.insert(key.clone(), value.clone());
+            current.insert(key.clone(), normalized);
         }
     }
 }
 
+/// 某实例已保存的凭据明文（仅非空值）：{slot: value}
 #[tauri::command]
-pub fn vault_credentials(state: State<'_, AppState>) -> Result<VaultCredentials, String> {
+pub fn vault_credentials(
+    state: State<'_, AppState>,
+    instance_id: String,
+) -> Result<HashMap<String, String>, String> {
     let vault = state.vault.lock().expect("vault lock poisoned");
     if !vault.is_unlocked() {
         return Err("Credential Vault 未解锁".to_string());
     }
     let credentials = vault.credentials()?;
-    Ok(VaultCredentials {
-        deepseek_api_key: credential_text(credentials, "deepseekApiKey"),
-        deepseek_user_token: credential_text(credentials, "deepseekUserToken"),
-        opencode_go_workspace_id: credential_text(credentials, "opencodeGoWorkspaceId"),
-        opencode_go_auth_cookie: credential_text(credentials, "opencodeGoAuthCookie"),
-        opencode_go_api_key: credential_text(credentials, "opencodeGoApiKey"),
-        glm_coding_plan_key: credential_text(credentials, "glmCodingPlanKey"),
-    })
+    let instance = credentials.get(&instance_id);
+    let mut result = HashMap::new();
+    if let Some(object) = instance.and_then(Value::as_object) {
+        for (slot, value) in object {
+            if let Some(text) = credential_text(value) {
+                result.insert(slot.clone(), text);
+            }
+        }
+    }
+    Ok(result)
 }
 
+/// 某实例的凭据配置状态：{slot: configured}；未解锁时一律未配置
 #[tauri::command]
-pub fn vault_credential_status(state: State<'_, AppState>) -> Result<CredentialStatus, String> {
+pub fn vault_credential_status(
+    state: State<'_, AppState>,
+    instance_id: String,
+) -> Result<HashMap<String, bool>, String> {
     let vault = state.vault.lock().expect("vault lock poisoned");
     if !vault.is_unlocked() {
-        return Ok(CredentialStatus {
-            deepseek_api_key: false,
-            deepseek_user_token: false,
-            opencode_go_workspace_id: false,
-            opencode_go_auth_cookie: false,
-            opencode_go_api_key: false,
-            glm_coding_plan_key: false,
-        });
+        return Ok(HashMap::new());
     }
     let credentials = vault.credentials()?;
-    Ok(CredentialStatus {
-        deepseek_api_key: has_text(credentials, "deepseekApiKey"),
-        deepseek_user_token: has_text(credentials, "deepseekUserToken"),
-        opencode_go_workspace_id: has_text(credentials, "opencodeGoWorkspaceId"),
-        opencode_go_auth_cookie: has_text(credentials, "opencodeGoAuthCookie"),
-        opencode_go_api_key: has_text(credentials, "opencodeGoApiKey"),
-        glm_coding_plan_key: has_text(credentials, "glmCodingPlanKey"),
-    })
+    let instance = credentials.get(&instance_id);
+    let mut result = HashMap::new();
+    if let Some(object) = instance.and_then(Value::as_object) {
+        for (slot, value) in object {
+            result.insert(slot.clone(), credential_text(value).is_some());
+        }
+    }
+    Ok(result)
 }
 
-fn has_text(value: &Value, key: &str) -> bool {
+fn credential_text(value: &Value) -> Option<String> {
     value
-        .get(key)
-        .and_then(Value::as_str)
-        .map(|text| !text.is_empty())
-        .unwrap_or(false)
-}
-
-fn credential_text(value: &Value, key: &str) -> Option<String> {
-    value
-        .get(key)
-        .and_then(Value::as_str)
+        .as_str()
         .filter(|text| !text.is_empty())
         .map(ToOwned::to_owned)
 }
@@ -206,11 +206,11 @@ pub fn save_settings(state: State<'_, AppState>, settings: Value) -> Result<(), 
 #[tauri::command]
 pub fn save_snapshot(
     state: State<'_, AppState>,
-    provider_id: String,
+    instance_id: String,
     payload: Value,
 ) -> Result<(), String> {
     let db = state.db.lock().expect("db lock poisoned");
-    db.save_snapshot(&provider_id, &payload)
+    db.save_snapshot(&instance_id, &payload)
 }
 
 #[tauri::command]
@@ -219,15 +219,140 @@ pub fn get_latest_snapshots(state: State<'_, AppState>) -> Result<Vec<db::Stored
     db.get_latest_snapshots()
 }
 
+// ─── 供应商实例 ───
+
 #[tauri::command]
-pub fn list_snapshots(
+pub fn list_instances(state: State<'_, AppState>) -> Result<Vec<db::StoredInstance>, String> {
+    let db = state.db.lock().expect("db lock poisoned");
+    db.list_instances()
+}
+
+#[tauri::command]
+pub fn create_instance(
+    app: AppHandle,
     state: State<'_, AppState>,
     provider_id: String,
-    since_ms: Option<i64>,
-    limit: Option<i64>,
-) -> Result<Vec<db::StoredSnapshot>, String> {
-    let db = state.db.lock().expect("db lock poisoned");
-    db.list_snapshots(&provider_id, since_ms.unwrap_or(0), limit.unwrap_or(2000))
+    note: Option<String>,
+    credentials: Option<Value>,
+    auto_refresh: Option<bool>,
+    threshold: Option<f64>,
+) -> Result<db::StoredInstance, String> {
+    if !instances::PROVIDER_KINDS
+        .iter()
+        .any(|(kind, _)| *kind == provider_id)
+    {
+        return Err(format!("不支持的供应商：{provider_id}"));
+    }
+    let instance = {
+        let db = state.db.lock().expect("db lock poisoned");
+        db::StoredInstance {
+            id: uuid::Uuid::new_v4().to_string(),
+            sort_order: db.next_sort_order()?,
+            provider_id,
+            note: note.unwrap_or_default(),
+            pinned: false,
+            auto_refresh: auto_refresh.unwrap_or(true),
+            threshold,
+            created_at: chrono_utc_now(),
+        }
+    };
+    state
+        .db
+        .lock()
+        .expect("db lock poisoned")
+        .insert_instance(&instance, false)?;
+    if let Some(credentials) = credentials {
+        save_instance_credentials(state, &instance.id, &credentials)?;
+    }
+    let _ = app.emit("instances-changed", ());
+    Ok(instance)
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct InstancePatch {
+    pub note: Option<String>,
+    pub auto_refresh: Option<bool>,
+    pub pinned: Option<bool>,
+    /// 三层语义：缺省=不改、null=清除、数值=设置
+    #[serde(deserialize_with = "deserialize_double_option")]
+    pub threshold: Option<Option<f64>>,
+}
+
+/// serde 对 Option<Option<T>> 的 null 缺省行为是外层 None；
+/// 显式 null 必须映射为 Some(None) 才能与「字段缺省」区分
+fn deserialize_double_option<'de, D>(deserializer: D) -> Result<Option<Option<f64>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Deserialize::deserialize(deserializer).map(Some)
+}
+
+#[tauri::command]
+pub fn update_instance(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    patch: InstancePatch,
+) -> Result<(), String> {
+    {
+        let db = state.db.lock().expect("db lock poisoned");
+        db.update_instance(
+            &id,
+            patch.note.as_deref(),
+            patch.auto_refresh,
+            patch.pinned,
+            patch.threshold,
+        )?;
+    }
+    let _ = app.emit("instances-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+pub fn reorder_instances(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    ordered_ids: Vec<String>,
+) -> Result<(), String> {
+    {
+        let db = state.db.lock().expect("db lock poisoned");
+        db.reorder_instances(&ordered_ids)?;
+    }
+    let _ = app.emit("instances-changed", ());
+    Ok(())
+}
+
+/// 删除实例：数据库侧事务清掉实例行 + 该实例快照 + 该实例通知；vault 侧移除其凭据
+#[tauri::command]
+pub fn delete_instance(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
+    {
+        let db = state.db.lock().expect("db lock poisoned");
+        db.delete_instance(&id)?;
+    }
+    {
+        let mut vault = state.vault.lock().expect("vault lock poisoned");
+        if vault.is_unlocked() {
+            let cleanup = vault.credentials().map(|credentials| credentials.clone()).and_then(
+                |mut current| {
+                    let removed = current
+                        .as_object_mut()
+                        .and_then(|object| object.remove(&id));
+                    match removed {
+                        Some(_) => vault.save_credentials(&current),
+                        None => Ok(()),
+                    }
+                },
+            );
+            if let Err(error) = cleanup {
+                // 实例行已删：残留凭据不可见也无害，不因它让删除报错
+                eprintln!("清理已删实例的凭据失败：{error}");
+            }
+        }
+    }
+    let _ = app.emit("instances-changed", ());
+    let _ = app.emit("credentials-changed", ());
+    Ok(())
 }
 
 /// 在默认托盘图标的右下角合成红点徽章，生成告警态托盘图标（无需额外图标资产）
@@ -434,12 +559,12 @@ pub fn refresh_tray_menu(app: AppHandle, language: String) -> Result<(), String>
 #[tauri::command]
 pub fn add_notification(
     state: State<'_, AppState>,
-    provider_id: String,
+    instance_id: String,
     title: String,
     body: String,
 ) -> Result<db::StoredNotification, String> {
     let db = state.db.lock().expect("db lock poisoned");
-    db.add_notification(&provider_id, &title, &body)
+    db.add_notification(&instance_id, &title, &body)
 }
 
 #[tauri::command]
@@ -475,42 +600,42 @@ pub fn clear_notifications(state: State<'_, AppState>) -> Result<(), String> {
     db.clear_notifications()
 }
 
-/// bearer auth 的凭据注入：按 providerId 从凭据库查 key（空串视为未配置，与
-/// vault_credential_status 的 has_text 语义一致），缺失时返回面向用户的错误。
-/// glm：Coding Plan API Key（官方 glm-plan-usage 插件同款用法，可查配额与用量统计）。
-fn resolve_bearer_key<'a>(provider_id: &str, credentials: &'a Value) -> Result<&'a str, String> {
-    let get_str = |key: &str| -> Option<&'a str> {
-        credentials
-            .get(key)
-            .and_then(Value::as_str)
-            .filter(|value| !value.is_empty())
-    };
-    match provider_id {
-        "deepseek" => get_str("deepseekApiKey").ok_or_else(|| "缺少 DeepSeek API Key".to_string()),
-        "deepseek-platform" => {
-            get_str("deepseekUserToken").ok_or_else(|| "缺少 DeepSeek UserToken".to_string())
-        }
-        "opencode-go" => {
-            get_str("opencodeGoApiKey").ok_or_else(|| "缺少 OpenCode Go API Key".to_string())
-        }
-        "glm" => get_str("glmCodingPlanKey").ok_or_else(|| "缺少智谱 Coding Plan API Key".to_string()),
-        _ => Err("不支持的 provider bearer auth".to_string()),
+/// bearer 凭据注入：由实例行查出种类，从 vault.instances[instanceId][slot] 取密钥
+/// （空串视为未配置）。缺省槽位为各种类的主鉴权键（deepseek=apiKey、glm=planKey）。
+fn resolve_bearer_key<'a>(kind: &str, slot: &str, credentials: &'a Value) -> Result<&'a str, String> {
+    if let Some(value) = instances::instance_credential(credentials, slot) {
+        return Ok(value);
+    }
+    match instances::credential_label(kind, slot) {
+        Some(label) => Err(format!("缺少 {label}")),
+        None => Err(format!("不支持的凭据槽位：{kind}/{slot}")),
     }
 }
 
 #[tauri::command]
 pub async fn provider_request(
     state: State<'_, AppState>,
-    provider_id: String,
+    instance_id: String,
     url: String,
     method: Option<String>,
     headers: Option<HashMap<String, String>>,
     body_text: Option<String>,
     auth: Option<String>,
+    credential_slot: Option<String>,
 ) -> Result<ProviderResponse, String> {
-    let credentials = {
+    let (kind, instance_credentials) = {
+        let provider_id = {
+            let db = state.db.lock().expect("db lock poisoned");
+            db.get_instance(&instance_id)?
+                .ok_or_else(|| "供应商实例不存在，请刷新后重试".to_string())?
+                .provider_id
+        };
         let vault = state.vault.lock().expect("vault lock poisoned");
-        vault.credentials()?.clone()
+        let credentials = vault.credentials()?.clone();
+        (
+            provider_id,
+            credentials.get(&instance_id).cloned().unwrap_or(Value::Null),
+        )
     };
 
     let client = reqwest::Client::builder()
@@ -527,13 +652,17 @@ pub async fn provider_request(
 
     match auth.as_deref() {
         Some("bearer") => {
-            let key = resolve_bearer_key(&provider_id, &credentials)?;
+            let slot = match credential_slot.as_deref() {
+                Some(slot) => slot.to_string(),
+                None => instances::default_bearer_slot(&kind)
+                    .ok_or_else(|| "不支持的 provider bearer auth".to_string())?
+                    .to_string(),
+            };
+            let key = resolve_bearer_key(&kind, &slot, &instance_credentials)?;
             headers.insert("Authorization".to_string(), format!("Bearer {key}"));
         }
-        Some("cookie") if provider_id == "opencode-go" => {
-            let cookie = credentials
-                .get("opencodeGoAuthCookie")
-                .and_then(Value::as_str)
+        Some("cookie") if kind == "opencode-go" => {
+            let cookie = instances::instance_credential(&instance_credentials, "cookie")
                 .ok_or_else(|| "缺少 OpenCode Auth Cookie".to_string())?;
             let normalized = normalize_auth_cookie(cookie);
             headers.insert("Cookie".to_string(), format!("auth={normalized}"));
@@ -642,109 +771,64 @@ mod tests {
     }
 
     #[test]
-    fn credential_payloads_expose_deepseek_user_token_field() {
-        let status = serde_json::to_value(CredentialStatus {
-            deepseek_api_key: true,
-            deepseek_user_token: false,
-            opencode_go_workspace_id: false,
-            opencode_go_auth_cookie: false,
-            opencode_go_api_key: false,
-            glm_coding_plan_key: false,
-        })
-        .expect("credential status should serialize");
-        assert_eq!(status["deepseekUserToken"], false);
+    fn instance_patch_deserializes_threshold_semantics() {
+        let absent: InstancePatch = serde_json::from_str(r#"{"note":"x"}"#).unwrap();
+        assert!(absent.threshold.is_none());
 
-        let credentials = serde_json::to_value(VaultCredentials {
-            deepseek_api_key: None,
-            deepseek_user_token: Some("token".to_string()),
-            opencode_go_workspace_id: None,
-            opencode_go_auth_cookie: None,
-            opencode_go_api_key: None,
-            glm_coding_plan_key: None,
-        })
-        .expect("vault credentials should serialize");
-        assert_eq!(credentials["deepseekUserToken"], "token");
+        let cleared: InstancePatch = serde_json::from_str(r#"{"threshold":null}"#).unwrap();
+        assert_eq!(cleared.threshold, Some(None));
+
+        let set: InstancePatch = serde_json::from_str(r#"{"threshold":42}"#).unwrap();
+        assert_eq!(set.threshold, Some(Some(42.0)));
     }
 
     #[test]
-    fn credential_payloads_expose_glm_fields() {
-        let status = serde_json::to_value(CredentialStatus {
-            deepseek_api_key: false,
-            deepseek_user_token: false,
-            opencode_go_workspace_id: false,
-            opencode_go_auth_cookie: false,
-            opencode_go_api_key: false,
-            glm_coding_plan_key: true,
-        })
-        .expect("credential status should serialize");
-        assert_eq!(status["glmCodingPlanKey"], true);
-
-        let credentials = serde_json::to_value(VaultCredentials {
-            deepseek_api_key: None,
-            deepseek_user_token: None,
-            opencode_go_workspace_id: None,
-            opencode_go_auth_cookie: None,
-            opencode_go_api_key: None,
-            glm_coding_plan_key: Some("plan-key".to_string()),
-        })
-        .expect("vault credentials should serialize");
-        assert_eq!(credentials["glmCodingPlanKey"], "plan-key");
-    }
-
-    #[test]
-    fn resolves_bearer_keys_by_provider() {
+    fn resolves_bearer_keys_by_kind_and_slot() {
         let creds = serde_json::json!({
-            "deepseekApiKey": "sk-1",
-            "deepseekUserToken": "tok-1",
-            "opencodeGoApiKey": "oc-1",
-            "glmCodingPlanKey": "plan"
+            "deepseek": { "apiKey": "sk-1", "userToken": "tok-1" },
+            "opencode-go": { "apiKey": "oc-1", "cookie": "cookie-1" },
+            "glm": { "planKey": "plan" }
         });
-        assert_eq!(resolve_bearer_key("deepseek", &creds).unwrap(), "sk-1");
-        assert_eq!(resolve_bearer_key("deepseek-platform", &creds).unwrap(), "tok-1");
-        assert_eq!(resolve_bearer_key("opencode-go", &creds).unwrap(), "oc-1");
-        assert_eq!(resolve_bearer_key("glm", &creds).unwrap(), "plan");
-    }
-
-    #[test]
-    fn glm_bearer_requires_plan_key_and_ignores_legacy_web_token() {
-        // 旧版本保存过的 glmWebToken 残留在 vault 中不再参与鉴权
-        let legacy = serde_json::json!({ "glmCodingPlanKey": "plan", "glmWebToken": "web" });
-        assert_eq!(resolve_bearer_key("glm", &legacy).unwrap(), "plan");
-
-        let only_web = serde_json::json!({ "glmWebToken": "web" });
-        assert!(resolve_bearer_key("glm", &only_web).is_err());
-
-        // 与 vault 侧 has_text 语义一致：空串视为未配置（保存端已 trim，不会存入空白串）
-        let blank_plan = serde_json::json!({ "glmCodingPlanKey": "" });
-        assert!(resolve_bearer_key("glm", &blank_plan).is_err());
-
-        assert!(resolve_bearer_key("glm-web", &legacy).is_err());
+        let deepseek = &creds["deepseek"];
+        assert_eq!(resolve_bearer_key("deepseek", "apiKey", deepseek).unwrap(), "sk-1");
+        assert_eq!(resolve_bearer_key("deepseek", "userToken", deepseek).unwrap(), "tok-1");
+        assert_eq!(
+            resolve_bearer_key("opencode-go", "apiKey", &creds["opencode-go"]).unwrap(),
+            "oc-1"
+        );
+        assert_eq!(resolve_bearer_key("glm", "planKey", &creds["glm"]).unwrap(), "plan");
     }
 
     #[test]
     fn bearer_key_errors_name_the_missing_credential() {
-        let creds = serde_json::json!({});
-        assert!(resolve_bearer_key("glm", &creds)
+        let empty = serde_json::json!({});
+        assert!(resolve_bearer_key("glm", "planKey", &empty)
             .unwrap_err()
             .contains("Coding Plan API Key"));
-        assert!(resolve_bearer_key("deepseek", &creds)
+        assert!(resolve_bearer_key("deepseek", "apiKey", &empty)
             .unwrap_err()
-            .contains("DeepSeek"));
-        assert!(resolve_bearer_key("unknown", &creds).is_err());
+            .contains("DeepSeek API Key"));
+        // 与 vault 侧语义一致：空串视为未配置
+        let blank = serde_json::json!({ "planKey": "" });
+        assert!(resolve_bearer_key("glm", "planKey", &blank).is_err());
+        // 未知槽位组合直接拒绝，不落到「缺少」文案
+        assert!(resolve_bearer_key("deepseek", "planKey", &empty)
+            .unwrap_err()
+            .contains("不支持的凭据槽位"));
     }
 
     #[test]
     fn applies_credential_updates_and_removes_null_keys() {
         let mut current = serde_json::json!({
-            "deepseekApiKey": "sk-old",
-            "opencodeGoWorkspaceId": "wrk-old"
+            "apiKey": "sk-old",
+            "workspaceId": "wrk-old"
         })
         .as_object_mut()
         .unwrap()
         .clone();
         let input = serde_json::json!({
-            "deepseekApiKey": "sk-new",
-            "opencodeGoWorkspaceId": null
+            "apiKey": "sk-new",
+            "workspaceId": null
         })
         .as_object()
         .unwrap()
@@ -752,7 +836,7 @@ mod tests {
 
         apply_credentials(&mut current, &input);
 
-        assert_eq!(current["deepseekApiKey"], "sk-new");
-        assert!(!current.contains_key("opencodeGoWorkspaceId"));
+        assert_eq!(current["apiKey"], "sk-new");
+        assert!(!current.contains_key("workspaceId"));
     }
 }

@@ -47,6 +47,9 @@ function RefreshOverlay() {
 }
 
 export function DeepSeekStats() {
+  const instance = useAppStore((state) =>
+    state.instances.find((item) => item.providerId === "deepseek"),
+  );
   const [range, setRange] = useState<TimeRange>("7d");
   const [apiKeyId, setApiKeyId] = useState("all");
   const [metric, setMetric] = useState<UsageMetric>("tokens");
@@ -57,29 +60,32 @@ export function DeepSeekStats() {
   const rangeMs = useMemo(() => resolveRangeMs(range, customFrom, customTo), [range, customFrom, customTo]);
   const customError = range === "custom" ? customRangeError(customFrom, customTo) : null;
   const t = useT();
+  // cache key 前缀 instanceId：同种类两个实例的统计互不串数据
+  const cacheKey =
+    rangeMs === null || !instance ? null : `${instance.id}:${rangeMs.startMs}:${rangeMs.endMs}`;
   const { state, isRefreshing } = useStatsFetch(
     usageCache,
-    rangeMs === null ? null : `${rangeMs.startMs}:${rangeMs.endMs}`,
+    cacheKey,
     () =>
-      rangeMs === null
+      rangeMs === null || !instance
         ? Promise.reject(new Error("时间范围无效"))
-        : fetchDeepSeekUsage(rangeMs.startMs, rangeMs.endMs),
+        : fetchDeepSeekUsage(instance, rangeMs.startMs, rangeMs.endMs),
     refreshTick,
   );
 
   const refresh = () => {
-    if (rangeMs !== null) usageCache.invalidate(`${rangeMs.startMs}:${rangeMs.endMs}`);
+    if (cacheKey !== null) usageCache.invalidate(cacheKey);
     setRefreshTick((tick) => tick + 1);
   };
 
   // 接入全局自动刷新
-  useAutoRefresh(refresh, "deepseek");
+  useAutoRefresh(refresh, instance ?? null);
   // 接入顶栏手动全局刷新
-  useGlobalRefresh(refresh, "deepseek");
+  useGlobalRefresh(refresh, instance?.id ?? null);
 
-  /** 全局刷新状态：顶栏「刷新」进行中（全局）或该供应商单刷进行中 */
+  /** 全局刷新状态：顶栏「刷新」进行中（全局）或该实例单刷进行中 */
   const globalRefreshing = useAppStore(
-    (state) => state.loading || Boolean(state.refreshingProviders["deepseek"]),
+    (state) => state.loading || (instance ? Boolean(state.refreshingInstances[instance.id]) : false),
   );
   const busy = isRefreshing || globalRefreshing;
 

@@ -38,11 +38,12 @@ function useNextRefreshCountdown(): string | null {
 export function QuickWindow() {
   const {
     vaultStatus,
+    instances,
     snapshots,
     loadInitial,
     refreshAll,
-    refreshProvider,
-    refreshingProviders,
+    refreshInstance,
+    refreshingInstances,
     loading,
   } = useAppStore();
   const unread = useNotificationStore(selectUnreadCount);
@@ -109,11 +110,11 @@ export function QuickWindow() {
         useAppStore.setState({ settings: event.payload });
       });
       // 主窗口上下文刷新产生的告警态变化同步到本窗口
-      const unlistenAlert = await listen<{ providerId: string; active: boolean }>(
+      const unlistenAlert = await listen<{ instanceId: string; active: boolean }>(
         "alert-state-changed",
         (event) => {
           useAlertStore.setState((state) => ({
-            active: { ...state.active, [event.payload.providerId]: event.payload.active },
+            active: { ...state.active, [event.payload.instanceId]: event.payload.active },
           }));
         },
       );
@@ -156,7 +157,7 @@ export function QuickWindow() {
     await invoke("hide_quick_window");
   }
 
-  const anyProviderRefreshing = Object.values(refreshingProviders).some(Boolean);
+  const anyProviderRefreshing = Object.values(refreshingInstances).some(Boolean);
   const refreshing = loading || anyProviderRefreshing;
   const anyAlert = Object.values(alertActiveMap).some(Boolean);
 
@@ -266,15 +267,21 @@ export function QuickWindow() {
               </div>
             ) : (
               <div className="space-y-3">
-                {snapshots.map((snapshot) => (
-                  <ProviderCard
-                    key={snapshot.providerId}
-                    snapshot={snapshot}
-                    compact
-                    refreshing={loading || refreshingProviders[snapshot.providerId]}
-                    onRefresh={() => void refreshProvider(snapshot.providerId)}
-                  />
-                ))}
+                {[...instances]
+                  .sort((a, b) => a.sortOrder - b.sortOrder)
+                  .map((instance) =>
+                    snapshots.find((snapshot) => snapshot.instanceId === instance.id),
+                  )
+                  .filter((snapshot): snapshot is NonNullable<typeof snapshot> => snapshot != null)
+                  .map((snapshot) => (
+                    <ProviderCard
+                      key={snapshot.instanceId}
+                      snapshot={snapshot}
+                      compact
+                      refreshing={loading || refreshingInstances[snapshot.instanceId]}
+                      onRefresh={() => void refreshInstance(snapshot.instanceId)}
+                    />
+                  ))}
               </div>
             )}
           </>

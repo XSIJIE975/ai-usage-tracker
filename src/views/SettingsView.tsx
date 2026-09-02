@@ -12,6 +12,7 @@ import { GlmSettings } from "./settings/GlmSettings";
 import { OpenCodeGoSettings } from "./settings/OpenCodeGoSettings";
 import { useVaultCredentials } from "./settings/use-vault-credentials";
 import type { ProviderSettingsProps } from "./settings/provider-settings";
+import type { ProviderKind } from "../types/ipc";
 
 type SettingsTab = "general" | "deepseek" | "opencode" | "glm";
 
@@ -41,21 +42,38 @@ function ProviderTabLabel({
 
 export function SettingsView() {
   const t = useT();
-  const { vaultStatus, refreshAll } = useAppStore();
+  const { vaultStatus, refreshAll, reloadInstances } = useAppStore();
+  const instances = useAppStore((state) => state.instances);
   const [tab, setTab] = useState<SettingsTab>("general");
   const unlocked = Boolean(vaultStatus?.unlocked);
-  const { credentials, credentialStatus, reload } = useVaultCredentials(unlocked);
 
-  const deepseekConfigured = Boolean(
-    credentialStatus?.deepseekApiKey || credentialStatus?.deepseekUserToken,
+  // 过渡适配：设置页签仍按种类组织，凭据读写定向到该种类的第一个实例
+  const firstInstanceOf = (kind: ProviderKind) =>
+    instances.find((instance) => instance.providerId === kind) ?? null;
+  const activeKind: ProviderKind | null =
+    tab === "deepseek" ? "deepseek" : tab === "opencode" ? "opencode-go" : tab === "glm" ? "glm" : null;
+  const activeInstance = activeKind ? firstInstanceOf(activeKind) : null;
+  const { credentials, credentialStatus, reload } = useVaultCredentials(
+    unlocked,
+    activeInstance?.id ?? null,
   );
-  const opencodeConfigured = Boolean(
-    credentialStatus?.opencodeGoWorkspaceId && credentialStatus?.opencodeGoAuthCookie,
-  );
-  const glmConfigured = Boolean(credentialStatus?.glmCodingPlanKey);
+
+  const configuredOf = (kind: ProviderKind): boolean => {
+    const instance = firstInstanceOf(kind);
+    if (!instance) return false;
+    if (kind !== activeKind) {
+      // 非当前页签的实例没有加载状态：有实例行即视为可配置，状态点下次切页签时校准
+      return true;
+    }
+    if (kind === "deepseek") return Boolean(credentialStatus?.apiKey || credentialStatus?.userToken);
+    if (kind === "opencode-go")
+      return Boolean(credentialStatus?.workspaceId && credentialStatus?.cookie);
+    return Boolean(credentialStatus?.planKey);
+  };
 
   const pendingMigration = Boolean(vaultStatus?.needsMigration);
   const providerProps: ProviderSettingsProps = {
+    instance: activeInstance,
     saveDisabled: pendingMigration,
     notice:
       vaultStatus && !vaultStatus.unlocked && !vaultStatus.keychainLost
@@ -63,7 +81,10 @@ export function SettingsView() {
         : undefined,
     credentials,
     credentialStatus,
-    onChanged: () => refreshAll(false),
+    onChanged: async () => {
+      await refreshAll(false);
+      await reloadInstances();
+    },
     onReload: reload,
     onOpenGeneral: () => setTab("general"),
   };
@@ -87,21 +108,21 @@ export function SettingsView() {
           {
             value: "deepseek",
             label: (
-              <ProviderTabLabel name={t("DeepSeek 官方")} showDot={unlocked} configured={deepseekConfigured} />
+              <ProviderTabLabel name={t("DeepSeek 官方")} showDot={unlocked} configured={configuredOf("deepseek")} />
             ),
             icon: <DeepSeekLogo className="h-3.5 w-3.5" />,
           },
           {
             value: "opencode",
             label: (
-              <ProviderTabLabel name={t("OpenCode Go")} showDot={unlocked} configured={opencodeConfigured} />
+              <ProviderTabLabel name={t("OpenCode Go")} showDot={unlocked} configured={configuredOf("opencode-go")} />
             ),
             icon: <OpenCodeLogo className="h-3.5 w-3.5" />,
           },
           {
             value: "glm",
             label: (
-              <ProviderTabLabel name={t("智谱 GLM")} showDot={unlocked} configured={glmConfigured} />
+              <ProviderTabLabel name={t("智谱 GLM")} showDot={unlocked} configured={configuredOf("glm")} />
             ),
             icon: <GlmLogo className="h-3.5 w-3.5" />,
           },

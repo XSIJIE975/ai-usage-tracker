@@ -1,7 +1,9 @@
+// 过渡适配：读写「该种类的第一个实例」的阈值；阶段 ③ 配置弹窗上线后本组件被实例版取代
 import { useAppStore } from "../../store/useAppStore";
 import { Label } from "../../components/ui/label";
 import { SavedHint, useSaveFlash } from "./save-flash";
 import { useT } from "../../i18n";
+import type { ProviderKind } from "../../types/ipc";
 
 interface ThresholdConfig {
   label: string;
@@ -10,7 +12,7 @@ interface ThresholdConfig {
   max: number;
 }
 
-const CONFIGS: Record<"deepseek" | "opencode-go" | "glm", ThresholdConfig> = {
+const CONFIGS: Record<ProviderKind, ThresholdConfig> = {
   deepseek: {
     label: "余额告警阈值（元）",
     hint: "余额低于该值时发送系统通知。",
@@ -35,37 +37,33 @@ const CONFIGS: Record<"deepseek" | "opencode-go" | "glm", ThresholdConfig> = {
 export function AlertThresholdSetting({
   providerId,
 }: {
-  providerId: "deepseek" | "opencode-go" | "glm";
+  providerId: ProviderKind;
 }) {
-  const settings = useAppStore((state) => state.settings);
-  const saveSettings = useAppStore((state) => state.saveSettings);
+  const instance = useAppStore((state) =>
+    state.instances.find((item) => item.providerId === providerId),
+  );
+  const alertsEnabled = useAppStore((state) => state.settings.alertsEnabled);
+  const updateInstance = useAppStore((state) => state.updateInstance);
   const { visible, flash } = useSaveFlash();
   const t = useT();
   const config = CONFIGS[providerId];
 
-  const value =
-    providerId === "deepseek"
-      ? settings.alertThresholds.deepseekBalanceBelowCny
-      : providerId === "glm"
-        ? settings.alertThresholds.glmQuotaUsedPercent
-        : settings.alertThresholds.opencodeMonthlyUsedPercent;
+  if (!instance) return null;
+  const value = instance.threshold;
 
-  async function save(raw: string) {
+  const save = async (raw: string) => {
+    // 留空 = 清除阈值（不告警）
+    if (raw.trim() === "") {
+      await updateInstance(instance.id, { threshold: null });
+      flash();
+      return;
+    }
     const parsed = Number(raw);
     if (!Number.isFinite(parsed)) return;
     const clamped = Math.min(config.max, Math.max(config.min, Math.round(parsed)));
-    const current = useAppStore.getState().settings;
-    const alertThresholds = { ...current.alertThresholds };
-    if (providerId === "deepseek") {
-      alertThresholds.deepseekBalanceBelowCny = clamped;
-    } else if (providerId === "glm") {
-      alertThresholds.glmQuotaUsedPercent = clamped;
-    } else {
-      alertThresholds.opencodeMonthlyUsedPercent = clamped;
-    }
-    await saveSettings({ ...current, alertThresholds });
+    await updateInstance(instance.id, { threshold: clamped });
     flash();
-  }
+  };
 
   return (
     <div className="flex items-center justify-between gap-4">
@@ -80,14 +78,14 @@ export function AlertThresholdSetting({
         id={`alert-threshold-${providerId}`}
         type="number"
         // key 绑定当前值：store 外部变更时重挂载同步显示
-        key={`${providerId}-${value}`}
-        defaultValue={value}
+        key={`${providerId}-${value ?? "off"}`}
+        defaultValue={value ?? ""}
+        placeholder={t("不告警")}
         min={config.min}
         max={config.max}
         step={1}
-        disabled={!settings.alertsEnabled}
-        onBlur={(event) => void save(event.currentTarget.value)}
-        className="tnum h-9 w-28 rounded-md border border-line bg-surface px-2 text-right text-[13px] text-fg shadow-sm focus-visible:border-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring disabled:opacity-40"
+        disabled={!alertsEnabled}
+        onBlur={(event) => void save(event.currentTarget.value)}        className="tnum h-9 w-28 rounded-md border border-line bg-surface px-2 text-right text-[13px] text-fg shadow-sm focus-visible:border-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring disabled:opacity-40"
       />
     </div>
   );

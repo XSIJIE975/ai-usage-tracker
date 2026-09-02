@@ -11,10 +11,11 @@ import { AlertThresholdSetting } from "./AlertThresholdSetting";
 import { DiagnosisButton } from "./DiagnosisButton";
 import { testGlmCodingPlanKey } from "../../diagnostics";
 import { SaveMessageBanner, type ProviderSettingsProps, type SaveMessage } from "./provider-settings";
+import { useAppStore } from "../../store/useAppStore";
 import { useT } from "../../i18n";
-import type { CredentialsInput } from "../../types/ipc";
 
 export function GlmSettings({
+  instance,
   saveDisabled,
   notice,
   credentials,
@@ -29,15 +30,19 @@ export function GlmSettings({
   const t = useT();
 
   useEffect(() => {
-    setPlanKey(credentials?.glmCodingPlanKey ?? "");
+    setPlanKey(credentials?.planKey ?? "");
   }, [credentials]);
 
   async function saveCredentials() {
-    const input: CredentialsInput = {};
-    if (planKey.trim()) input.glmCodingPlanKey = planKey.trim();
+    const input: Record<string, string> = {};
+    if (planKey.trim()) input.planKey = planKey.trim();
     setSaving(true);
     try {
-      await invoke("vault_save_credentials", { credentials: input });
+      if (instance) {
+        await invoke("vault_save_credentials", { instanceId: instance.id, credentials: input });
+      } else {
+        await useAppStore.getState().addInstance("glm", "", input);
+      }
       await onChanged();
       await onReload();
       setMessage({ kind: "success", text: t("凭据已保存，已刷新用量") });
@@ -48,10 +53,14 @@ export function GlmSettings({
     }
   }
 
-  async function clearCredential(field: keyof CredentialsInput) {
+  async function clearCredential(slot: "planKey") {
+    if (!instance) return;
     setSaving(true);
     try {
-      await invoke("vault_save_credentials", { credentials: { [field]: null } });
+      await invoke("vault_save_credentials", {
+        instanceId: instance.id,
+        credentials: { [slot]: null },
+      });
       await onChanged();
       await onReload();
       setMessage({ kind: "success", text: t("凭据已清除") });
@@ -82,7 +91,7 @@ export function GlmSettings({
         <div className="space-y-2.5">
           <div className="flex items-center justify-between">
             <Label htmlFor="glmPlanKey">{t("智谱 Coding Plan API Key")}</Label>
-            <StatusBadge configured={Boolean(credentialStatus?.glmCodingPlanKey)} />
+            <StatusBadge configured={Boolean(credentialStatus?.planKey)} />
           </div>
           <SecretField
             id="glmPlanKey"
@@ -90,8 +99,8 @@ export function GlmSettings({
             placeholder={t("粘贴 API Key")}
             disabled={saveDisabled}
             onChange={setPlanKey}
-            onClear={() => void clearCredential("glmCodingPlanKey")}
-            clearDisabled={!planKey}
+            onClear={() => void clearCredential("planKey")}
+            clearDisabled={!planKey || !instance}
           />
           <DiagnosisButton
             test={() => testGlmCodingPlanKey(planKey)}
@@ -116,13 +125,17 @@ export function GlmSettings({
           )}
         </Button>
 
-        <Separator />
+        {instance ? (
+          <>
+            <Separator />
 
-        <ProviderAutoRefresh providerId="glm" onOpenGeneral={onOpenGeneral} />
+            <ProviderAutoRefresh providerId="glm" onOpenGeneral={onOpenGeneral} />
 
-        <Separator />
+            <Separator />
 
-        <AlertThresholdSetting providerId="glm" />
+            <AlertThresholdSetting providerId="glm" />
+          </>
+        ) : null}
       </CardContent>
     </Card>
   );

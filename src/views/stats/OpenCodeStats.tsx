@@ -43,33 +43,40 @@ function RefreshOverlay() {
 }
 
 export function OpenCodeStats() {
+  const instance = useAppStore((state) =>
+    state.instances.find((item) => item.providerId === "opencode-go"),
+  );
   const [month, setMonth] = useState(currentMonth);
   const [model, setModel] = useState("all");
   const [keyId, setKeyId] = useState("all");
   const [refreshTick, setRefreshTick] = useState(0);
 
+  const cacheKey = instance ? `${instance.id}:${month.year}-${month.month}` : null;
   const refresh = () => {
-    monthlyCache.invalidate(`${month.year}-${month.month}`);
+    if (cacheKey !== null) monthlyCache.invalidate(cacheKey);
     setRefreshTick((tick) => tick + 1);
   };
 
   // 接入全局自动刷新
-  useAutoRefresh(refresh, "opencode-go");
+  useAutoRefresh(refresh, instance ?? null);
   // 接入顶栏手动全局刷新
-  useGlobalRefresh(refresh, "opencode-go");
+  useGlobalRefresh(refresh, instance?.id ?? null);
 
-  /** 全局刷新状态：顶栏「刷新」进行中（全局）或该供应商单刷进行中 */
+  /** 全局刷新状态：顶栏「刷新」进行中（全局）或该实例单刷进行中 */
   const globalRefreshing = useAppStore(
-    (state) => state.loading || Boolean(state.refreshingProviders["opencode-go"]),
+    (state) => state.loading || (instance ? Boolean(state.refreshingInstances[instance.id]) : false),
   );
 
   const { state: monthly, isRefreshing } = useStatsFetch(
     monthlyCache,
-    `${month.year}-${month.month}`,
-    () => fetchOpenCodeMonthlyCost(month.year, month.month),
+    cacheKey,
+    () =>
+      instance
+        ? fetchOpenCodeMonthlyCost(instance, month.year, month.month)
+        : Promise.resolve({ status: "needs_config" as const, message: "" }),
     refreshTick,
   );
-  const history = useHistoryPages(refreshTick);
+  const history = useHistoryPages(instance ?? null, refreshTick);
   const busy = isRefreshing || globalRefreshing;
   const t = useT();
   const language = useLanguage();

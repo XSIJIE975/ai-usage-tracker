@@ -23,7 +23,7 @@ export function GeneralSettings() {
 
   async function save(patch: Partial<AppSettings>) {
     const current = useAppStore.getState().settings;
-    await saveSettings({ ...current, providers: { ...current.providers }, ...patch });
+    await saveSettings({ ...current, ...patch });
     flash();
   }
 

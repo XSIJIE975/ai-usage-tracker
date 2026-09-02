@@ -11,10 +11,11 @@ import { AlertThresholdSetting } from "./AlertThresholdSetting";
 import { DiagnosisButton } from "./DiagnosisButton";
 import { testDeepSeekApiKey, testDeepSeekUserToken } from "../../diagnostics";
 import { SaveMessageBanner, type ProviderSettingsProps, type SaveMessage } from "./provider-settings";
+import { useAppStore } from "../../store/useAppStore";
 import { useT } from "../../i18n";
-import type { CredentialsInput } from "../../types/ipc";
 
 export function DeepSeekSettings({
+  instance,
   saveDisabled,
   notice,
   credentials,
@@ -30,17 +31,21 @@ export function DeepSeekSettings({
   const t = useT();
 
   useEffect(() => {
-    setApiKey(credentials?.deepseekApiKey ?? "");
-    setUserToken(credentials?.deepseekUserToken ?? "");
+    setApiKey(credentials?.apiKey ?? "");
+    setUserToken(credentials?.userToken ?? "");
   }, [credentials]);
 
   async function saveCredentials() {
-    const input: CredentialsInput = {};
-    if (apiKey.trim()) input.deepseekApiKey = apiKey.trim();
-    if (userToken.trim()) input.deepseekUserToken = userToken.trim();
+    const input: Record<string, string> = {};
+    if (apiKey.trim()) input.apiKey = apiKey.trim();
+    if (userToken.trim()) input.userToken = userToken.trim();
     setSaving(true);
     try {
-      await invoke("vault_save_credentials", { credentials: input });
+      if (instance) {
+        await invoke("vault_save_credentials", { instanceId: instance.id, credentials: input });
+      } else {
+        await useAppStore.getState().addInstance("deepseek", "", input);
+      }
       await onChanged();
       await onReload();
       setMessage({ kind: "success", text: t("凭据已保存，已刷新用量") });
@@ -51,10 +56,14 @@ export function DeepSeekSettings({
     }
   }
 
-  async function clearCredential(field: keyof CredentialsInput) {
+  async function clearCredential(slot: "apiKey" | "userToken") {
+    if (!instance) return;
     setSaving(true);
     try {
-      await invoke("vault_save_credentials", { credentials: { [field]: null } });
+      await invoke("vault_save_credentials", {
+        instanceId: instance.id,
+        credentials: { [slot]: null },
+      });
       await onChanged();
       await onReload();
       setMessage({ kind: "success", text: t("凭据已清除") });
@@ -83,7 +92,7 @@ export function DeepSeekSettings({
         <div className="space-y-2.5">
           <div className="flex items-center justify-between">
             <Label htmlFor="deepseekKey">{t("DeepSeek API Key")}</Label>
-            <StatusBadge configured={Boolean(credentialStatus?.deepseekApiKey)} />
+            <StatusBadge configured={Boolean(credentialStatus?.apiKey)} />
           </div>
           <SecretField
             id="deepseekKey"
@@ -91,8 +100,8 @@ export function DeepSeekSettings({
             placeholder="sk-..."
             disabled={saveDisabled}
             onChange={setApiKey}
-            onClear={() => void clearCredential("deepseekApiKey")}
-            clearDisabled={!apiKey}
+            onClear={() => void clearCredential("apiKey")}
+            clearDisabled={!apiKey || !instance}
           />
           <DiagnosisButton
             test={() => testDeepSeekApiKey(apiKey)}
@@ -103,7 +112,7 @@ export function DeepSeekSettings({
         <div className="space-y-2.5">
           <div className="flex items-center justify-between">
             <Label htmlFor="deepseekUserToken">{t("DeepSeek UserToken")}</Label>
-            <StatusBadge configured={Boolean(credentialStatus?.deepseekUserToken)} />
+            <StatusBadge configured={Boolean(credentialStatus?.userToken)} />
           </div>
           <SecretField
             id="deepseekUserToken"
@@ -111,8 +120,8 @@ export function DeepSeekSettings({
             placeholder={t("platform.deepseek.com 登录令牌")}
             disabled={saveDisabled}
             onChange={setUserToken}
-            onClear={() => void clearCredential("deepseekUserToken")}
-            clearDisabled={!userToken}
+            onClear={() => void clearCredential("userToken")}
+            clearDisabled={!userToken || !instance}
           />
           <DiagnosisButton
             test={() => testDeepSeekUserToken(userToken)}
@@ -137,13 +146,17 @@ export function DeepSeekSettings({
           )}
         </Button>
 
-        <Separator />
+        {instance ? (
+          <>
+            <Separator />
 
-        <ProviderAutoRefresh providerId="deepseek" onOpenGeneral={onOpenGeneral} />
+            <ProviderAutoRefresh providerId="deepseek" onOpenGeneral={onOpenGeneral} />
 
-        <Separator />
+            <Separator />
 
-        <AlertThresholdSetting providerId="deepseek" />
+            <AlertThresholdSetting providerId="deepseek" />
+          </>
+        ) : null}
       </CardContent>
     </Card>
   );

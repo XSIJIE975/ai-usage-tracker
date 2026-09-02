@@ -11,11 +11,14 @@ import { AlertThresholdSetting } from "./AlertThresholdSetting";
 import { DiagnosisButton } from "./DiagnosisButton";
 import { testOpenCodeApiKey, testOpenCodeConnection } from "../../diagnostics";
 import { SaveMessageBanner, type ProviderSettingsProps, type SaveMessage } from "./provider-settings";
+import { useAppStore } from "../../store/useAppStore";
 import { useT } from "../../i18n";
 import { normalizeOpenCodeAuthCookie } from "../../lib/utils";
-import type { CredentialsInput } from "../../types/ipc";
+
+type OpenCodeSlot = "workspaceId" | "cookie" | "apiKey";
 
 export function OpenCodeGoSettings({
+  instance,
   saveDisabled,
   notice,
   credentials,
@@ -32,19 +35,23 @@ export function OpenCodeGoSettings({
   const t = useT();
 
   useEffect(() => {
-    setWorkspaceId(credentials?.opencodeGoWorkspaceId ?? "");
-    setAuthCookie(credentials?.opencodeGoAuthCookie ?? "");
-    setApiKey(credentials?.opencodeGoApiKey ?? "");
+    setWorkspaceId(credentials?.workspaceId ?? "");
+    setAuthCookie(credentials?.cookie ?? "");
+    setApiKey(credentials?.apiKey ?? "");
   }, [credentials]);
 
   async function saveCredentials() {
-    const input: CredentialsInput = {};
-    if (workspaceId.trim()) input.opencodeGoWorkspaceId = workspaceId.trim();
-    if (authCookie.trim()) input.opencodeGoAuthCookie = normalizeOpenCodeAuthCookie(authCookie);
-    if (apiKey.trim()) input.opencodeGoApiKey = apiKey.trim();
+    const input: Record<string, string> = {};
+    if (workspaceId.trim()) input.workspaceId = workspaceId.trim();
+    if (authCookie.trim()) input.cookie = normalizeOpenCodeAuthCookie(authCookie);
+    if (apiKey.trim()) input.apiKey = apiKey.trim();
     setSaving(true);
     try {
-      await invoke("vault_save_credentials", { credentials: input });
+      if (instance) {
+        await invoke("vault_save_credentials", { instanceId: instance.id, credentials: input });
+      } else {
+        await useAppStore.getState().addInstance("opencode-go", "", input);
+      }
       await onChanged();
       await onReload();
       setMessage({ kind: "success", text: t("凭据已保存，已刷新用量") });
@@ -55,10 +62,14 @@ export function OpenCodeGoSettings({
     }
   }
 
-  async function clearCredential(field: keyof CredentialsInput) {
+  async function clearCredential(slot: OpenCodeSlot) {
+    if (!instance) return;
     setSaving(true);
     try {
-      await invoke("vault_save_credentials", { credentials: { [field]: null } });
+      await invoke("vault_save_credentials", {
+        instanceId: instance.id,
+        credentials: { [slot]: null },
+      });
       await onChanged();
       await onReload();
       setMessage({ kind: "success", text: t("凭据已清除") });
@@ -87,7 +98,7 @@ export function OpenCodeGoSettings({
         <div className="space-y-2.5">
           <div className="flex items-center justify-between">
             <Label htmlFor="workspaceId">{t("OpenCode Go Workspace ID")}</Label>
-            <StatusBadge configured={Boolean(credentialStatus?.opencodeGoWorkspaceId)} />
+            <StatusBadge configured={Boolean(credentialStatus?.workspaceId)} />
           </div>
           <SecretField
             id="workspaceId"
@@ -95,15 +106,15 @@ export function OpenCodeGoSettings({
             placeholder="wrk_..."
             disabled={saveDisabled}
             onChange={setWorkspaceId}
-            onClear={() => void clearCredential("opencodeGoWorkspaceId")}
-            clearDisabled={!workspaceId}
+            onClear={() => void clearCredential("workspaceId")}
+            clearDisabled={!workspaceId || !instance}
           />
         </div>
 
         <div className="space-y-2.5">
           <div className="flex items-center justify-between">
             <Label htmlFor="authCookie">{t("OpenCode Auth Cookie")}</Label>
-            <StatusBadge configured={Boolean(credentialStatus?.opencodeGoAuthCookie)} />
+            <StatusBadge configured={Boolean(credentialStatus?.cookie)} />
           </div>
           <SecretField
             id="authCookie"
@@ -111,8 +122,8 @@ export function OpenCodeGoSettings({
             placeholder={t("只粘贴 auth Cookie 的 Value")}
             disabled={saveDisabled}
             onChange={setAuthCookie}
-            onClear={() => void clearCredential("opencodeGoAuthCookie")}
-            clearDisabled={!authCookie}
+            onClear={() => void clearCredential("cookie")}
+            clearDisabled={!authCookie || !instance}
           />
           <p className="text-xs leading-relaxed text-fg-muted">
             {t(
@@ -128,7 +139,7 @@ export function OpenCodeGoSettings({
         <div className="space-y-2.5">
           <div className="flex items-center justify-between">
             <Label htmlFor="apiKey">{t("OpenCode Go API Key（可选）")}</Label>
-            <StatusBadge configured={Boolean(credentialStatus?.opencodeGoApiKey)} />
+            <StatusBadge configured={Boolean(credentialStatus?.apiKey)} />
           </div>
           <SecretField
             id="apiKey"
@@ -136,8 +147,8 @@ export function OpenCodeGoSettings({
             placeholder={t("官方 /usage 接口上线后使用")}
             disabled={saveDisabled}
             onChange={setApiKey}
-            onClear={() => void clearCredential("opencodeGoApiKey")}
-            clearDisabled={!apiKey}
+            onClear={() => void clearCredential("apiKey")}
+            clearDisabled={!apiKey || !instance}
           />
           <DiagnosisButton
             test={() => testOpenCodeApiKey(apiKey)}
@@ -157,13 +168,17 @@ export function OpenCodeGoSettings({
           )}
         </Button>
 
-        <Separator />
+        {instance ? (
+          <>
+            <Separator />
 
-        <ProviderAutoRefresh providerId="opencode-go" onOpenGeneral={onOpenGeneral} />
+            <ProviderAutoRefresh providerId="opencode-go" onOpenGeneral={onOpenGeneral} />
 
-        <Separator />
+            <Separator />
 
-        <AlertThresholdSetting providerId="opencode-go" />
+            <AlertThresholdSetting providerId="opencode-go" />
+          </>
+        ) : null}
       </CardContent>
     </Card>
   );

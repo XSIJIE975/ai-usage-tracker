@@ -10,7 +10,8 @@ import {
 const HOUR = 3_600_000;
 
 const snapshot = (lines: ProviderSnapshot["lines"]): ProviderSnapshot => ({
-  providerId: "p",
+  instanceId: "p",
+  providerId: "deepseek",
   providerName: "P",
   status: "ok",
   updatedAt: 0,

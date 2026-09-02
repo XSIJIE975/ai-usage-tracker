@@ -5,7 +5,6 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useAppStore } from "../store/useAppStore";
 import { useAlertStore } from "../store/useAlertStore";
 import { selectUnreadCount, useNotificationStore } from "../store/useNotificationStore";
-import { providerModules } from "../providers";
 import { Button } from "../components/ui/button";
 import { Segmented } from "../components/ui/segmented";
 import { EmptyState } from "../components/ui/empty-state";
@@ -29,10 +28,12 @@ export function Dashboard() {
   const {
     vaultStatus,
     settings,
+    instances,
+    initialLoaded,
     snapshots,
     refreshAll,
-    refreshProvider,
-    refreshingProviders,
+    refreshInstance,
+    refreshingInstances,
     loading,
     error,
     clearError,
@@ -82,12 +83,13 @@ export function Dashboard() {
 
   useEffect(() => {
     if (!vaultStatus?.unlocked) return;
+    if (!initialLoaded) return;
     if (lastRefreshedAt === 0) {
       void refreshAll(false);
       return;
     }
     if (!settings.refreshEnabled || settings.refreshIntervalMinutes <= 0) return;
-    if (!providerModules.some((provider) => settings.providers[provider.id])) return;
+    if (!instances.some((instance) => instance.autoRefresh)) return;
 
     const elapsed = Date.now() - lastRefreshedAt;
     const delay = Math.max(0, settings.refreshIntervalMinutes * 60_000 - elapsed);
@@ -97,15 +99,16 @@ export function Dashboard() {
     return () => window.clearTimeout(timer);
   }, [
     vaultStatus?.unlocked,
+    initialLoaded,
     settings.refreshEnabled,
     settings.refreshIntervalMinutes,
-    settings.providers,
+    instances,
     lastRefreshedAt,
     refreshAll,
   ]);
 
   const latest = snapshots.length > 0 ? Math.max(...snapshots.map((item) => item.updatedAt)) : null;
-  const anyProviderRefreshing = Object.values(refreshingProviders).some(Boolean);
+  const anyProviderRefreshing = Object.values(refreshingInstances).some(Boolean);
   const refreshing = loading || anyProviderRefreshing;
 
   // 通知中心：主窗口启动时加载历史；未读数驱动铃铛徽标
@@ -136,11 +139,29 @@ export function Dashboard() {
   useEffect(() => {
     let disposed = false;
     let stop: UnlistenFn | undefined;
-    void listen<{ providerId: string; active: boolean }>("alert-state-changed", (event) => {
+    void listen<{ instanceId: string; active: boolean }>("alert-state-changed", (event) => {
       if (disposed) return;
       useAlertStore.setState((state) => ({
-        active: { ...state.active, [event.payload.providerId]: event.payload.active },
+        active: { ...state.active, [event.payload.instanceId]: event.payload.active },
       }));
+    })
+      .then((unlisten) => {
+        if (disposed) unlisten();
+        else stop = unlisten;
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+      stop?.();
+    };
+  }, []);
+
+  // 其他窗口增删/排序实例时同步到本窗口
+  useEffect(() => {
+    let disposed = false;
+    let stop: UnlistenFn | undefined;
+    void listen("instances-changed", () => {
+      if (!disposed) void useAppStore.getState().reloadInstances();
     })
       .then((unlisten) => {
         if (disposed) unlisten();
@@ -255,16 +276,21 @@ export function Dashboard() {
           )}
           {view === "overview" ? (
             <div className="grid gap-4 lg:grid-cols-2">
-              {snapshots.length > 0 ? (
-                snapshots.map((snapshot) => (
+              {[...instances]
+                .sort((a, b) => a.sortOrder - b.sortOrder)
+                .map((instance) =>
+                  snapshots.find((snapshot) => snapshot.instanceId === instance.id),
+                )
+                .filter((snapshot): snapshot is NonNullable<typeof snapshot> => snapshot != null)
+                .map((snapshot) => (
                   <ProviderCard
-                    key={snapshot.providerId}
+                    key={snapshot.instanceId}
                     snapshot={snapshot}
-                    refreshing={loading || refreshingProviders[snapshot.providerId]}
-                    onRefresh={() => void refreshProvider(snapshot.providerId)}
+                    refreshing={loading || refreshingInstances[snapshot.instanceId]}
+                    onRefresh={() => void refreshInstance(snapshot.instanceId)}
                   />
-                ))
-              ) : (
+                ))}
+              {instances.length === 0 && snapshots.length === 0 && (
                 <div className="lg:col-span-2">
                   <EmptyState
                     icon={<Gauge className="h-5 w-5" />}

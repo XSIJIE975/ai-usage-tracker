@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { HttpResult, VaultCredentials } from "../types/ipc";
+import type { HttpResult, InstanceCredentials, ProviderInstance } from "../types/ipc";
 import type { StatsResult } from "./stats-result";
 import { parseRpcResponse } from "./opencode-rpc-parser";
 import {
@@ -61,16 +61,18 @@ export const formatTimezoneOffset = (offsetMinutes: number): string => {
 
 const systemTimezoneOffset = (): string => formatTimezoneOffset(-new Date().getTimezoneOffset());
 
-const loadWorkspaceId = async (): Promise<StatsResult<string>> => {
-  const credentials = await invoke<VaultCredentials>("vault_credentials");
-  const workspaceId = credentials.opencodeGoWorkspaceId?.trim() ?? "";
+const loadWorkspaceId = async (instance: ProviderInstance): Promise<StatsResult<string>> => {
+  const credentials = await invoke<InstanceCredentials>("vault_credentials", {
+    instanceId: instance.id,
+  });
+  const workspaceId = credentials.workspaceId?.trim() ?? "";
   if (!workspaceId) return { status: "needs_config", message: NEEDS_CONFIG_MESSAGE };
   return { status: "ok", data: workspaceId };
 };
 
-const postRpc = async (serverId: string, envelope: string): Promise<HttpResult> =>
+const postRpc = async (instanceId: string, serverId: string, envelope: string): Promise<HttpResult> =>
   invoke<HttpResult>("provider_request", {
-    providerId: "opencode-go",
+    instanceId,
     url: OPENCODE_RPC_ENDPOINT,
     method: "POST",
     auth: "cookie",
@@ -105,11 +107,12 @@ const authExpiredMessage = (bodyText: string): string | null =>
   bodyText.includes("/auth/authorize") ? "OpenCode 登录态已失效，请在设置中重新复制 Auth Cookie" : null;
 
 const executeRpc = async <T>(
+  instanceId: string,
   serverId: string,
   envelope: string,
   mapPayload: (payload: unknown) => T,
 ): Promise<StatsResult<T>> => {
-  const http = await postRpc(serverId, envelope);
+  const http = await postRpc(instanceId, serverId, envelope);
   if (http.status !== 200) {
     return { status: "error", message: `opencode.ai 接口返回 HTTP ${http.status}` };
   }
@@ -127,23 +130,25 @@ const executeRpc = async <T>(
 
 /** 拉取指定年月的按日×模型成本聚合与 API Key 列表；month 为 1-based。 */
 export const fetchOpenCodeMonthlyCost = async (
+  instance: ProviderInstance,
   year: number,
   month: number,
 ): Promise<StatsResult<OpenCodeMonthlyBundle>> => {
-  const workspace = await loadWorkspaceId();
+  const workspace = await loadWorkspaceId(instance);
   if (workspace.status !== "ok") return workspace;
   const envelope = buildRpcEnvelope([workspace.data, year, month - 1, systemTimezoneOffset()]);
-  return executeRpc(OPENCODE_RPC_ID_MONTHLY, envelope, mapMonthlyBundle);
+  return executeRpc(instance.id, OPENCODE_RPC_ID_MONTHLY, envelope, mapMonthlyBundle);
 };
 
 /** 拉取用量历史的一页记录；page 从 0 开始。 */
 export const fetchOpenCodeHistoryPage = async (
+  instance: ProviderInstance,
   page: number,
 ): Promise<StatsResult<{ records: OpenCodeUsageRecord[] }>> => {
-  const workspace = await loadWorkspaceId();
+  const workspace = await loadWorkspaceId(instance);
   if (workspace.status !== "ok") return workspace;
   const envelope = buildRpcEnvelope([workspace.data, page]);
-  const result = await executeRpc(OPENCODE_RPC_ID_HISTORY, envelope, mapHistoryRecords);
+  const result = await executeRpc(instance.id, OPENCODE_RPC_ID_HISTORY, envelope, mapHistoryRecords);
   if (result.status !== "ok") return result;
   return { status: "ok", data: { records: result.data } };
 };
