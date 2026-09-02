@@ -24,6 +24,7 @@ pub struct CredentialStatus {
     pub opencode_go_workspace_id: bool,
     pub opencode_go_auth_cookie: bool,
     pub opencode_go_api_key: bool,
+    pub glm_coding_plan_key: bool,
 }
 
 #[derive(Serialize)]
@@ -34,6 +35,7 @@ pub struct VaultCredentials {
     pub opencode_go_workspace_id: Option<String>,
     pub opencode_go_auth_cookie: Option<String>,
     pub opencode_go_api_key: Option<String>,
+    pub glm_coding_plan_key: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -119,6 +121,7 @@ pub fn vault_credentials(state: State<'_, AppState>) -> Result<VaultCredentials,
         opencode_go_workspace_id: credential_text(credentials, "opencodeGoWorkspaceId"),
         opencode_go_auth_cookie: credential_text(credentials, "opencodeGoAuthCookie"),
         opencode_go_api_key: credential_text(credentials, "opencodeGoApiKey"),
+        glm_coding_plan_key: credential_text(credentials, "glmCodingPlanKey"),
     })
 }
 
@@ -132,6 +135,7 @@ pub fn vault_credential_status(state: State<'_, AppState>) -> Result<CredentialS
             opencode_go_workspace_id: false,
             opencode_go_auth_cookie: false,
             opencode_go_api_key: false,
+            glm_coding_plan_key: false,
         });
     }
     let credentials = vault.credentials()?;
@@ -141,6 +145,7 @@ pub fn vault_credential_status(state: State<'_, AppState>) -> Result<CredentialS
         opencode_go_workspace_id: has_text(credentials, "opencodeGoWorkspaceId"),
         opencode_go_auth_cookie: has_text(credentials, "opencodeGoAuthCookie"),
         opencode_go_api_key: has_text(credentials, "opencodeGoApiKey"),
+        glm_coding_plan_key: has_text(credentials, "glmCodingPlanKey"),
     })
 }
 
@@ -470,6 +475,29 @@ pub fn clear_notifications(state: State<'_, AppState>) -> Result<(), String> {
     db.clear_notifications()
 }
 
+/// bearer auth 的凭据注入：按 providerId 从凭据库查 key（空串视为未配置，与
+/// vault_credential_status 的 has_text 语义一致），缺失时返回面向用户的错误。
+/// glm：Coding Plan API Key（官方 glm-plan-usage 插件同款用法，可查配额与用量统计）。
+fn resolve_bearer_key<'a>(provider_id: &str, credentials: &'a Value) -> Result<&'a str, String> {
+    let get_str = |key: &str| -> Option<&'a str> {
+        credentials
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+    };
+    match provider_id {
+        "deepseek" => get_str("deepseekApiKey").ok_or_else(|| "缺少 DeepSeek API Key".to_string()),
+        "deepseek-platform" => {
+            get_str("deepseekUserToken").ok_or_else(|| "缺少 DeepSeek UserToken".to_string())
+        }
+        "opencode-go" => {
+            get_str("opencodeGoApiKey").ok_or_else(|| "缺少 OpenCode Go API Key".to_string())
+        }
+        "glm" => get_str("glmCodingPlanKey").ok_or_else(|| "缺少智谱 Coding Plan API Key".to_string()),
+        _ => Err("不支持的 provider bearer auth".to_string()),
+    }
+}
+
 #[tauri::command]
 pub async fn provider_request(
     state: State<'_, AppState>,
@@ -499,21 +527,7 @@ pub async fn provider_request(
 
     match auth.as_deref() {
         Some("bearer") => {
-            let key = match provider_id.as_str() {
-                "deepseek" => credentials
-                    .get("deepseekApiKey")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| "缺少 DeepSeek API Key".to_string())?,
-                "deepseek-platform" => credentials
-                    .get("deepseekUserToken")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| "缺少 DeepSeek UserToken".to_string())?,
-                "opencode-go" => credentials
-                    .get("opencodeGoApiKey")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| "缺少 OpenCode Go API Key".to_string())?,
-                _ => return Err("不支持的 provider bearer auth".to_string()),
-            };
+            let key = resolve_bearer_key(&provider_id, &credentials)?;
             headers.insert("Authorization".to_string(), format!("Bearer {key}"));
         }
         Some("cookie") if provider_id == "opencode-go" => {
@@ -635,6 +649,7 @@ mod tests {
             opencode_go_workspace_id: false,
             opencode_go_auth_cookie: false,
             opencode_go_api_key: false,
+            glm_coding_plan_key: false,
         })
         .expect("credential status should serialize");
         assert_eq!(status["deepseekUserToken"], false);
@@ -645,9 +660,77 @@ mod tests {
             opencode_go_workspace_id: None,
             opencode_go_auth_cookie: None,
             opencode_go_api_key: None,
+            glm_coding_plan_key: None,
         })
         .expect("vault credentials should serialize");
         assert_eq!(credentials["deepseekUserToken"], "token");
+    }
+
+    #[test]
+    fn credential_payloads_expose_glm_fields() {
+        let status = serde_json::to_value(CredentialStatus {
+            deepseek_api_key: false,
+            deepseek_user_token: false,
+            opencode_go_workspace_id: false,
+            opencode_go_auth_cookie: false,
+            opencode_go_api_key: false,
+            glm_coding_plan_key: true,
+        })
+        .expect("credential status should serialize");
+        assert_eq!(status["glmCodingPlanKey"], true);
+
+        let credentials = serde_json::to_value(VaultCredentials {
+            deepseek_api_key: None,
+            deepseek_user_token: None,
+            opencode_go_workspace_id: None,
+            opencode_go_auth_cookie: None,
+            opencode_go_api_key: None,
+            glm_coding_plan_key: Some("plan-key".to_string()),
+        })
+        .expect("vault credentials should serialize");
+        assert_eq!(credentials["glmCodingPlanKey"], "plan-key");
+    }
+
+    #[test]
+    fn resolves_bearer_keys_by_provider() {
+        let creds = serde_json::json!({
+            "deepseekApiKey": "sk-1",
+            "deepseekUserToken": "tok-1",
+            "opencodeGoApiKey": "oc-1",
+            "glmCodingPlanKey": "plan"
+        });
+        assert_eq!(resolve_bearer_key("deepseek", &creds).unwrap(), "sk-1");
+        assert_eq!(resolve_bearer_key("deepseek-platform", &creds).unwrap(), "tok-1");
+        assert_eq!(resolve_bearer_key("opencode-go", &creds).unwrap(), "oc-1");
+        assert_eq!(resolve_bearer_key("glm", &creds).unwrap(), "plan");
+    }
+
+    #[test]
+    fn glm_bearer_requires_plan_key_and_ignores_legacy_web_token() {
+        // 旧版本保存过的 glmWebToken 残留在 vault 中不再参与鉴权
+        let legacy = serde_json::json!({ "glmCodingPlanKey": "plan", "glmWebToken": "web" });
+        assert_eq!(resolve_bearer_key("glm", &legacy).unwrap(), "plan");
+
+        let only_web = serde_json::json!({ "glmWebToken": "web" });
+        assert!(resolve_bearer_key("glm", &only_web).is_err());
+
+        // 与 vault 侧 has_text 语义一致：空串视为未配置（保存端已 trim，不会存入空白串）
+        let blank_plan = serde_json::json!({ "glmCodingPlanKey": "" });
+        assert!(resolve_bearer_key("glm", &blank_plan).is_err());
+
+        assert!(resolve_bearer_key("glm-web", &legacy).is_err());
+    }
+
+    #[test]
+    fn bearer_key_errors_name_the_missing_credential() {
+        let creds = serde_json::json!({});
+        assert!(resolve_bearer_key("glm", &creds)
+            .unwrap_err()
+            .contains("Coding Plan API Key"));
+        assert!(resolve_bearer_key("deepseek", &creds)
+            .unwrap_err()
+            .contains("DeepSeek"));
+        assert!(resolve_bearer_key("unknown", &creds).is_err());
     }
 
     #[test]

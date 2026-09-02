@@ -1,6 +1,6 @@
 export type TimeRange = "today" | "yesterday" | "7d" | "30d" | "month" | "lastMonth" | "custom";
 
-/** 自定义范围上限：官方接口仅支持动态 30 天 */
+/** 自定义范围上限：DeepSeek / 智谱等用量接口均仅支持约 30 天动态窗口 */
 export const MAX_CUSTOM_RANGE_DAYS = 30;
 
 /**
@@ -86,7 +86,7 @@ export const resolveRangeMs = (
       const startMs = parseLocalDateMs(customFrom);
       const toBase = parseLocalDateMs(customTo);
       if (startMs === null || toBase === null || toBase < startMs) return null;
-      // 官方接口仅支持动态 30 天：结束不晚于今天，且跨度（含首尾）最多 30 天
+      // 用量接口仅支持约 30 天动态窗口：结束不晚于今天，且跨度（含首尾）最多 30 天
       if (toBase > today) return null;
       if (toBase - startMs > (MAX_CUSTOM_RANGE_DAYS - 1) * DAY_MS) return null;
       return { startMs, endMs: toBase + DAY_MS };

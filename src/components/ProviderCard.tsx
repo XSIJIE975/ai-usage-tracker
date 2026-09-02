@@ -15,12 +15,12 @@ import { Progress } from "./ui/progress";
 import { Badge } from "./ui/badge";
 import { IconButton } from "./ui/icon-button";
 import { Sparkline } from "./charts/Sparkline";
-import { DeepSeekLogo, OpenCodeLogo } from "./brand/provider-logo";
+import { DeepSeekLogo, GlmLogo, OpenCodeLogo } from "./brand/provider-logo";
 import { loadProviderHistory, type ProviderHistory } from "../stats/snapshot-history";
 import { analyzeBurnRate } from "../stats/burn-rate";
 import { describeBurnRate } from "../stats/burn-rate-format";
 import { useAppStore } from "../store/useAppStore";
-import { useLanguage, useT } from "../i18n";
+import { applyParams, useLanguage, useT } from "../i18n";
 import { cn } from "../lib/utils";
 
 function useNow(intervalMs = 30_000) {
@@ -41,6 +41,13 @@ const BRAND_LOGOS: Record<
 > = {
   deepseek: { Logo: DeepSeekLogo, bg: "bg-[#5786FE]/10" },
   "opencode-go": { Logo: OpenCodeLogo, bg: "bg-fg/10" },
+  glm: { Logo: GlmLogo, bg: "bg-[#3859FF]/10" },
+};
+
+/** 各供应商 sparkline 配色（品牌色） */
+const SPARK_COLORS: Record<string, string> = {
+  deepseek: "#5786FE",
+  glm: "#3859FF",
 };
 
 function ProviderAvatar({ providerId, name }: { providerId: string; name: string }) {
@@ -88,7 +95,7 @@ function statusBadge(status: ProviderSnapshot["status"]) {
 
 function MetricRow({ line, now }: { line: MetricLine; now: number }) {
   const t = useT();
-  const label = t(line.label);
+  const label = applyParams(t(line.label), line.params);
   const valueText = line.value !== undefined ? t(line.value) : undefined;
   if (line.type === "progress") {
     const percent = line.percentUsed ?? (line.limit ? Math.round(((line.used ?? 0) / line.limit) * 100) : 0);
@@ -230,7 +237,7 @@ export function ProviderCard({
     [burn, fillMode, language],
   );
   const trend = history && history.points.length >= 2 ? history : null;
-  const sparkColor = snapshot.providerId === "deepseek" ? "#5786FE" : undefined;
+  const sparkColor = SPARK_COLORS[snapshot.providerId];
 
   return (
     <Card className="transition-shadow duration-normal hover:shadow-pop">

@@ -1,6 +1,12 @@
 import { useMemo, useState } from "react";
-import { Activity, CalendarRange, KeyRound, LoaderCircle, RefreshCw } from "lucide-react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
+import { Activity, CalendarRange, LoaderCircle, RefreshCw } from "lucide-react";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "../../components/ui/card";
 import { Select } from "../../components/ui/select";
 import { Segmented } from "../../components/ui/segmented";
 import { Label } from "../../components/ui/label";
@@ -8,7 +14,7 @@ import { IconButton } from "../../components/ui/icon-button";
 import { EmptyState } from "../../components/ui/empty-state";
 import { StackedBars } from "../../components/charts/StackedBars";
 import { Donut } from "../../components/charts/Donut";
-import { fetchDeepSeekUsage } from "../../providers/deepseek-stats";
+import { fetchGlmUsage, type GlmUsageBundle } from "../../providers/glm-stats";
 import { createUsageCache } from "../../stats/usage-cache";
 import { useAppStore } from "../../store/useAppStore";
 import { formatCompact, formatInt, cn } from "../../lib/utils";
@@ -16,25 +22,33 @@ import { StatsStateCard } from "./StatsStateCard";
 import { useStatsFetch } from "./use-stats-fetch";
 import { useAutoRefresh } from "./use-auto-refresh";
 import { useGlobalRefresh } from "./use-global-refresh";
-import { OverviewCards } from "./deepseek/OverviewCards";
-import { ModelUsageTable } from "./deepseek/ModelUsageTable";
-import { customRangeError, isoDate, resolveRangeMs, timeRangeOptions, type TimeRange } from "./time-range";
+import { GlmOverviewCards } from "./glm/OverviewCards";
+import { GlmModelUsageTable } from "./glm/ModelUsageTable";
+import { GlmToolUsageTable } from "./glm/ToolUsageTable";
+import {
+  customRangeError,
+  isoDate,
+  resolveRangeMs,
+  timeRangeOptions,
+  type TimeRange,
+} from "./time-range";
 import { useT } from "../../i18n";
 import {
-  aggregateUsage,
-  buildStackedSeries,
-  collectDayLabels,
+  aggregateModelUsage,
+  buildCallsSeries,
+  buildModelSeries,
+  dailyTotals,
   formatDayLabel,
-  type UsageMetric,
-} from "./deepseek/usage-aggregation";
+} from "./glm/usage-aggregation";
 
 const usageCache = createUsageCache();
 const DAY_MS = 86_400_000;
 
+type UsageMetric = "tokens" | "requests";
+
 const metricOptions: { value: UsageMetric; label: string }[] = [
   { value: "tokens", label: "Token 消耗" },
   { value: "requests", label: "请求次数" },
-  { value: "cost", label: "费用" },
 ];
 
 /** 局部刷新遮罩：半透明覆盖 + 旋转加载图标，叠加在图表/卡片区域上 */
@@ -46,16 +60,21 @@ function RefreshOverlay() {
   );
 }
 
-export function DeepSeekStats() {
+export function GlmStats() {
   const [range, setRange] = useState<TimeRange>("7d");
-  const [apiKeyId, setApiKeyId] = useState("all");
   const [metric, setMetric] = useState<UsageMetric>("tokens");
-  const [customFrom, setCustomFrom] = useState(() => isoDate(new Date(Date.now() - 6 * DAY_MS)));
+  const [customFrom, setCustomFrom] = useState(() =>
+    isoDate(new Date(Date.now() - 6 * DAY_MS)),
+  );
   const [customTo, setCustomTo] = useState(() => isoDate(new Date()));
   const [refreshTick, setRefreshTick] = useState(0);
 
-  const rangeMs = useMemo(() => resolveRangeMs(range, customFrom, customTo), [range, customFrom, customTo]);
-  const customError = range === "custom" ? customRangeError(customFrom, customTo) : null;
+  const rangeMs = useMemo(
+    () => resolveRangeMs(range, customFrom, customTo),
+    [range, customFrom, customTo],
+  );
+  const customError =
+    range === "custom" ? customRangeError(customFrom, customTo) : null;
   const t = useT();
   const { state, isRefreshing } = useStatsFetch(
     usageCache,
@@ -63,58 +82,58 @@ export function DeepSeekStats() {
     () =>
       rangeMs === null
         ? Promise.reject(new Error("时间范围无效"))
-        : fetchDeepSeekUsage(rangeMs.startMs, rangeMs.endMs),
+        : fetchGlmUsage(rangeMs.startMs, rangeMs.endMs),
     refreshTick,
   );
 
   const refresh = () => {
-    if (rangeMs !== null) usageCache.invalidate(`${rangeMs.startMs}:${rangeMs.endMs}`);
+    if (rangeMs !== null)
+      usageCache.invalidate(`${rangeMs.startMs}:${rangeMs.endMs}`);
     setRefreshTick((tick) => tick + 1);
   };
 
   // 接入全局自动刷新
-  useAutoRefresh(refresh, "deepseek");
+  useAutoRefresh(refresh, "glm");
   // 接入顶栏手动全局刷新
-  useGlobalRefresh(refresh, "deepseek");
+  useGlobalRefresh(refresh, "glm");
 
   /** 全局刷新状态：顶栏「刷新」进行中（全局）或该供应商单刷进行中 */
   const globalRefreshing = useAppStore(
-    (state) => state.loading || Boolean(state.refreshingProviders["deepseek"]),
+    (state) => state.loading || Boolean(state.refreshingProviders["glm"]),
   );
   const busy = isRefreshing || globalRefreshing;
 
-  const bundle = state.kind === "ready" ? state.data : null;
-  const filteredRows = useMemo(() => {
-    if (bundle === null) return [];
-    return apiKeyId === "all" ? bundle.rows : bundle.rows.filter((row) => row.keyId === apiKeyId);
-  }, [bundle, apiKeyId]);
-
-  const aggregates = useMemo(() => aggregateUsage(filteredRows), [filteredRows]);
-  const dayLabels = useMemo(() => collectDayLabels(filteredRows), [filteredRows]);
-  const chartSeries = useMemo(
-    () => buildStackedSeries(filteredRows, dayLabels, metric),
-    [filteredRows, dayLabels, metric],
-  );
-  const chartLabels = useMemo(() => dayLabels.map(formatDayLabel), [dayLabels]);
-
-  const keyOptions = useMemo(
-    () => [
-      { value: "all", label: "全部密钥" },
-      ...(bundle?.apiKeys ?? []).map((key) => ({ value: key.id, label: key.name })),
-    ],
+  const bundle: GlmUsageBundle | null =
+    state.kind === "ready" ? state.data : null;
+  const totals = useMemo(
+    () => (bundle ? dailyTotals(bundle.models) : null),
     [bundle],
   );
+  const aggregates = useMemo(
+    () => (bundle ? aggregateModelUsage(bundle.models) : null),
+    [bundle],
+  );
+  const chartSeries = useMemo(() => {
+    if (!bundle || !totals) return [];
+    return metric === "tokens"
+      ? buildModelSeries(bundle.models, totals.days)
+      : buildCallsSeries(totals.calls);
+  }, [bundle, totals, metric]);
+  const chartLabels = useMemo(
+    () => (totals ? totals.days.map(formatDayLabel) : []),
+    [totals],
+  );
 
-  const yFormat = metric === "cost" ? (value: number) => `¥${formatCompact(value)}` : formatCompact;
-  const tooltipFormat = metric === "cost" ? (value: number) => `¥${value.toFixed(2)}` : formatInt;
-  const chartTitle =
-    metric === "tokens" ? "Token 消耗趋势" : metric === "requests" ? "请求次数趋势" : "费用趋势";
-  const hasUsage = aggregates.totalTokens > 0 || aggregates.totalRequests > 0;
+  const yFormat = formatCompact;
+  const tooltipFormat = formatInt;
+  const chartTitle = metric === "tokens" ? "Token 消耗趋势" : "请求次数趋势";
+  const hasUsage =
+    (aggregates?.totalTokens ?? 0) > 0 || (aggregates?.totalCalls ?? 0) > 0;
   const emptyUsageHint = (
     <EmptyState
       icon={<Activity className="h-5 w-5" />}
       title={t("所选时间范围内暂无用量数据")}
-      description={t("调整时间范围，或在设置页确认 DeepSeek UserToken 有效。")}
+      description={t("调整时间范围，或在设置页确认智谱 Coding Plan API Key 有效。")}
     />
   );
 
@@ -127,7 +146,10 @@ export function DeepSeekStats() {
           </Label>
           <div className="flex items-center gap-2">
             <Select
-              options={timeRangeOptions.map((option) => ({ ...option, label: t(option.label) }))}
+              options={timeRangeOptions.map((option) => ({
+                ...option,
+                label: t(option.label),
+              }))}
               value={range}
               onChange={setRange}
               aria-label="时间范围"
@@ -158,24 +180,15 @@ export function DeepSeekStats() {
         </div>
 
         <div className="space-y-1.5">
-          <Label className="flex items-center gap-1">
-            <KeyRound className="h-3.5 w-3.5" /> {t("API 密钥")}
-          </Label>
-          <Select
-              options={keyOptions.map((option) => ({ ...option, label: t(option.label) }))}
-              value={apiKeyId}
-              onChange={setApiKeyId}
-              aria-label="API 密钥"
-            />
-        </div>
-
-        <div className="space-y-1.5">
           <Label className="flex items-center gap-1">{t("统计指标")}</Label>
           <Segmented
-              value={metric}
-              onChange={setMetric}
-              options={metricOptions.map((option) => ({ ...option, label: t(option.label) }))}
-            />
+            value={metric}
+            onChange={setMetric}
+            options={metricOptions.map((option) => ({
+              ...option,
+              label: t(option.label),
+            }))}
+          />
         </div>
 
         <IconButton
@@ -209,7 +222,12 @@ export function DeepSeekStats() {
     );
   }
 
-  if (state.kind !== "ready") {
+  if (
+    state.kind !== "ready" ||
+    bundle === null ||
+    aggregates === null ||
+    totals === null
+  ) {
     return <StatsStateCard state={state} onRetry={refresh} />;
   }
 
@@ -221,7 +239,7 @@ export function DeepSeekStats() {
       {/* 指标总览 */}
       <div className="relative">
         {busy && <RefreshOverlay />}
-        <OverviewCards aggregates={aggregates} currency={bundle?.currency ?? "CNY"} />
+        <GlmOverviewCards aggregates={aggregates} />
       </div>
 
       {/* 图表区 */}
@@ -230,11 +248,20 @@ export function DeepSeekStats() {
           {busy && <RefreshOverlay />}
           <CardHeader>
             <CardTitle>{t(chartTitle)}</CardTitle>
-            <CardDescription>{t("按模型堆叠，悬停查看每日明细。")}</CardDescription>
+            <CardDescription>
+              {metric === "tokens"
+                ? t("按模型堆叠，悬停查看每日明细。")
+                : t("全模型合计（接口不提供按模型的请求数）。")}
+            </CardDescription>
           </CardHeader>
           <CardContent className="px-4 pb-4">
             {hasUsage ? (
-              <StackedBars labels={chartLabels} series={chartSeries} yFormat={yFormat} tooltipFormat={tooltipFormat} />
+              <StackedBars
+                labels={chartLabels}
+                series={chartSeries}
+                yFormat={yFormat}
+                tooltipFormat={tooltipFormat}
+              />
             ) : (
               emptyUsageHint
             )}
@@ -253,7 +280,10 @@ export function DeepSeekStats() {
                 className="w-full"
                 centerLabel={t("总 Token")}
                 format={formatCompact}
-                segments={aggregates.perModel.map((model) => ({ name: model.model, value: model.totalTokens }))}
+                segments={aggregates.perModel.map((model) => ({
+                  name: model.name,
+                  value: model.tokens,
+                }))}
               />
             ) : (
               <div className="w-full">{emptyUsageHint}</div>
@@ -267,14 +297,28 @@ export function DeepSeekStats() {
         {busy && <RefreshOverlay />}
         <CardHeader>
           <CardTitle>{t("模型明细")}</CardTitle>
-          <CardDescription>{t("各模型的 token 消耗、缓存命中与费用。")}</CardDescription>
+          <CardDescription>{t("各模型的 Token 消耗与占比。")}</CardDescription>
         </CardHeader>
         <CardContent>
           {hasUsage ? (
-            <ModelUsageTable models={aggregates.perModel} totalTokens={aggregates.totalTokens} />
+            <GlmModelUsageTable models={aggregates.perModel} />
           ) : (
             emptyUsageHint
           )}
+        </CardContent>
+      </Card>
+
+      {/* 工具用量表 */}
+      <Card className="relative">
+        {busy && <RefreshOverlay />}
+        <CardHeader>
+          <CardTitle>{t("工具用量")}</CardTitle>
+          <CardDescription>
+            {t("联网搜索、网页阅读与 MCP 工具的调用统计。")}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <GlmToolUsageTable tools={bundle.tools} />
         </CardContent>
       </Card>
     </div>

@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { DeepSeekLogo, OpenCodeLogo } from "../../components/brand/provider-logo";
+import { DeepSeekLogo, GlmLogo, OpenCodeLogo } from "../../components/brand/provider-logo";
 import { Tabs } from "../../components/ui/tabs";
 import { useT } from "../../i18n";
 import { DeepSeekStats } from "./DeepSeekStats";
+import { GlmStats } from "./GlmStats";
 import { OpenCodeStats } from "./OpenCodeStats";
 
-type ProviderTab = "deepseek" | "opencode";
+type ProviderTab = "deepseek" | "opencode" | "glm";
 
 /**
  * 用量统计页：同一页面整合多个供应商统计模块。
@@ -23,9 +24,16 @@ export function StatsView() {
         items={[
           { value: "deepseek", label: t("DeepSeek 官方"), icon: <DeepSeekLogo className="h-3.5 w-3.5" /> },
           { value: "opencode", label: t("OpenCode Go"), icon: <OpenCodeLogo className="h-3.5 w-3.5" /> },
+          { value: "glm", label: t("智谱 GLM"), icon: <GlmLogo className="h-3.5 w-3.5" /> },
         ]}
       />
-      {tab === "deepseek" ? <DeepSeekStats /> : <OpenCodeStats />}
+      {tab === "deepseek" ? (
+        <DeepSeekStats />
+      ) : tab === "opencode" ? (
+        <OpenCodeStats />
+      ) : (
+        <GlmStats />
+      )}
     </div>
   );
 }

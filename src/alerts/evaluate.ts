@@ -46,5 +46,17 @@ export function evaluateRule(
       };
     }
   }
+
+  if (providerId === "glm") {
+    const threshold = thresholds.glmQuotaUsedPercent;
+    if (Number.isFinite(threshold) && metric.value >= threshold) {
+      return {
+        ruleKey: "glm:quota",
+        providerId,
+        title: "智谱配额告警",
+        body: `Coding Plan 配额已用 ${metric.value.toFixed(1)}%，达到 ${threshold}%，注意分配剩余用量。`,
+      };
+    }
+  }
   return null;
 }

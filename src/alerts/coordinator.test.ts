@@ -11,7 +11,7 @@ const settings = (alertsEnabled = true): AppSettings => ({
   refreshIntervalMinutes: 5,
   providers: {},
   alertsEnabled,
-  alertThresholds: { deepseekBalanceBelowCny: 50, opencodeMonthlyUsedPercent: 80 },
+  alertThresholds: { deepseekBalanceBelowCny: 50, opencodeMonthlyUsedPercent: 80, glmQuotaUsedPercent: 80 },
   quickPanelShortcut: "Alt+KeyU",
   quickAutoHide: true,
   interfaceLanguage: "auto",

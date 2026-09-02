@@ -108,3 +108,10 @@ export function testOpenCodeApiKey(key: string): Promise<DiagnosisResult> {
     return Promise.resolve({ ok: false, status: 0, latencyMs: 0, code: "missing-api-key" });
   return diagnose("https://opencode.ai/zen/go/v1/usage", "bearer", key);
 }
+
+/** 智谱 Coding Plan API Key：Coding Plan 配额接口探测 */
+export function testGlmCodingPlanKey(key: string): Promise<DiagnosisResult> {
+  if (!key.trim())
+    return Promise.resolve({ ok: false, status: 0, latencyMs: 0, code: "missing-api-key" });
+  return diagnose("https://open.bigmodel.cn/api/monitor/usage/quota/limit", "bearer", key);
+}

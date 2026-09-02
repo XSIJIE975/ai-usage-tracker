@@ -1,18 +1,19 @@
 import { useState } from "react";
 import { useT } from "../i18n";
 import { AlertTriangle, Settings2 } from "lucide-react";
-import { DeepSeekLogo, OpenCodeLogo } from "../components/brand/provider-logo";
+import { DeepSeekLogo, GlmLogo, OpenCodeLogo } from "../components/brand/provider-logo";
 import { useAppStore } from "../store/useAppStore";
 import { Tabs } from "../components/ui/tabs";
 import { cn } from "../lib/utils";
 import { MigrationCard } from "./settings/MigrationCard";
 import { GeneralSettings } from "./settings/GeneralSettings";
 import { DeepSeekSettings } from "./settings/DeepSeekSettings";
+import { GlmSettings } from "./settings/GlmSettings";
 import { OpenCodeGoSettings } from "./settings/OpenCodeGoSettings";
 import { useVaultCredentials } from "./settings/use-vault-credentials";
 import type { ProviderSettingsProps } from "./settings/provider-settings";
 
-type SettingsTab = "general" | "deepseek" | "opencode";
+type SettingsTab = "general" | "deepseek" | "opencode" | "glm";
 
 function ProviderTabLabel({
   name,
@@ -51,6 +52,7 @@ export function SettingsView() {
   const opencodeConfigured = Boolean(
     credentialStatus?.opencodeGoWorkspaceId && credentialStatus?.opencodeGoAuthCookie,
   );
+  const glmConfigured = Boolean(credentialStatus?.glmCodingPlanKey);
 
   const pendingMigration = Boolean(vaultStatus?.needsMigration);
   const providerProps: ProviderSettingsProps = {
@@ -96,12 +98,20 @@ export function SettingsView() {
             ),
             icon: <OpenCodeLogo className="h-3.5 w-3.5" />,
           },
+          {
+            value: "glm",
+            label: (
+              <ProviderTabLabel name={t("智谱 GLM")} showDot={unlocked} configured={glmConfigured} />
+            ),
+            icon: <GlmLogo className="h-3.5 w-3.5" />,
+          },
         ]}
       />
 
       {tab === "general" && <GeneralSettings />}
       {tab === "deepseek" && <DeepSeekSettings {...providerProps} />}
       {tab === "opencode" && <OpenCodeGoSettings {...providerProps} />}
+      {tab === "glm" && <GlmSettings {...providerProps} />}
     </div>
   );
 }

@@ -11,6 +11,7 @@ export interface CredentialStatus {
   opencodeGoWorkspaceId: boolean;
   opencodeGoAuthCookie: boolean;
   opencodeGoApiKey: boolean;
+  glmCodingPlanKey: boolean;
 }
 
 export interface VaultCredentials {
@@ -19,6 +20,7 @@ export interface VaultCredentials {
   opencodeGoWorkspaceId?: string;
   opencodeGoAuthCookie?: string;
   opencodeGoApiKey?: string;
+  glmCodingPlanKey?: string;
 }
 
 export interface CredentialsInput {
@@ -27,6 +29,7 @@ export interface CredentialsInput {
   opencodeGoWorkspaceId?: string | null;
   opencodeGoAuthCookie?: string | null;
   opencodeGoApiKey?: string | null;
+  glmCodingPlanKey?: string | null;
 }
 
 export interface HttpResult {
@@ -45,6 +48,8 @@ export interface ProviderRequestOptions {
 export interface MetricLine {
   type: "progress" | "text" | "badge";
   label: string;
+  /** label 模板的 {name} 占位符实参（如 "{hours} 小时请求配额" 的 hours），渲染端替换 */
+  params?: Record<string, string | number>;
   value?: string;
   used?: number;
   limit?: number;
@@ -74,6 +79,8 @@ export interface AlertThresholds {
   deepseekBalanceBelowCny: number;
   /** OpenCode Go 本月额度已用达到该百分比时告警 */
   opencodeMonthlyUsedPercent: number;
+  /** 智谱 Coding Plan 配额已用达到该百分比时告警 */
+  glmQuotaUsedPercent: number;
 }
 
 export interface AppSettings {
