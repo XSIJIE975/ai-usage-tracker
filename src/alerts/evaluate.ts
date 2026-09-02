@@ -1,4 +1,4 @@
-import { extractMetric } from "../stats/snapshot-history";
+import { extractMetric } from "./metric";
 import type { ProviderInstance, ProviderSnapshot } from "../types/ipc";
 
 export interface AlertFire {

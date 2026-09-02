@@ -3,7 +3,7 @@ import { AlertCoordinator } from "./coordinator";
 import type { AlertFire } from "./evaluate";
 import { evaluateRule } from "./evaluate";
 import type { ProviderInstance, ProviderSnapshot } from "../types/ipc";
-import { extractMetric } from "../stats/snapshot-history";
+import { extractMetric } from "./metric";
 
 const HOUR = 3_600_000;
 
