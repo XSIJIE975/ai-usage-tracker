@@ -119,11 +119,11 @@
 
 ### 自动刷新（两级门控）
 
-- 自动刷新由两级开关控制：**自动刷新总开关**（设置 → 通用）是总闸；**供应商自动刷新**（各供应商设置页签）决定单个供应商是否参与定时刷新，受总开关门控。
-- 总览定时刷新走 `refreshAll(false, { auto: true })`，按供应商开关过滤；手动「刷新」始终拉取所有供应商。
-- 手动全局刷新同时覆盖统计页：`refreshAll` 手动路径递增 `manualRefreshTick`，统计页经 `useGlobalRefresh(callback, providerId)` 感知并同步刷新；组件卸载期间发生的全局刷新，重挂载时补刷一次，不停留在旧缓存。
-- 统计页的刷新按钮与 `RefreshOverlay` 跟随全局刷新状态（`loading` 或该供应商的 `refreshingProviders`），与总览卡片行为一致。
-- 统计页通过 `useAutoRefresh(callback, providerId)` 接入，同时读取总开关、刷新间隔与该供应商的开关。
+- 自动刷新由两级开关控制：**自动刷新总开关**（设置 → 通用）是总闸；**实例自动刷新**（各实例配置弹窗）决定单个实例是否参与定时刷新，受总开关门控。
+- 总览定时刷新走 `refreshAll(false, { auto: true })`，按实例开关过滤；手动「刷新」始终拉取所有实例。
+- 手动全局刷新同时覆盖统计抽屉：`refreshAll` 手动路径递增 `manualRefreshTick`，统计模块经 `useGlobalRefresh(callback, instanceId)` 感知并同步刷新；组件卸载期间发生的全局刷新，重挂载时补刷一次，不停留在旧缓存。
+- 统计抽屉的刷新按钮与 `RefreshOverlay` 跟随全局刷新状态（`loading` 或该实例的 `refreshingInstances`），与总览卡片行为一致。
+- 统计模块通过 `useAutoRefresh(callback, instance)` 接入，同时读取总开关、刷新间隔与该实例的开关。
 - 刷新时保留旧数据，叠加 `RefreshOverlay`（半透明遮罩 + 旋转图标），不整体替换区域。
 - `useStatsFetch` 返回 `{ state, isRefreshing }`：首次加载走全屏 loading；已有数据刷新走局部 overlay。
 
@@ -187,10 +187,12 @@
 下划线式 Tabs，用于**页面级模块切换**（如统计页的供应商模块）。  
 与 Segmented 的分工：Tabs 切换整页内容模块；Segmented 切换小范围互斥选项。
 
-### 下拉选择 `ui/select`
+### 下拉选择 `ui/select` 与可搜索选择器 `ui/command`
 
-原生 `<select>` 封装（键盘可达、系统级交互），用于筛选器、密钥/模型切换等。  
-禁止自绘弹出层下拉。自定义日期范围用两个 `type="date"` 原生输入框，样式参照统计页。
+少量固定选项的筛选器仍用原生 `<select>` 封装（键盘可达、系统级交互），如密钥/模型切换。  
+**需要搜索、或选项带图标与描述的选择器用 Command（cmdk）+ Popover**（如「添加供应商」）：
+搜索框置顶、模糊匹配、键盘可导航，选项行 = 图标 + 名称 + 一句描述。
+自定义日期范围用两个 `type="date"` 原生输入框，样式参照统计抽屉。
 
 ### 数据表格 `ui/data-table`
 
@@ -213,12 +215,14 @@
 - 序列色通过 `modelColor(name)` 统一取自 chart-1..16，保证跨图表一致。
 - 轴数值用 `formatCompact`（lib/utils），精确值用 `formatInt`。
 
-## 6.6 统计页模块约定 `views/stats/`
+## 6.6 统计抽屉模块约定 `views/stats/`
 
-- `StatsView` 只做 Tabs 注册与模块挂载；每个供应商一个独立文件（如 `DeepSeekStats.tsx`），  
-  新增供应商 = 注册 Tab + 新建模块文件，互不改对方代码。
+- 统计从顶层页签下沉到卡片触发的右侧抽屉：`StatsSheet` 按 `instance.providerId` 挂载
+  `DeepSeekStats` / `OpenCodeStats` / `GlmStats`，标题 = 实例显示名 + 供应商名；
+  每个供应商一个独立文件，新增供应商 = 在 `StatsSheet` 注册映射 + 新建模块文件，互不改对方代码。
+- 同一模块可能同时服务同种类的多个实例：**usageCache 的 key 必须以 instanceId 为前缀**，
+  避免两个实例互相串数据。
 - 筛选工具条统一放在模块顶部的 `Card p-4` 内，控件带 `Label`。
-- 占位数据集中在 `src/data/mockStats.ts`（确定性伪随机），对接真实接口时只替换该文件。
 
 ## 6.7 图标规范
 
@@ -228,17 +232,54 @@
 - **界面图标**：统一使用 lucide-react，`strokeWidth` 默认 2，尺寸只用 `h-3.5 w-3.5`（小）/ `h-4 w-4`（中）/ `h-5 w-5`（大）。
 - **状态指示**：成功/警告/危险图标颜色用对应状态 Token，不用灰色表达状态。
 
-## 6.8 设置页模块约定 `views/settings/`
+## 6.8 设置页与实例配置弹窗约定
 
-- `SettingsView` 顶层用 `Tabs`：「通用」+ 每供应商一个页签（图标与命名同统计页）。  
-  新增供应商 = 注册 Tab + 新建 `<Provider>Settings.tsx`，复用 `ProviderSettingsProps` 与 `ProviderAutoRefresh`。
-- 通用页签承载全局设置：自动刷新总开关、刷新间隔（预设档位 `Select`，所有供应商共用）、外观；  
-  供应商页签承载该家凭据表单 + 供应商自动刷新开关。
-- 供应商自动刷新受总开关门控：总开关关闭时禁用置灰（保留开关值），提示可点击跳转「通用」页签。
-- 开关类设置即时保存并显示短暂「已保存」反馈（`useSaveFlash` / `SavedHint`）；凭据保存保留显式按钮。
-- 页签标签带凭据配置状态点：已配置成功色、未配置警告色；凭据库未解锁时不显示。
-- 通用页签末尾承载「关于与更新」卡片（`views/settings/UpdateCard.tsx`）：显示当前版本、检查更新、变更说明与下载进度（`ui/progress`），错误可重试；状态机在 `store/useUpdateStore.ts`，仅已安装运行时可用（开发构建禁用并提示）。
+- 设置视图只保留「通用」：自动刷新总开关、刷新间隔（预设档位 `Select`，所有实例共用）、
+  外观、快速面板、关于与更新；顶部承载 `MigrationCard` 与设备密钥丢失横幅。
+- 实例的凭据表单、自动刷新开关与告警阈值全部在配置弹窗 `views/instances/InstanceDialog.tsx`
+  （新建与编辑共用；备注 → 按 kind 渲染的凭据区 → 自动刷新与阈值 → 取消/保存）。
+  编辑时凭据回填明文，凭据库未解锁/待迁移时显示 `notice` 并禁用保存。
+- 删除实例走卡片 ⋯ 菜单 + `DeleteInstanceDialog`（AlertDialog）二次确认。
+- 开关类设置即时保存并显示短暂「已保存」反馈（`useSaveFlash` / `SavedHint`）；弹窗内保存为显式按钮。
+- 「关于与更新」卡片（`views/settings/UpdateCard.tsx`）：显示当前版本、检查更新、变更说明与下载进度（`ui/progress`），错误可重试；状态机在 `store/useUpdateStore.ts`，仅已安装运行时可用（开发构建禁用并提示）。
 - 发现新版本时主窗口顶栏出现「新版本 vX」徽标按钮（outline + brand 描边），点击进入设置视图完成安装。
+
+## 6.9 弹层：Dialog / Sheet / AlertDialog / Popover
+
+三者的分工：
+
+| 组件 | 用途 | 形态 |
+| --- | --- | --- |
+| `ui/dialog` | 表单类内容（实例配置） | 居中，`max-w-lg`，内容超高时内部滚动（`max-h-[85vh]`） |
+| `ui/sheet` | 详情类内容（实例统计） | 右侧滑入，全高，宽 `min(960px,100vw)` |
+| `ui/alert-dialog` | 破坏性操作二次确认（删除实例） | 居中，`max-w-md`，确认按钮 `destructive` |
+| `ui/popover` | 轻量非模态弹出（+ `ui/command` 组成可搜索选择器） | 锚定触发器，`w-72` 左右 |
+
+- 弹层遮罩统一 `bg-canvas/60 backdrop-blur-[1px]`；容器 `border-line` + `shadow-pop`。
+- 内容结构：头部（标题 `text-[15px] font-semibold` + 描述）/ 滚动区 / 页脚（取消在左、主操作在右，
+  主按钮一个视口一个 `primary`）。
+- 所有弹层必须可用 Esc 关闭且带焦点环；标题/描述供屏幕阅读器（Radix Title/Description）。
+
+## 6.10 可排序卡片网格（总览）
+
+- 网格列：`repeat(auto-fill, minmax(min(100%,340px), 1fr))` + `justify-center`，间距 `gap-4`；
+  移除总览容器的最大宽度（设置视图保留 `max-w-3xl`）。720px 视口 1 列、980px 2 列、1180px 3 列。
+- 顺序的唯一事实：`pinned DESC, sort_order ASC, created_at ASC`（`selectOrderedInstances`），
+  快速面板跟随同一顺序但不可拖拽、无统计按钮。
+- 拖拽用 @dnd-kit：卡片头部左侧 GripVertical 手柄（hover/聚焦显现）、`PointerSensor`
+  带 `activationConstraint: { distance: 4 }` 避免吞掉卡内点击、`KeyboardSensor` 键盘可达、
+  `DragOverlay` 浮起副本；拖拽结束 `reorder_instances` 落库并广播 `instances-changed`。
+- 卡片头部 = 手柄 + 头像 + 标题（备注，空则供应商名）+ 副标题（供应商名 + 更新时间，
+  备注为空时只显示更新时间）+ 状态徽标 + 刷新 + ⋯ 菜单（置顶/编辑配置/删除）；
+  底部一行「查看统计」outline 按钮（`needs_config` / `error` 状态禁用并带 title 说明）。
+- 快速面板卡片为 `compact` 模式：不渲染手柄、菜单、统计按钮。
+
+## 6.11 快速面板窗口行为
+
+- 顶栏双击打开主窗口；单击拖动顶栏移动面板（自管 mousedown，不用 `data-tauri-drag-region`，
+  确保双击行为确定可控）。顶栏按钮上的双击不触发。
+- 高度随内容自适应：`useFitWindowHeight` 观测内容根高度并 `setSize(380, clamp(h, 240, 工作区×80%))`；
+  三条纪律——120ms 防抖、|Δ|≤8px 不调用、顶栏拖动期间跳过。宽度固定 380。
 
 ## 7. 动效
 

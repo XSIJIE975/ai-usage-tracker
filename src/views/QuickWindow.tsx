@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
+import { useFitWindowHeight } from "../hooks/use-fit-window-height";
 import { Bell, Gauge, Lock, RefreshCw, Timer, TriangleAlert, X } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import { useAlertStore } from "../store/useAlertStore";
@@ -110,6 +111,10 @@ export function QuickWindow() {
       const unlistenSettings = await listen<AppSettings>("settings-changed", (event) => {
         useAppStore.setState({ settings: event.payload });
       });
+      // 主窗口增删/排序实例时重载（高度随后自然跟随）
+      const unlistenInstances = await listen("instances-changed", () => {
+        if (!disposed) void syncFromBackend();
+      });
       // 主窗口上下文刷新产生的告警态变化同步到本窗口
       const unlistenAlert = await listen<{ instanceId: string; active: boolean }>(
         "alert-state-changed",
@@ -127,10 +132,11 @@ export function QuickWindow() {
         unlistenQuickShown();
         unlistenAlert();
         unlistenSettings();
+        unlistenInstances();
         return;
       }
 
-      unlisteners.push(unlistenFocus, unlistenVault, unlistenCredentials, unlistenQuickShown, unlistenAlert, unlistenSettings);
+      unlisteners.push(unlistenFocus, unlistenVault, unlistenCredentials, unlistenQuickShown, unlistenAlert, unlistenSettings, unlistenInstances);
     })();
 
     return () => {
@@ -162,14 +168,37 @@ export function QuickWindow() {
   const refreshing = loading || anyProviderRefreshing;
   const anyAlert = Object.values(alertActiveMap).some(Boolean);
 
+  const contentRef = useRef<HTMLDivElement>(null);
+  useFitWindowHeight(contentRef);
+
+  // 顶栏拖动与双击自管（不走 data-tauri-drag-region 的注入脚本，双击行为确定可控）：
+  // 单击进入系统拖动；双击的第二次按下放行给 dblclick 打开主窗口（与 Tauri drag.js 同手法）
+  function handleHeaderMouseDown(event: React.MouseEvent<HTMLElement>) {
+    if (event.button !== 0 || event.detail !== 1) return;
+    event.preventDefault();
+    void getCurrentWindow().startDragging();
+  }
+
+  function handleHeaderDoubleClick(event: React.MouseEvent<HTMLElement>) {
+    if ((event.target as HTMLElement).closest("button")) return;
+    void openMain();
+  }
+
   return (
     // 窗口圆角由系统绘制，这里不再自绘圆角（避免滚动到底部时圆角与滚动内容错位）
-    <div className="relative flex h-screen flex-col overflow-hidden bg-surface shadow-pop">
+    <div
+      ref={contentRef}
+      className="relative flex max-h-screen min-h-0 flex-col overflow-hidden bg-surface shadow-pop"
+    >
+      {/* 高度低于内容下限（240px）时窗口底部露出的底色兜底 */}
+      <div className="fixed inset-0 -z-10 bg-surface" aria-hidden />
       <header
-        data-tauri-drag-region
+        data-quick-header
+        onMouseDown={handleHeaderMouseDown}
+        onDoubleClick={handleHeaderDoubleClick}
         className="flex h-11 shrink-0 items-center justify-between border-b border-line bg-surface-2/60 px-3"
       >
-        <div className="flex items-center gap-2" data-tauri-drag-region>
+        <div className="flex items-center gap-2">
           <BrandIcon size={20} className="rounded-[5px]" />
           <span className="text-[13px] font-semibold text-fg">{t("AI 用量助手")}</span>
         </div>

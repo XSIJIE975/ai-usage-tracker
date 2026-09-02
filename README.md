@@ -4,9 +4,10 @@
 
 ## 功能
 
-- 系统托盘快速面板：点击托盘图标即可查看 OpenCode Go 的 5 小时/周/月额度、DeepSeek 余额和智谱 GLM 配额进度，无需打开主窗口。
-- 用量总览：按 Provider 分卡片展示额度进度、账户余额与重置倒计时；额度使用超七成时进度条自动转为警示色。
-- 用量统计：内置统计图表，支持按时间范围、模型等维度查看 Token 消耗与请求趋势。
+- 系统托盘快速面板：点击托盘图标即可查看 OpenCode Go 的 5 小时/周/月额度、DeepSeek 余额和智谱 GLM 配额进度，无需打开主窗口；双击面板顶栏可打开主窗口，面板高度随内容自适应。
+- 供应商多实例：同一供应商可添加多份配置（如两个 DeepSeek 账号），各自独立追踪、统计与告警；实例可写备注作为卡片标题。
+- 用量总览：按实例分卡片展示额度进度、账户余额与重置倒计时；卡片网格支持拖拽排序与置顶；额度使用超七成时进度条自动转为警示色。
+- 用量统计：卡片「查看统计」打开右侧统计抽屉，支持按时间范围、模型等维度查看 Token 消耗与请求趋势。
 - 凭据本地加密：凭据以 AES-256-GCM 加密存储在本机，加密密钥托管在系统钥匙串（Windows 凭据管理器 / macOS 钥匙串 / Linux Secret Service），启动即用、全程无需输入密码。
 - OpenCode Go：优先调用官方 `/zen/go/v1/usage` 接口，接口未上线时自动降级为抓取后台页面解析真实额度。
 - DeepSeek：通过官方 API Key 查询账户余额与可用状态。
@@ -33,14 +34,14 @@ pnpm tauri build --no-sign
 
 ## 使用
 
-1. 在「设置」中填写：
+1. 点击主窗口右上角「添加供应商」，选择供应商并填写凭据（可加备注区分多个账号）：
    - DeepSeek API Key：`sk-...`
-   - DeepSeek UserToken：platform.deepseek.com 网页登录态令牌，统计页使用（获取方式见下）
+   - DeepSeek UserToken：platform.deepseek.com 网页登录态令牌，统计使用（获取方式见下）
    - OpenCode Go Workspace ID：后台 URL 中的 `wrk_...`
    - OpenCode Auth Cookie：登录 `opencode.ai` 后浏览器里的 `auth` Cookie 值
    - OpenCode Go API Key（可选）：官方 `/usage` 接口上线后使用
    - 智谱 Coding Plan API Key：bigmodel.cn 控制台 Coding Plan 页生成（获取方式见下）
-2. 设置自动刷新间隔，或点击「刷新」手动更新。
+2. 实例的告警阈值与自动刷新开关在其配置弹窗（卡片 ⋯ 菜单）中设置；全局刷新间隔在设置中调整。
 3. 关闭主窗口后应用继续驻留托盘；托盘图标可打开快速面板。
 
 DeepSeek UserToken 获取方式（统计页使用，与 API Key 是两种不同凭据）：

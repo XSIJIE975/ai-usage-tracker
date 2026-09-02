@@ -24,7 +24,7 @@
         "label": "quick",
         "title": "AI 用量助手",
         "width": 380,
-        "height": 560,
+        "height": 320,
         "decorations": false,
         "alwaysOnTop": true,
         "resizable": false,
