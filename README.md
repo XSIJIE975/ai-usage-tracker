@@ -31,29 +31,6 @@ pnpm build
 pnpm tauri build --no-sign
 ```
 
-构建默认会产出供自动更新使用的签名产物，需要 `TAURI_SIGNING_PRIVATE_KEY`（及密码）；本地开发没有密钥时用 `--no-sign` 跳过。
-
-## 版本与发布流程
-
-项目使用 Changesets 管理版本。日常开发不触发打包：
-
-1. 日常开发在 `dev` 分支进行；凡是用户可见的变更，用 `pnpm changeset` 添加变更说明。
-2. 通过 PR 将代码合入 `main`，此阶段 CI 只运行前端测试、前端构建和 Rust 测试。
-3. Changesets 检测到变更说明后，自动创建或更新 Version Packages PR。
-4. 合并 Version Packages PR 后，GitHub Actions 才会在 Windows、macOS、Linux 上执行 Tauri 打包。
-5. 发布 workflow 会生成 `vX.Y.Z` draft release，安装包上传后由你在 GitHub 网页手动发布。
-
-发布 workflow 使用 `package.json` 作为版本源，并自动同步 `src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 和 `src-tauri/tauri.conf.json`。
-
-安装包与更新通道：
-
-- 产物矩阵：Windows x64 / ARM64 为 NSIS（按当前用户安装，更新无需管理员权限）、macOS 为 Universal DMG（同一安装包同时支持 Intel 与 Apple Silicon）、Linux x64 / ARM64 为 DEB + AppImage。
-- 构建使用仓库 Secrets（`TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`）签名更新产物，并随安装包上传 `latest.json` 更新清单。
-- `latest.json` 中的更新说明在全部平台构建完成后自动回填当期 CHANGELOG，应用内更新对话框直接展示。
-- 手动发布 draft release 后，旧版本启动时会静默检测到新版本：顶栏出现「新版本」徽标，设置 → 通用 →「关于与更新」可下载并安装。
-- 0.1.0 及更早的安装没有更新能力，需要手动下载安装包重装一次；之后的版本均可自动更新。
-- 需要为已发布版本重新构建（如补齐某个平台的产物）时，在 Actions 页手动运行 Release workflow 并填入版本号，即可强制重建该版本的草稿 Release。
-
 ## 使用
 
 1. 在「设置」中填写：
