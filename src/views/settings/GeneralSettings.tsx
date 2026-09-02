@@ -99,7 +99,7 @@ export function GeneralSettings() {
         </CardHeader>
         <CardContent>
           <p className="text-[13px] text-fg-muted">
-            {t("各供应商的阈值在其页签中设置；触发后 6 小时内不会重复通知，恢复到阈值以上会自动解除。")}
+            {t("各实例的阈值在其配置弹窗中设置；触发后 6 小时内不会重复通知，恢复到阈值以上会自动解除。")}
           </p>
         </CardContent>
       </Card>

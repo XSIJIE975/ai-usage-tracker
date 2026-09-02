@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
-import type { ComponentPropsWithoutRef } from "react";
+import type { ComponentPropsWithoutRef, ComponentType } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   AlertCircle,
@@ -7,11 +7,18 @@ import {
   Bell,
   Gauge,
   LayoutGrid,
+  Plus,
   RefreshCw,
   Settings,
   X,
 } from "lucide-react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover";
+import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from "../components/ui/command";
+import { DeepSeekLogo, GlmLogo, OpenCodeLogo } from "../components/brand/provider-logo";
+import { InstanceDialog } from "./instances/InstanceDialog";
+import { DeleteInstanceDialog } from "./instances/DeleteInstanceDialog";
+import { providerModules } from "../providers";
 import {
   DndContext,
   DragOverlay,
@@ -49,7 +56,7 @@ const StatsView = lazy(() =>
 import { formatClock } from "../lib/utils";
 import { cn } from "../lib/utils";
 import { selectOrderedInstances } from "../lib/instance";
-import type { ProviderInstance } from "../types/ipc";
+import type { ProviderInstance, ProviderKind } from "../types/ipc";
 import { updateSupported, useUpdateStore } from "../store/useUpdateStore";
 import { useLanguage, useT } from "../i18n";
 
@@ -126,6 +133,10 @@ export function Dashboard() {
   const [noticeOpen, setNoticeOpen] = useState(false);
   const [remoteRefreshedAt, setRemoteRefreshedAt] = useState(0);
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [creatingKind, setCreatingKind] = useState<ProviderKind | null>(null);
+  const [editing, setEditing] = useState<ProviderInstance | null>(null);
+  const [deleting, setDeleting] = useState<ProviderInstance | null>(null);
 
   const ordered = useMemo(() => selectOrderedInstances(instances), [instances]);
   const snapshotOf = (instanceId: string) =>
@@ -324,6 +335,37 @@ export function Dashboard() {
               { value: "settings", label: t("设置"), icon: <Settings className="h-3.5 w-3.5" /> },
             ]}
           />
+          <Popover open={addOpen} onOpenChange={setAddOpen}>
+            <PopoverTrigger asChild>
+              <Button size="sm" aria-label={t("添加供应商")} title={t("添加供应商")}>
+                <Plus className="h-3.5 w-3.5" /> {t("添加供应商")}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-80 p-0">
+              <Command>
+                <CommandInput placeholder={t("搜索供应商…")} />
+                <CommandList>
+                  <CommandEmpty>{t("没有匹配的供应商")}</CommandEmpty>
+                  {providerModules.map((module) => (
+                    <CommandItem
+                      key={module.id}
+                      value={`${module.name} ${module.description}`}
+                      onSelect={() => {
+                        setAddOpen(false);
+                        setCreatingKind(module.id);
+                      }}
+                    >
+                      <ProviderKindLogo providerId={module.id} />
+                      <div className="min-w-0">
+                        <p className="font-medium text-fg">{module.name}</p>
+                        <p className="truncate text-xs text-fg-muted">{t(module.description)}</p>
+                      </div>
+                    </CommandItem>
+                  ))}
+                </CommandList>
+              </Command>
+            </PopoverContent>
+          </Popover>
           {updateNotice && (
             <Button
               size="sm"
@@ -392,7 +434,12 @@ export function Dashboard() {
                 <EmptyState
                   icon={<Gauge className="h-5 w-5" />}
                   title={t("还没有供应商")}
-                  description={t("点击右上角「添加供应商」开始追踪用量。")}
+                  description={t("添加一份凭据，开始追踪该供应商的用量。")}
+                  action={
+                    <Button size="sm" variant="secondary" onClick={() => setAddOpen(true)}>
+                      <Plus className="h-3.5 w-3.5" /> {t("添加供应商")}
+                    </Button>
+                  }
                 />
               )
             ) : (
@@ -418,7 +465,8 @@ export function Dashboard() {
                         onTogglePin={() =>
                           void updateInstance(instance.id, { pinned: !instance.pinned })
                         }
-                        onDelete={() => void removeInstance(instance.id)}
+                        onEdit={() => setEditing(instance)}
+                        onDelete={() => setDeleting(instance)}
                         onOpenStats={() => setView("stats")}
                       />
                     ))}
@@ -451,6 +499,45 @@ export function Dashboard() {
           )}
         </div>
       </main>
+
+      <InstanceDialog
+        open={creatingKind !== null}
+        onOpenChange={(open) => {
+          if (!open) setCreatingKind(null);
+        }}
+        instance={null}
+        providerId={creatingKind ?? "deepseek"}
+      />
+      <InstanceDialog
+        open={editing !== null}
+        onOpenChange={(open) => {
+          if (!open) setEditing(null);
+        }}
+        instance={editing}
+        providerId={editing?.providerId ?? "deepseek"}
+      />
+      <DeleteInstanceDialog
+        instance={deleting}
+        open={deleting !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleting(null);
+        }}
+        onConfirm={() => {
+          if (deleting) void removeInstance(deleting.id);
+          setDeleting(null);
+        }}
+      />
     </div>
   );
+}
+
+const KIND_LOGOS: Record<ProviderKind, ComponentType<{ className?: string }>> = {
+  deepseek: DeepSeekLogo,
+  "opencode-go": OpenCodeLogo,
+  glm: GlmLogo,
+};
+
+function ProviderKindLogo({ providerId }: { providerId: ProviderKind }) {
+  const Logo = KIND_LOGOS[providerId];
+  return <Logo className="h-5 w-5 shrink-0" />;
 }
