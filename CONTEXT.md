@@ -14,7 +14,11 @@ DeepSeek 开放平台网页（platform.deepseek.com）登录后保存在浏览�
 
 ## 智谱 GLM
 
-第三个受支持的供应商（provider 标识 `glm`），覆盖智谱 bigmodel.cn 的两种付费形态：Coding Plan 订阅配额与 API 按量付费余额。数据来自控制台私有接口（见 ADR-0009），无官方查询 API。
+第三个受支持的供应商（provider 标识 `glm`），追踪智谱 bigmodel.cn 的 Coding Plan 订阅配额。数据来自控制台私有接口（见 ADR-0009/0010），凭据仅需一枚 Coding Plan API Key。
+
+## Coding Plan API Key
+
+智谱控制台 Coding Plan 页「生成 API Key」所得的密钥（长期有效），即 Claude Code 等 Anthropic 兼容客户端里配置的 `ANTHROPIC_AUTH_TOKEN`。用于配额与用量统计查询（Bearer 注入，官方 glm-plan-usage 插件同款用法，见 ADR-0010）。
 
 ## Coding Plan
 
@@ -28,9 +32,13 @@ Coding Plan 的滚动 5 小时请求配额窗口（接口字段 `unit=3, number=
 
 Coding Plan 的滚动 7 天请求配额窗口（接口字段 `unit=6, number=1`）：重置时间由服务端下发（`nextResetTime`），不是自然周一。快照主指标与告警阈值取该窗口的已用百分比——它是重置周期最长的窗口，代表最紧的约束。
 
-## 控制台登录 JWT
+## 模型用量
 
-智谱 bigmodel.cn 控制台的网页登录态（浏览器 Cookie 键 `bigmodel_token_production`），用于余额查询等私有接口。会过期，过期后需重新从浏览器提取；与 Coding Plan Key（长期有效，专用于 Coding Plan 配额查询）是两种不同凭据。
+Coding Plan 的按模型 Token 消耗统计（`model-usage` 端点，列式结构按时间桶对齐）。接口只提供按模型的 Token 序列；请求次数仅有全模型合计，无费用数据。统计页「智谱 GLM」页签的 Token 趋势图与模型明细即来自它。
+
+## 工具用量
+
+Coding Plan 的工具调用统计（`tool-usage` 端点）：固定三项（联网搜索、网页阅读 MCP、Zread MCP）加动态 MCP 工具列表。快照卡片不含它，仅在统计页展示。
 
 ## 快速面板
 
