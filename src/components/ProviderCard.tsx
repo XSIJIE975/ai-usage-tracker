@@ -1,26 +1,36 @@
-import { useEffect, useMemo, useState } from "react";
-import type { ComponentType } from "react";
+import { useEffect, useState } from "react";
+import type { ComponentPropsWithoutRef, ComponentType } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
+  GripVertical,
+  MoreHorizontal,
+  Pencil,
+  PieChart,
+  Pin,
   RefreshCw,
   Settings2,
-  TrendingDown,
-  TrendingUp,
+  Trash2,
 } from "lucide-react";
-import type { MetricLine, ProviderSnapshot } from "../types/ipc";
+import type { MetricLine, ProviderInstance, ProviderSnapshot } from "../types/ipc";
 import { formatClock, formatReset } from "../lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Progress } from "./ui/progress";
 import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
 import { IconButton } from "./ui/icon-button";
-import { Sparkline } from "./charts/Sparkline";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
 import { DeepSeekLogo, GlmLogo, OpenCodeLogo } from "./brand/provider-logo";
-import { loadProviderHistory, type ProviderHistory } from "../stats/snapshot-history";
-import { analyzeBurnRate } from "../stats/burn-rate";
-import { describeBurnRate } from "../stats/burn-rate-format";
+import { displayName } from "../lib/instance";
+import { providerName } from "../providers";
 import { useAppStore } from "../store/useAppStore";
-import { applyParams, useLanguage, useT } from "../i18n";
+import { applyParams, useT } from "../i18n";
 import { cn } from "../lib/utils";
 
 function useNow(intervalMs = 30_000) {
@@ -44,12 +54,6 @@ const BRAND_LOGOS: Record<
   glm: { Logo: GlmLogo, bg: "bg-[#3859FF]/10" },
 };
 
-/** 各供应商 sparkline 配色（品牌色） */
-const SPARK_COLORS: Record<string, string> = {
-  deepseek: "#5786FE",
-  glm: "#3859FF",
-};
-
 function ProviderAvatar({ providerId, name }: { providerId: string; name: string }) {
   const brand = BRAND_LOGOS[providerId];
   if (brand) {
@@ -70,16 +74,19 @@ function ProviderAvatar({ providerId, name }: { providerId: string; name: string
   );
 }
 
-function statusBadge(status: ProviderSnapshot["status"]) {
+function StatusBadge({ snapshot }: { snapshot: ProviderSnapshot | null }) {
   const t = useT();
-  if (status === "ok") {
+  if (!snapshot) {
+    return null;
+  }
+  if (snapshot.status === "ok") {
     return (
       <Badge variant="success">
         <CheckCircle2 className="h-3 w-3" /> {t("正常")}
       </Badge>
     );
   }
-  if (status === "needs_config") {
+  if (snapshot.status === "needs_config") {
     return (
       <Badge variant="neutral">
         <Settings2 className="h-3 w-3" /> {t("待配置")}
@@ -146,27 +153,6 @@ function MetricRow({ line, now }: { line: MetricLine; now: number }) {
   );
 }
 
-/** 拉取供应商快照历史；每次快照更新（新数据落库）后自动重新加载 */
-function useProviderHistory(providerId: string, updatedAt: number): ProviderHistory | null {
-  const [history, setHistory] = useState<ProviderHistory | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    void loadProviderHistory(providerId)
-      .then((result) => {
-        if (!cancelled) setHistory(result);
-      })
-      .catch(() => {
-        if (!cancelled) setHistory(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [providerId, updatedAt]);
-
-  return history;
-}
-
 /** 紧凑模式的数据更新时间：相对形式 + 过期警示（超过刷新间隔 1.5 倍未更新） */
 function CompactUpdatedAt({
   updatedAt,
@@ -199,62 +185,83 @@ function CompactUpdatedAt({
   );
 }
 
+export interface ProviderCardProps {
+  instance: ProviderInstance;
+  snapshot: ProviderSnapshot | null;
+  compact?: boolean;
+  refreshing?: boolean;
+  onRefresh?: () => void;
+  onTogglePin?: () => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
+  onOpenStats?: () => void;
+  /** dnd 手柄的 listeners/attributes（由外层 Sortable 传入，仅主窗口网格） */
+  handleProps?: ComponentPropsWithoutRef<"button">;
+  dragging?: boolean;
+}
+
 export function ProviderCard({
+  instance,
   snapshot,
   compact = false,
   refreshing = false,
   onRefresh,
-}: {
-  snapshot: ProviderSnapshot;
-  compact?: boolean;
-  refreshing?: boolean;
-  onRefresh?: () => void;
-}) {
-  const needsConfig = snapshot.status === "needs_config";
+  onTogglePin,
+  onEdit,
+  onDelete,
+  onOpenStats,
+  handleProps,
+  dragging = false,
+}: ProviderCardProps) {
   const now = useNow();
   const t = useT();
-  const language = useLanguage();
   const refreshIntervalMinutes = useAppStore((state) => state.settings.refreshIntervalMinutes);
-  const history = useProviderHistory(snapshot.providerId, snapshot.updatedAt);
-
-  // 有重置时间的指标（额度窗口）按"用满"预测，否则按"耗尽"预测（余额）
-  const fillMode = Boolean(history?.resetsAt);
-  const burn = useMemo(() => {
-    if (!history || history.points.length < 2 || snapshot.status !== "ok") return null;
-    return analyzeBurnRate(
-      history.points,
-      fillMode ? { mode: "fill", resetsAt: history.resetsAt } : { mode: "deplete" },
-    );
-  }, [history, fillMode, snapshot.status]);
-  const burnText = useMemo(
-    () =>
-      burn
-        ? describeBurnRate(burn, {
-            locale: language,
-            mode: fillMode ? "fill" : "deplete",
-          })
-        : null,
-    [burn, fillMode, language],
-  );
-  const trend = history && history.points.length >= 2 ? history : null;
-  const sparkColor = SPARK_COLORS[snapshot.providerId];
+  const kindName = providerName(instance.providerId);
+  const title = displayName(instance, kindName);
+  const hasNote = instance.note.trim().length > 0;
+  const needsConfig = snapshot?.status === "needs_config";
+  const statsDisabled = snapshot?.status !== "ok";
 
   return (
-    <Card className="transition-shadow duration-normal hover:shadow-pop">
+    <Card
+      className={cn(
+        "group/card transition-shadow duration-normal hover:shadow-pop",
+        dragging && "opacity-40",
+      )}
+    >
       <CardHeader
         className={cn("flex-row items-center justify-between space-y-0", compact ? "p-4 pb-2" : "p-5 pb-3")}
       >
-        <div className="flex min-w-0 items-center gap-2.5">
-          <ProviderAvatar providerId={snapshot.providerId} name={snapshot.providerName} />
+        <div className="flex min-w-0 flex-1 items-center gap-2.5">
+          {!compact && handleProps && (
+            <button
+              type="button"
+              className="flex h-6 w-4 shrink-0 cursor-grab items-center justify-center rounded-sm text-fg-muted opacity-0 transition-opacity duration-fast hover:text-fg-secondary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring group-hover/card:opacity-100 aria-grabbed:cursor-grabbing active:cursor-grabbing"
+              aria-label={t("拖动排序")}
+              title={t("拖动排序")}
+              {...handleProps}
+            >
+              <GripVertical className="h-3.5 w-3.5" aria-hidden />
+            </button>
+          )}
+          <ProviderAvatar providerId={instance.providerId} name={kindName} />
           <div className="min-w-0">
-            <CardTitle className="truncate text-sm">{snapshot.providerName}</CardTitle>
+            <CardTitle className="flex items-center gap-1.5 truncate text-sm">
+              <span className="truncate">{title}</span>
+              {instance.pinned && !compact && (
+                <Pin className="h-3 w-3 shrink-0 fill-brand text-brand" aria-label={t("已置顶")} />
+              )}
+            </CardTitle>
             {!compact ? (
               <p className="tnum mt-0.5 text-xs text-fg-muted">
-                {t("更新于")} {formatClock(snapshot.updatedAt)}
+                {hasNote && <span className="mr-1.5">{kindName}</span>}
+                {snapshot
+                  ? `${t("更新于")} ${formatClock(snapshot.updatedAt)}`
+                  : t("等待刷新")}
               </p>
             ) : (
               <CompactUpdatedAt
-                updatedAt={snapshot.updatedAt}
+                updatedAt={snapshot?.updatedAt ?? 0}
                 now={now}
                 intervalMinutes={refreshIntervalMinutes}
               />
@@ -262,22 +269,54 @@ export function ProviderCard({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          {statusBadge(snapshot.status)}
+          <StatusBadge snapshot={snapshot} />
           {onRefresh && (
             <IconButton
               size="sm"
               onClick={onRefresh}
               disabled={refreshing}
-              aria-label={refreshing ? "刷新中" : "刷新此 Provider"}
-              title={refreshing ? "刷新中" : "刷新此 Provider"}
+              aria-label={refreshing ? t("刷新中") : t("刷新此供应商")}
+              title={refreshing ? t("刷新中") : t("刷新此供应商")}
             >
               <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
             </IconButton>
           )}
+          {!compact && (onTogglePin || onEdit || onDelete) && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <IconButton size="sm" aria-label={t("更多操作")} title={t("更多操作")}>
+                  <MoreHorizontal className="h-3.5 w-3.5" />
+                </IconButton>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {onTogglePin && (
+                  <DropdownMenuItem onSelect={() => onTogglePin()}>
+                    <Pin className="h-3.5 w-3.5" />
+                    {instance.pinned ? t("取消置顶") : t("置顶")}
+                  </DropdownMenuItem>
+                )}
+                {onEdit && (
+                  <DropdownMenuItem onSelect={() => onEdit()}>
+                    <Pencil className="h-3.5 w-3.5" />
+                    {t("编辑配置")}
+                  </DropdownMenuItem>
+                )}
+                {onDelete && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem destructive onSelect={() => onDelete()}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                      {t("删除")}
+                    </DropdownMenuItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
       </CardHeader>
       <CardContent className={compact ? "px-4 pb-4" : "px-5 pb-5"}>
-        {snapshot.message ? (
+        {snapshot?.message ? (
           <p
             className={cn(
               "rounded-md px-3 py-2 text-xs leading-relaxed",
@@ -287,31 +326,28 @@ export function ProviderCard({
             {snapshot.message}
           </p>
         ) : null}
-        <div className={cn("divide-y divide-line", snapshot.message ? "mt-2" : "")}>
-          {snapshot.lines.map((line, index) => (
+        <div className={cn("divide-y divide-line", snapshot?.message ? "mt-2" : "")}>
+          {(snapshot?.lines ?? []).map((line, index) => (
             <MetricRow key={`${line.label}-${index}`} line={line} now={now} />
           ))}
         </div>
-        {snapshot.status === "ok" && (burnText || trend) ? (
-          <div className="mt-2 space-y-2">
-            {burnText ? (
-              <p className="flex items-start gap-1.5 text-[11px] leading-relaxed text-fg-muted">
-                {fillMode ? (
-                  <TrendingUp className="mt-0.5 h-3 w-3 shrink-0" />
-                ) : (
-                  <TrendingDown className="mt-0.5 h-3 w-3 shrink-0" />
-                )}
-                {burnText}
-              </p>
-            ) : null}
-            {trend ? (
-              <Sparkline points={trend.points} color={sparkColor} height={compact ? 44 : 56} />
-            ) : null}
-          </div>
-        ) : null}
-        {snapshot.lines.length === 0 && !snapshot.message ? (
+        {(!snapshot || snapshot.lines.length === 0) && !snapshot?.message ? (
           <p className="py-2 text-xs text-fg-muted">{t("暂无数据")}</p>
         ) : null}
+        {!compact && onOpenStats && (
+          <div className="mt-3 border-t border-line pt-3">
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full"
+              disabled={statsDisabled}
+              onClick={onOpenStats}
+              title={statsDisabled ? t("获取数据后可查看统计") : t("查看统计")}
+            >
+              <PieChart className="h-3.5 w-3.5" /> {t("查看统计")}
+            </Button>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

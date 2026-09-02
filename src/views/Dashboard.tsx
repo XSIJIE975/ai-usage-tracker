@@ -1,7 +1,36 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import type { ComponentPropsWithoutRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { AlertCircle, ArrowUpCircle, Bell, Gauge, LayoutGrid, PieChart, RefreshCw, Settings, X } from "lucide-react";
+import {
+  AlertCircle,
+  ArrowUpCircle,
+  Bell,
+  Gauge,
+  LayoutGrid,
+  RefreshCw,
+  Settings,
+  X,
+} from "lucide-react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import {
+  DndContext,
+  DragOverlay,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  rectSortingStrategy,
+  sortableKeyboardCoordinates,
+  useSortable,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { useAppStore } from "../store/useAppStore";
 import { useAlertStore } from "../store/useAlertStore";
 import { selectUnreadCount, useNotificationStore } from "../store/useNotificationStore";
@@ -19,10 +48,59 @@ const StatsView = lazy(() =>
 );
 import { formatClock } from "../lib/utils";
 import { cn } from "../lib/utils";
+import { selectOrderedInstances } from "../lib/instance";
+import type { ProviderInstance } from "../types/ipc";
 import { updateSupported, useUpdateStore } from "../store/useUpdateStore";
 import { useLanguage, useT } from "../i18n";
 
 type ViewKey = "overview" | "stats" | "settings";
+
+/** 可排序卡片：拖拽手柄在卡片头部左侧，排序变更提交后端持久化 */
+function SortableProviderCard({
+  instance,
+  snapshot,
+  refreshing,
+  onRefresh,
+  onTogglePin,
+  onEdit,
+  onDelete,
+  onOpenStats,
+}: {
+  instance: ProviderInstance;
+  snapshot: ReturnType<typeof useAppStore.getState>["snapshots"][number] | null;
+  refreshing: boolean;
+  onRefresh: () => void;
+  onTogglePin: () => void;
+  onEdit?: () => void;
+  onDelete: () => void;
+  onOpenStats: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: instance.id,
+  });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className="list-none"
+    >
+      <ProviderCard
+        instance={instance}
+        snapshot={snapshot}
+        refreshing={refreshing}
+        onRefresh={onRefresh}
+        onTogglePin={onTogglePin}
+        onEdit={onEdit}
+        onDelete={onDelete}
+        onOpenStats={onOpenStats}
+        handleProps={
+          { ...attributes, ...listeners } as ComponentPropsWithoutRef<"button">
+        }
+        dragging={isDragging}
+      />
+    </div>
+  );
+}
 
 export function Dashboard() {
   const {
@@ -37,6 +115,9 @@ export function Dashboard() {
     loading,
     error,
     clearError,
+    updateInstance,
+    removeInstance,
+    reorderInstances,
     lastRefreshedAt: storeLastRefreshedAt,
   } = useAppStore();
   const [view, setView] = useState<ViewKey>("overview");
@@ -44,6 +125,29 @@ export function Dashboard() {
   const language = useLanguage();
   const [noticeOpen, setNoticeOpen] = useState(false);
   const [remoteRefreshedAt, setRemoteRefreshedAt] = useState(0);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+
+  const ordered = useMemo(() => selectOrderedInstances(instances), [instances]);
+  const snapshotOf = (instanceId: string) =>
+    snapshots.find((snapshot) => snapshot.instanceId === instanceId) ?? null;
+
+  const sensors = useSensors(
+    // 4px 激活阈值：避免拖拽吞掉卡内按钮点击
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const onDragStart = (event: DragStartEvent) => setDraggingId(String(event.active.id));
+  const onDragEnd = (event: DragEndEvent) => {
+    setDraggingId(null);
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = ordered.findIndex((instance) => instance.id === active.id);
+    const newIndex = ordered.findIndex((instance) => instance.id === over.id);
+    if (oldIndex < 0 || newIndex < 0) return;
+    const next = arrayMove(ordered, oldIndex, newIndex);
+    void reorderInstances(next.map((instance) => instance.id));
+  };
 
   useEffect(() => {
     let disposed = false;
@@ -189,6 +293,10 @@ export function Dashboard() {
     void invoke("set_tray_alert", { active: anyAlertActive }).catch(() => undefined);
   }, [anyAlertActive]);
 
+  const draggingInstance = draggingId
+    ? ordered.find((instance) => instance.id === draggingId) ?? null
+    : null;
+
   return (
     <div className="flex h-full flex-col bg-canvas">
       <header className="flex items-center justify-between border-b border-line bg-surface px-6 py-3.5">
@@ -209,11 +317,10 @@ export function Dashboard() {
         </div>
         <div className="flex items-center gap-2.5">
           <Segmented<ViewKey>
-            value={view}
+            value={view === "stats" ? "overview" : view}
             onChange={setView}
             options={[
               { value: "overview", label: t("总览"), icon: <LayoutGrid className="h-3.5 w-3.5" /> },
-              { value: "stats", label: t("统计"), icon: <PieChart className="h-3.5 w-3.5" /> },
               { value: "settings", label: t("设置"), icon: <Settings className="h-3.5 w-3.5" /> },
             ]}
           />
@@ -257,7 +364,12 @@ export function Dashboard() {
       </header>
 
       <main className="flex-1 overflow-y-auto p-6">
-        <div className={cn("mx-auto", view === "stats" ? "max-w-5xl" : "max-w-4xl")}>
+        <div
+          className={cn(
+            view === "stats" && "mx-auto max-w-5xl",
+            view === "settings" && "mx-auto max-w-3xl",
+          )}
+        >
           {error && (
             <div className="mb-4 flex items-center justify-between gap-3 rounded-md border border-danger/20 bg-danger-soft px-4 py-2.5 text-[13px] text-danger-soft-fg">
               <span className="flex items-center gap-2">
@@ -275,36 +387,55 @@ export function Dashboard() {
             </div>
           )}
           {view === "overview" ? (
-            <div className="grid gap-4 lg:grid-cols-2">
-              {[...instances]
-                .sort((a, b) => a.sortOrder - b.sortOrder)
-                .map((instance) =>
-                  snapshots.find((snapshot) => snapshot.instanceId === instance.id),
-                )
-                .filter((snapshot): snapshot is NonNullable<typeof snapshot> => snapshot != null)
-                .map((snapshot) => (
-                  <ProviderCard
-                    key={snapshot.instanceId}
-                    snapshot={snapshot}
-                    refreshing={loading || refreshingInstances[snapshot.instanceId]}
-                    onRefresh={() => void refreshInstance(snapshot.instanceId)}
-                  />
-                ))}
-              {instances.length === 0 && snapshots.length === 0 && (
-                <div className="lg:col-span-2">
-                  <EmptyState
-                    icon={<Gauge className="h-5 w-5" />}
-                    title={t("还没有用量数据")}
-                    description="点击右上角「刷新」获取各 Provider 的最新用量。"
-                    action={
-                      <Button size="sm" onClick={() => void refreshAll(true)} disabled={refreshing}>
-                        <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} /> {t("立即刷新")}
-                      </Button>
-                    }
-                  />
-                </div>
-              )}
-            </div>
+            ordered.length === 0 ? (
+              initialLoaded && (
+                <EmptyState
+                  icon={<Gauge className="h-5 w-5" />}
+                  title={t("还没有供应商")}
+                  description={t("点击右上角「添加供应商」开始追踪用量。")}
+                />
+              )
+            ) : (
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragStart={onDragStart}
+                onDragEnd={onDragEnd}
+                onDragCancel={() => setDraggingId(null)}
+              >
+                <SortableContext
+                  items={ordered.map((instance) => instance.id)}
+                  strategy={rectSortingStrategy}
+                >
+                  <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,340px),1fr))] justify-center gap-4">
+                    {ordered.map((instance) => (
+                      <SortableProviderCard
+                        key={instance.id}
+                        instance={instance}
+                        snapshot={snapshotOf(instance.id)}
+                        refreshing={loading || refreshingInstances[instance.id]}
+                        onRefresh={() => void refreshInstance(instance.id)}
+                        onTogglePin={() =>
+                          void updateInstance(instance.id, { pinned: !instance.pinned })
+                        }
+                        onDelete={() => void removeInstance(instance.id)}
+                        onOpenStats={() => setView("stats")}
+                      />
+                    ))}
+                  </div>
+                </SortableContext>
+                <DragOverlay dropAnimation={null}>
+                  {draggingInstance && (
+                    <div className="w-full max-w-[460px] shadow-pop">
+                      <ProviderCard
+                        instance={draggingInstance}
+                        snapshot={snapshotOf(draggingInstance.id)}
+                      />
+                    </div>
+                  )}
+                </DragOverlay>
+              </DndContext>
+            )
           ) : view === "stats" ? (
             <Suspense
               fallback={

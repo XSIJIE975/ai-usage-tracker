@@ -18,6 +18,7 @@ const instance: ProviderInstance = {
   pinned: false,
   autoRefresh: true,
   threshold: 50,
+  createdAt: 0,
 };
 
 describe("deepseekProvider", () => {

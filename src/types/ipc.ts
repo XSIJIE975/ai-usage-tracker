@@ -9,6 +9,7 @@ export interface ProviderInstance {
   autoRefresh: boolean;
   /** DeepSeek=元，其余=已用百分比；null=不告警 */
   threshold: number | null;
+  createdAt: number;
 }
 
 /** 某实例已保存的凭据明文（凭据槽 → 值），仅含非空项 */

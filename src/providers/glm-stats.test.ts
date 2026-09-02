@@ -32,6 +32,7 @@ const glmInstance: ProviderInstance = {
   pinned: false,
   autoRefresh: true,
   threshold: 80,
+  createdAt: 0,
 };
 
 const credentialStatus = (planKey: boolean) => ({ planKey });

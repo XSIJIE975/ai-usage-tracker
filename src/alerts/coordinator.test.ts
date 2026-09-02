@@ -15,6 +15,7 @@ const instance = (overrides: Partial<ProviderInstance> = {}): ProviderInstance =
   pinned: false,
   autoRefresh: true,
   threshold: 50,
+  createdAt: 0,
   ...overrides,
 });
 

@@ -17,6 +17,7 @@ const instance: ProviderInstance = {
   pinned: false,
   autoRefresh: true,
   threshold: 80,
+  createdAt: 0,
 };
 
 describe("parseOpenCodeGoHtml", () => {

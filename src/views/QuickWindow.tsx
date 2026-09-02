@@ -12,6 +12,7 @@ import { BrandIcon } from "../components/BrandIcon";
 import { ProviderCard } from "../components/ProviderCard";
 import { NotificationCenterPanel } from "./NotificationCenterPanel";
 import { cn, formatClock } from "../lib/utils";
+import { selectOrderedInstances } from "../lib/instance";
 import { useT } from "../i18n";
 import { applyTheme } from "../lib/theme";
 import type { AppSettings } from "../types/ipc";
@@ -255,7 +256,7 @@ export function QuickWindow() {
                 {t("有额度告警待处理，点击查看通知中心")}
               </button>
             )}
-            {snapshots.length === 0 ? (
+            {instances.length === 0 && snapshots.length === 0 ? (
               <div className="flex h-52 flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-line-strong bg-surface p-4 text-center">
                 <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-surface-2 text-fg-muted">
                   <Gauge className="h-5 w-5" />
@@ -267,21 +268,20 @@ export function QuickWindow() {
               </div>
             ) : (
               <div className="space-y-3">
-                {[...instances]
-                  .sort((a, b) => a.sortOrder - b.sortOrder)
-                  .map((instance) =>
-                    snapshots.find((snapshot) => snapshot.instanceId === instance.id),
-                  )
-                  .filter((snapshot): snapshot is NonNullable<typeof snapshot> => snapshot != null)
-                  .map((snapshot) => (
-                    <ProviderCard
-                      key={snapshot.instanceId}
-                      snapshot={snapshot}
-                      compact
-                      refreshing={loading || refreshingInstances[snapshot.instanceId]}
-                      onRefresh={() => void refreshInstance(snapshot.instanceId)}
-                    />
-                  ))}
+                {selectOrderedInstances(instances).map((instance) => (
+                  <ProviderCard
+                    key={instance.id}
+                    instance={instance}
+                    snapshot={
+                      snapshots.find((snapshot) => snapshot.instanceId === instance.id) ?? null
+                    }
+                    compact
+                    refreshing={
+                      loading || refreshingInstances[instance.id]
+                    }
+                    onRefresh={() => void refreshInstance(instance.id)}
+                  />
+                ))}
               </div>
             )}
           </>
