@@ -9,7 +9,7 @@ import { SecretField, StatusBadge } from "./CredentialInput";
 import { ProviderAutoRefresh } from "./ProviderAutoRefresh";
 import { AlertThresholdSetting } from "./AlertThresholdSetting";
 import { DiagnosisButton } from "./DiagnosisButton";
-import { testGlmCodingPlanKey, testGlmWebToken } from "../../diagnostics";
+import { testGlmCodingPlanKey } from "../../diagnostics";
 import { SaveMessageBanner, type ProviderSettingsProps, type SaveMessage } from "./provider-settings";
 import { useT } from "../../i18n";
 import type { CredentialsInput } from "../../types/ipc";
@@ -24,20 +24,17 @@ export function GlmSettings({
   onOpenGeneral,
 }: ProviderSettingsProps) {
   const [planKey, setPlanKey] = useState("");
-  const [webToken, setWebToken] = useState("");
   const [message, setMessage] = useState<SaveMessage>(null);
   const [saving, setSaving] = useState(false);
   const t = useT();
 
   useEffect(() => {
     setPlanKey(credentials?.glmCodingPlanKey ?? "");
-    setWebToken(credentials?.glmWebToken ?? "");
   }, [credentials]);
 
   async function saveCredentials() {
     const input: CredentialsInput = {};
     if (planKey.trim()) input.glmCodingPlanKey = planKey.trim();
-    if (webToken.trim()) input.glmWebToken = webToken.trim();
     setSaving(true);
     try {
       await invoke("vault_save_credentials", { credentials: input });
@@ -70,7 +67,7 @@ export function GlmSettings({
       <CardHeader>
         <CardTitle>{t("智谱 GLM 凭据")}</CardTitle>
         <CardDescription>
-          {t("Coding Plan Key 用于订阅配额查询，控制台登录 JWT 用于按量付费余额查询；两者互不通用。")}
+          {t("Coding Plan API Key 用于订阅配额与用量统计查询")}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
@@ -84,13 +81,13 @@ export function GlmSettings({
 
         <div className="space-y-2.5">
           <div className="flex items-center justify-between">
-            <Label htmlFor="glmPlanKey">{t("智谱 Coding Plan Key")}</Label>
+            <Label htmlFor="glmPlanKey">{t("智谱 Coding Plan API Key")}</Label>
             <StatusBadge configured={Boolean(credentialStatus?.glmCodingPlanKey)} />
           </div>
           <SecretField
             id="glmPlanKey"
             value={planKey}
-            placeholder="eyJ..."
+            placeholder={t("粘贴 API Key")}
             disabled={saveDisabled}
             onChange={setPlanKey}
             onClear={() => void clearCredential("glmCodingPlanKey")}
@@ -102,32 +99,7 @@ export function GlmSettings({
           />
           <p className="text-xs leading-relaxed text-fg-muted">
             {t(
-              "获取方式：打开 bigmodel.cn 控制台 → Coding Plan 页 → 「生成 API Key」，复制生成的 JWT 形态密钥。",
-            )}
-          </p>
-        </div>
-
-        <div className="space-y-2.5">
-          <div className="flex items-center justify-between">
-            <Label htmlFor="glmWebToken">{t("控制台登录 JWT（会过期）")}</Label>
-            <StatusBadge configured={Boolean(credentialStatus?.glmWebToken)} />
-          </div>
-          <SecretField
-            id="glmWebToken"
-            value={webToken}
-            placeholder={t("bigmodel.cn 控制台登录令牌")}
-            disabled={saveDisabled}
-            onChange={setWebToken}
-            onClear={() => void clearCredential("glmWebToken")}
-            clearDisabled={!webToken}
-          />
-          <DiagnosisButton
-            test={() => testGlmWebToken(webToken)}
-            disabled={saveDisabled || saving || !webToken.trim()}
-          />
-          <p className="text-xs leading-relaxed text-fg-muted">
-            {t(
-              "获取方式：浏览器登录 bigmodel.cn → F12 打开开发者工具 → Application(应用) → Cookies → https://www.bigmodel.cn → 复制键 bigmodel_token_production 的值。该登录态会过期，余额查询失败时请重新粘贴。",
+              "获取方式：打开 bigmodel.cn 控制台 → Coding Plan 页 → 「生成 API Key」，复制生成的 API Key 粘贴到上方。",
             )}
           </p>
         </div>

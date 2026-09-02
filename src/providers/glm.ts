@@ -3,11 +3,10 @@ import type { CredentialStatus, HttpResult, MetricLine, ProviderSnapshot } from 
 import type { ProviderModule } from "./types";
 
 // 端点与响应结构以 GLM_PROVIDER_PLAN.md 3.2/3.3/3.4 的实测结论为准（2026-09-01）：
-// - 配额：open.bigmodel.cn/api/monitor/usage/quota/limit（Coding Plan Key 优先，缺失时 Rust 侧降用控制台登录 JWT）
-// - 余额：www.bigmodel.cn/api/biz/account/query-customer-account-report（控制台登录 JWT）
-// 两种凭据对 Authorization: Bearer <jwt> 均可用，无需裸头变体。
+// - 配额：open.bigmodel.cn/api/monitor/usage/quota/limit（Coding Plan API Key 鉴权，
+//   与智谱官方 glm-plan-usage 插件同款用法，Bearer/裸值均可用）
+// 按量付费余额通道（控制台登录 JWT + query-customer-account-report）已于 2026-09-02 移除。
 const QUOTA_URL = "https://open.bigmodel.cn/api/monitor/usage/quota/limit";
-const BALANCE_URL = "https://www.bigmodel.cn/api/biz/account/query-customer-account-report";
 
 const PROVIDER_NAME = "智谱 GLM";
 
@@ -38,11 +37,6 @@ interface GlmEnvelope<T> {
   data?: T;
 }
 
-interface GlmBalanceData {
-  balance?: number | string | null;
-  availableBalance?: number | string | null;
-}
-
 function truncate(text: string, max = 300): string {
   return text.length > max ? `${text.slice(0, max)}...` : text;
 }
@@ -51,12 +45,31 @@ function toErrorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function windowLabel(limit: QuotaLimit): string | null {
-  if (limit.unit === 3) {
-    const hours = typeof limit.number === "number" && limit.number > 0 ? limit.number : 5;
-    return `${hours} 小时请求配额`;
+interface WindowSpec {
+  label: string;
+  params?: Record<string, number>;
+}
+
+/**
+ * 窗口语义按实测与官方 glm-plan-usage 插件的处理约定：
+ * - 国内站 CREDIT_LIMIT：unit=3 → N 小时滚动窗口、unit=6 → 滚动周窗口
+ * - 国际站/旧版 TOKENS_LIMIT（5 小时 Token 窗口）、TIME_LIMIT（MCP 月度窗口）
+ * 未知 type/unit 一律忽略。
+ */
+function windowSpec(limit: QuotaLimit): WindowSpec | null {
+  if (limit.type === "CREDIT_LIMIT") {
+    if (limit.unit === 3) {
+      const hours = typeof limit.number === "number" && limit.number > 0 ? limit.number : 5;
+      return { label: "{hours} 小时请求配额", params: { hours } };
+    }
+    if (limit.unit === 6) return { label: "每周请求配额" };
+    return null;
   }
-  if (limit.unit === 6) return "每周请求配额";
+  if (limit.type === "TOKENS_LIMIT") {
+    const hours = typeof limit.number === "number" && limit.number > 0 ? limit.number : 5;
+    return { label: "{hours} 小时 Token 配额", params: { hours } };
+  }
+  if (limit.type === "TIME_LIMIT") return { label: "MCP 月度用量" };
   return null;
 }
 
@@ -75,9 +88,8 @@ export function parseQuotaLimits(data: GlmQuotaData | undefined): MetricLine[] {
     lines.push({ type: "badge", label: "套餐档位", value: formatLevel(data.level) });
   }
   for (const limit of data.limits ?? []) {
-    if (limit.type !== "CREDIT_LIMIT") continue;
-    const label = windowLabel(limit);
-    if (!label) continue;
+    const spec = windowSpec(limit);
+    if (!spec) continue;
     const used =
       limit.currentValue ??
       (limit.usage != null && limit.remaining != null ? limit.usage - limit.remaining : undefined);
@@ -87,7 +99,8 @@ export function parseQuotaLimits(data: GlmQuotaData | undefined): MetricLine[] {
     if (limit.percentage == null && (used == null || limitValue == null)) continue;
     lines.push({
       type: "progress",
-      label,
+      label: spec.label,
+      ...(spec.params ? { params: spec.params } : {}),
       ...(used != null && limitValue != null ? { used, limit: limitValue } : {}),
       ...(limit.percentage != null ? { percentUsed: limit.percentage } : {}),
       ...(limit.nextResetTime != null && limit.nextResetTime > 0
@@ -98,36 +111,37 @@ export function parseQuotaLimits(data: GlmQuotaData | undefined): MetricLine[] {
   return lines;
 }
 
-/** 解析余额响应为「账户余额」行（实测结构见计划文档 3.4）；解析失败返回 null（仅丢该行，不拖垮快照） */
-export function parseFinanceBalance(json: GlmEnvelope<GlmBalanceData>): MetricLine | null {
-  const data = json.data;
-  if (!data) return null;
-  const raw = data.balance ?? data.availableBalance;
-  const amount = raw == null ? Number.NaN : Number(raw);
-  if (!Number.isFinite(amount)) return null;
-  const formatter = new Intl.NumberFormat("zh-CN", { style: "currency", currency: "CNY" });
-  return { type: "text", label: "账户余额", value: formatter.format(amount) };
-}
-
-interface SourceOutcome {
-  ok: boolean;
-  lines: MetricLine[];
-  error?: string;
-}
-
-function processQuota(result: HttpResult): SourceOutcome {
+/** 配额响应整体处理：区分「未订阅/无数据」与「返回了未识别的类型」两种空结果 */
+function processQuota(result: HttpResult): { ok: boolean; lines: MetricLine[]; error?: string } {
   if (result.status !== 200) {
     const detail = result.bodyText?.trim() || "";
-    return { ok: false, lines: [], error: `Coding Plan 配额接口返回 HTTP ${result.status}${detail ? `：${truncate(detail)}` : ""}` };
+    return {
+      ok: false,
+      lines: [],
+      error: `Coding Plan 配额接口返回 HTTP ${result.status}${detail ? `：${truncate(detail)}` : ""}`,
+    };
   }
   try {
     const json = JSON.parse(result.bodyText) as GlmEnvelope<GlmQuotaData>;
     if (json.success === false) {
-      return { ok: false, lines: [], error: `Coding Plan 配额查询失败：code=${json.code ?? "未知"}${json.msg ? ` msg=${truncate(json.msg, 120)}` : ""}` };
+      return {
+        ok: false,
+        lines: [],
+        error: `Coding Plan 配额查询失败：code=${json.code ?? "未知"}${json.msg ? ` msg=${truncate(json.msg, 120)}` : ""}`,
+      };
     }
     const lines = parseQuotaLimits(json.data);
-    if (lines.length === 0) {
-      return { ok: false, lines: [], error: "未订阅 Coding Plan 或暂无配额数据" };
+    const progressCount = lines.filter((line) => line.type === "progress").length;
+    if (progressCount === 0) {
+      // 仅剩 badge 行（或全空）不算成功快照：区分「未订阅/无数据」与「类型未识别」
+      const hasRawLimits = (json.data?.limits?.length ?? 0) > 0;
+      return {
+        ok: false,
+        lines: [],
+        error: hasRawLimits
+          ? "配额响应包含未识别的窗口类型，已忽略"
+          : "未订阅 Coding Plan 或暂无配额数据",
+      };
     }
     return { ok: true, lines };
   } catch (error) {
@@ -135,99 +149,41 @@ function processQuota(result: HttpResult): SourceOutcome {
   }
 }
 
-function processBalance(result: HttpResult): SourceOutcome {
-  if (result.status !== 200) {
-    const detail = result.bodyText?.trim() || "";
-    return { ok: false, lines: [], error: `余额接口返回 HTTP ${result.status}${detail ? `：${truncate(detail)}` : ""}` };
-  }
-  try {
-    const json = JSON.parse(result.bodyText) as GlmEnvelope<GlmBalanceData>;
-    const line = parseFinanceBalance(json);
-    if (!line) {
-      return { ok: false, lines: [], error: "余额接口未返回可用数据" };
-    }
-    return { ok: true, lines: [line] };
-  } catch (error) {
-    return { ok: false, lines: [], error: `余额返回数据解析失败：${toErrorText(error)}` };
-  }
-}
-
 async function fetchGlmSnapshot(): Promise<ProviderSnapshot> {
   const status = await invoke<CredentialStatus>("vault_credential_status");
   const updatedAt = Date.now();
-  if (!status.glmCodingPlanKey && !status.glmWebToken) {
+  if (!status.glmCodingPlanKey) {
     return {
       providerId: "glm",
       providerName: PROVIDER_NAME,
       status: "needs_config",
       updatedAt,
-      message: "请在设置中填写智谱凭据（Coding Plan Key 或控制台登录 JWT）",
+      message: "请在设置中填写智谱 Coding Plan API Key",
       lines: [],
     };
   }
 
-  const hasWebToken = Boolean(status.glmWebToken);
-  const [quotaSettled, balanceSettled] = await Promise.allSettled([
-    invoke<HttpResult>("provider_request", {
+  let outcome: { ok: boolean; lines: MetricLine[]; error?: string };
+  try {
+    const result = await invoke<HttpResult>("provider_request", {
       providerId: "glm",
       url: QUOTA_URL,
       method: "GET",
       auth: "bearer",
       headers: { Accept: "application/json" },
-    }),
-    hasWebToken
-      ? invoke<HttpResult>("provider_request", {
-          providerId: "glm-web",
-          url: BALANCE_URL,
-          method: "GET",
-          auth: "bearer",
-          headers: { Accept: "application/json" },
-        })
-      : Promise.resolve(null),
-  ]);
-
-  const messages: string[] = [];
-  const lines: MetricLine[] = [];
-  let anyOk = false;
-  let anyFailure = false;
-
-  if (quotaSettled.status === "fulfilled") {
-    const outcome = processQuota(quotaSettled.value);
-    if (outcome.ok) {
-      anyOk = true;
-      lines.push(...outcome.lines);
-    } else {
-      anyFailure = true;
-      messages.push(outcome.error ?? "Coding Plan 配额查询失败");
-    }
-  } else {
-    anyFailure = true;
-    messages.push(`Coding Plan 配额查询失败：${toErrorText(quotaSettled.reason)}`);
+    });
+    outcome = processQuota(result);
+  } catch (error) {
+    outcome = { ok: false, lines: [], error: `Coding Plan 配额查询失败：${toErrorText(error)}` };
   }
 
-  if (hasWebToken) {
-    if (balanceSettled.status === "fulfilled" && balanceSettled.value) {
-      const outcome = processBalance(balanceSettled.value);
-      if (outcome.ok) {
-        anyOk = true;
-        lines.push(...outcome.lines);
-      } else {
-        anyFailure = true;
-        messages.push(outcome.error ?? "余额查询失败");
-      }
-    } else if (balanceSettled.status === "rejected") {
-      anyFailure = true;
-      messages.push(`余额查询失败：${toErrorText(balanceSettled.reason)}`);
-    }
-  }
-
-  if (!anyOk) {
+  if (!outcome.ok) {
     return {
       providerId: "glm",
       providerName: PROVIDER_NAME,
       status: "error",
       updatedAt,
-      message: truncate(messages.join("；")),
+      message: outcome.error ?? "Coding Plan 配额查询失败",
       lines: [],
     };
   }
@@ -237,14 +193,13 @@ async function fetchGlmSnapshot(): Promise<ProviderSnapshot> {
     providerName: PROVIDER_NAME,
     status: "ok",
     updatedAt,
-    ...(anyFailure ? { message: truncate(messages.join("；")) } : {}),
-    lines,
+    lines: outcome.lines,
   };
 }
 
 export const glmProvider: ProviderModule = {
   id: "glm",
   name: "智谱 GLM",
-  description: "查询智谱 Coding Plan 配额与按量付费余额",
+  description: "查询智谱 Coding Plan 配额与用量",
   fetch: fetchGlmSnapshot,
 };

@@ -52,7 +52,7 @@ export function SettingsView() {
   const opencodeConfigured = Boolean(
     credentialStatus?.opencodeGoWorkspaceId && credentialStatus?.opencodeGoAuthCookie,
   );
-  const glmConfigured = Boolean(credentialStatus?.glmCodingPlanKey || credentialStatus?.glmWebToken);
+  const glmConfigured = Boolean(credentialStatus?.glmCodingPlanKey);
 
   const pendingMigration = Boolean(vaultStatus?.needsMigration);
   const providerProps: ProviderSettingsProps = {

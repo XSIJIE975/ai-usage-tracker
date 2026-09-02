@@ -12,7 +12,6 @@ export interface CredentialStatus {
   opencodeGoAuthCookie: boolean;
   opencodeGoApiKey: boolean;
   glmCodingPlanKey: boolean;
-  glmWebToken: boolean;
 }
 
 export interface VaultCredentials {
@@ -22,7 +21,6 @@ export interface VaultCredentials {
   opencodeGoAuthCookie?: string;
   opencodeGoApiKey?: string;
   glmCodingPlanKey?: string;
-  glmWebToken?: string;
 }
 
 export interface CredentialsInput {
@@ -32,7 +30,6 @@ export interface CredentialsInput {
   opencodeGoAuthCookie?: string | null;
   opencodeGoApiKey?: string | null;
   glmCodingPlanKey?: string | null;
-  glmWebToken?: string | null;
 }
 
 export interface HttpResult {
@@ -51,6 +48,8 @@ export interface ProviderRequestOptions {
 export interface MetricLine {
   type: "progress" | "text" | "badge";
   label: string;
+  /** label 模板的 {name} 占位符实参（如 "{hours} 小时请求配额" 的 hours），渲染端替换 */
+  params?: Record<string, string | number>;
   value?: string;
   used?: number;
   limit?: number;

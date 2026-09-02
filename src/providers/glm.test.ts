@@ -7,7 +7,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 import { invoke } from "@tauri-apps/api/core";
 import type { HttpResult } from "../types/ipc";
-import { glmProvider, parseFinanceBalance, parseQuotaLimits } from "./glm";
+import { glmProvider, parseQuotaLimits } from "./glm";
 import type { GlmQuotaData } from "./glm";
 
 const mockInvoke = vi.mocked(invoke);
@@ -18,7 +18,6 @@ const readFixture = (name: string): string =>
 const loadQuotaFixture = () => JSON.parse(readFixture("glm-quota.json"));
 // 注意：未订阅形态未实测（测试账号已订阅 Lite），此 fixture 按代码容错分支构造
 const loadUnsubscribedFixture = () => JSON.parse(readFixture("glm-quota-unsubscribed.json"));
-const loadBalanceFixture = () => JSON.parse(readFixture("glm-finance-balance.json"));
 
 const httpResult = (body: unknown, status = 200): HttpResult => ({
   status,
@@ -26,14 +25,13 @@ const httpResult = (body: unknown, status = 200): HttpResult => ({
   bodyText: typeof body === "string" ? body : JSON.stringify(body),
 });
 
-const credentialStatus = (fields: { planKey?: boolean; webToken?: boolean }) => ({
+const credentialStatus = (fields: { planKey?: boolean }) => ({
   deepseekApiKey: false,
   deepseekUserToken: false,
   opencodeGoWorkspaceId: false,
   opencodeGoAuthCookie: false,
   opencodeGoApiKey: false,
   glmCodingPlanKey: fields.planKey ?? false,
-  glmWebToken: fields.webToken ?? false,
 });
 
 describe("glmProvider.fetch", () => {
@@ -41,30 +39,31 @@ describe("glmProvider.fetch", () => {
     mockInvoke.mockReset();
   });
 
-  it("returns needs_config when both credentials are missing", async () => {
+  it("returns needs_config when the Coding Plan API Key is missing", async () => {
     mockInvoke.mockResolvedValueOnce(credentialStatus({}));
 
     const snapshot = await glmProvider.fetch();
     expect(snapshot.status).toBe("needs_config");
+    expect(snapshot.message).toContain("Coding Plan API Key");
     expect(mockInvoke).toHaveBeenCalledTimes(1);
   });
 
-  it("parses quota and balance lines when both sources succeed", async () => {
+  it("parses quota lines with a single Coding Plan API Key request", async () => {
     mockInvoke
-      .mockResolvedValueOnce(credentialStatus({ planKey: true, webToken: true }))
-      .mockResolvedValueOnce(httpResult(loadQuotaFixture()))
-      .mockResolvedValueOnce(httpResult(loadBalanceFixture()));
+      .mockResolvedValueOnce(credentialStatus({ planKey: true }))
+      .mockResolvedValueOnce(httpResult(loadQuotaFixture()));
 
     const snapshot = await glmProvider.fetch();
     expect(snapshot.status).toBe("ok");
     expect(snapshot.message).toBeUndefined();
-    expect(snapshot.lines).toHaveLength(4);
+    expect(snapshot.lines).toHaveLength(3);
     expect(snapshot.lines[0]).toMatchObject({ type: "badge", label: "套餐档位", value: "Lite" });
 
     const [fiveHour, weekly] = snapshot.lines.slice(1);
     expect(fiveHour).toMatchObject({
       type: "progress",
-      label: "5 小时请求配额",
+      label: "{hours} 小时请求配额",
+      params: { hours: 5 },
       used: 0,
       limit: 2000,
       percentUsed: 0,
@@ -79,11 +78,8 @@ describe("glmProvider.fetch", () => {
     });
     expect(weekly.resetsAt).toBe(new Date(1788362308998).toISOString());
 
-    expect(snapshot.lines[3]).toMatchObject({ type: "text", label: "账户余额" });
-    expect(snapshot.lines[3].value).toContain("1.76");
-
-    expect(mockInvoke).toHaveBeenNthCalledWith(
-      2,
+    expect(mockInvoke).toHaveBeenCalledTimes(2);
+    expect(mockInvoke).toHaveBeenLastCalledWith(
       "provider_request",
       expect.objectContaining({
         providerId: "glm",
@@ -92,71 +88,49 @@ describe("glmProvider.fetch", () => {
         auth: "bearer",
       }),
     );
-    expect(mockInvoke).toHaveBeenNthCalledWith(
-      3,
-      "provider_request",
-      expect.objectContaining({
-        providerId: "glm-web",
-        url: "https://www.bigmodel.cn/api/biz/account/query-customer-account-report",
-        method: "GET",
-        auth: "bearer",
-      }),
-    );
   });
 
-  it("degrades to balance-only with a message when the plan is unsubscribed", async () => {
+  it("returns error with server code/msg when the plan is unsubscribed", async () => {
     mockInvoke
-      .mockResolvedValueOnce(credentialStatus({ planKey: true, webToken: true }))
-      .mockResolvedValueOnce(httpResult(loadUnsubscribedFixture()))
-      .mockResolvedValueOnce(httpResult(loadBalanceFixture()));
+      .mockResolvedValueOnce(credentialStatus({ planKey: true }))
+      .mockResolvedValueOnce(httpResult(loadUnsubscribedFixture()));
 
     const snapshot = await glmProvider.fetch();
-    expect(snapshot.status).toBe("ok");
-    expect(snapshot.lines).toHaveLength(1);
-    expect(snapshot.lines[0]).toMatchObject({ type: "text", label: "账户余额" });
+    expect(snapshot.status).toBe("error");
+    expect(snapshot.lines).toHaveLength(0);
     expect(snapshot.message).toContain("403");
     expect(snapshot.message).toContain("未开通 Coding Plan");
   });
 
-  it("returns quota-only lines without a web token and skips the balance request", async () => {
+  it("reports unrecognized window types instead of claiming the plan is unsubscribed", async () => {
     mockInvoke
-      .mockResolvedValueOnce(credentialStatus({ planKey: true, webToken: false }))
-      .mockResolvedValueOnce(httpResult(loadQuotaFixture()));
-
-    const snapshot = await glmProvider.fetch();
-    expect(snapshot.status).toBe("ok");
-    expect(snapshot.lines).toHaveLength(3);
-    expect(snapshot.lines.map((line) => line.label)).toEqual([
-      "套餐档位",
-      "5 小时请求配额",
-      "每周请求配额",
-    ]);
-    expect(mockInvoke).toHaveBeenCalledTimes(2);
-  });
-
-  it("returns error with server code/msg when all sources fail", async () => {
-    mockInvoke
-      .mockResolvedValueOnce(credentialStatus({ planKey: true, webToken: true }))
-      .mockResolvedValueOnce(httpResult(loadUnsubscribedFixture()))
-      .mockResolvedValueOnce(httpResult({ code: 401, msg: "token 已过期" }, 401));
+      .mockResolvedValueOnce(credentialStatus({ planKey: true }))
+      .mockResolvedValueOnce(
+        httpResult({ code: 200, success: true, data: { level: "lite", limits: [{ type: "FUTURE_LIMIT" }] } }),
+      );
 
     const snapshot = await glmProvider.fetch();
     expect(snapshot.status).toBe("error");
-    expect(snapshot.message).toContain("403");
-    expect(snapshot.message).toContain("401");
-    expect(snapshot.lines).toHaveLength(0);
+    expect(snapshot.message).toContain("未识别的窗口类型");
   });
 
-  it("stays ok when the balance request rejects", async () => {
+  it("returns error with the HTTP status when the API responds non-200", async () => {
     mockInvoke
-      .mockResolvedValueOnce(credentialStatus({ planKey: true, webToken: true }))
-      .mockResolvedValueOnce(httpResult(loadQuotaFixture()))
+      .mockResolvedValueOnce(credentialStatus({ planKey: true }))
+      .mockResolvedValueOnce(httpResult("unauthorized", 401));
+
+    const snapshot = await glmProvider.fetch();
+    expect(snapshot.status).toBe("error");
+    expect(snapshot.message).toContain("401");
+  });
+
+  it("returns error when the request rejects", async () => {
+    mockInvoke
+      .mockResolvedValueOnce(credentialStatus({ planKey: true }))
       .mockRejectedValueOnce(new Error("network down"));
 
     const snapshot = await glmProvider.fetch();
-    expect(snapshot.status).toBe("ok");
-    expect(snapshot.lines).toHaveLength(3);
-    expect(snapshot.message).toContain("余额查询失败");
+    expect(snapshot.status).toBe("error");
     expect(snapshot.message).toContain("network down");
   });
 });
@@ -167,7 +141,13 @@ describe("parseQuotaLimits", () => {
     const lines = parseQuotaLimits(json.data);
     expect(lines).toHaveLength(3);
     expect(lines[0]).toMatchObject({ type: "badge", value: "Lite" });
-    expect(lines[1]).toMatchObject({ label: "5 小时请求配额", used: 0, limit: 2000, percentUsed: 0 });
+    expect(lines[1]).toMatchObject({
+      label: "{hours} 小时请求配额",
+      params: { hours: 5 },
+      used: 0,
+      limit: 2000,
+      percentUsed: 0,
+    });
     expect(lines[2]).toMatchObject({
       label: "每周请求配额",
       used: 1994,
@@ -182,7 +162,7 @@ describe("parseQuotaLimits", () => {
       level: "pro",
       limits: [
         { type: "CREDIT_LIMIT", unit: 3, number: 5, usage: 1000, remaining: 400 },
-        { type: "TOKENS_LIMIT", percentage: 10 },
+        { type: "FUTURE_LIMIT", percentage: 10 },
         { type: "CREDIT_LIMIT", unit: 9, number: 2, usage: 1 },
         // 无任何数值字段的窗口：无信息可渲染，忽略
         { type: "CREDIT_LIMIT", unit: 6 },
@@ -190,31 +170,37 @@ describe("parseQuotaLimits", () => {
     });
     expect(lines).toHaveLength(2);
     expect(lines[0]).toMatchObject({ type: "badge", value: "Pro" });
-    expect(lines[1]).toMatchObject({ label: "5 小时请求配额", used: 600, limit: 1000 });
+    expect(lines[1]).toMatchObject({ label: "{hours} 小时请求配额", used: 600, limit: 1000 });
+  });
+
+  it("recognizes the international TOKENS_LIMIT / TIME_LIMIT vocabulary", () => {
+    const lines = parseQuotaLimits({
+      level: "max",
+      limits: [
+        { type: "TOKENS_LIMIT", unit: 3, number: 5, percentage: 12, nextResetTime: 1788362308998 },
+        { type: "TIME_LIMIT", unit: 5, number: 1, usage: 100, currentValue: 6, percentage: 6 },
+      ],
+    });
+    expect(lines).toHaveLength(3);
+    expect(lines[1]).toMatchObject({
+      label: "{hours} 小时 Token 配额",
+      params: { hours: 5 },
+      percentUsed: 12,
+      resetsAt: new Date(1788362308998).toISOString(),
+    });
+    expect(lines[2]).toMatchObject({ label: "MCP 月度用量", used: 6, limit: 100, percentUsed: 6 });
+  });
+
+  it("defaults the hour window to 5 when number is missing", () => {
+    const lines = parseQuotaLimits({
+      limits: [{ type: "TOKENS_LIMIT", percentage: 3 }],
+    });
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ label: "{hours} 小时 Token 配额", params: { hours: 5 } });
   });
 
   it("returns empty lines for missing data", () => {
     expect(parseQuotaLimits(undefined)).toEqual([]);
     expect(parseQuotaLimits({})).toEqual([]);
-  });
-});
-
-describe("parseFinanceBalance", () => {
-  it("parses the captured fixture balance", () => {
-    const line = parseFinanceBalance(loadBalanceFixture());
-    expect(line).toMatchObject({ type: "text", label: "账户余额" });
-    expect(line?.value).toContain("1.76");
-  });
-
-  it("supports string amounts and the availableBalance fallback", () => {
-    expect(parseFinanceBalance({ data: { balance: "12.5" } })?.value).toContain("12.5");
-    expect(parseFinanceBalance({ data: { availableBalance: 3.2 } })?.value).toContain("3.2");
-  });
-
-  it("returns null when fields are missing or invalid", () => {
-    expect(parseFinanceBalance({})).toBeNull();
-    expect(parseFinanceBalance({ data: {} })).toBeNull();
-    expect(parseFinanceBalance({ data: { balance: null } })).toBeNull();
-    expect(parseFinanceBalance({ data: { balance: "abc" } })).toBeNull();
   });
 });

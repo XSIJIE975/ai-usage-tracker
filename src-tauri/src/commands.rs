@@ -25,7 +25,6 @@ pub struct CredentialStatus {
     pub opencode_go_auth_cookie: bool,
     pub opencode_go_api_key: bool,
     pub glm_coding_plan_key: bool,
-    pub glm_web_token: bool,
 }
 
 #[derive(Serialize)]
@@ -37,7 +36,6 @@ pub struct VaultCredentials {
     pub opencode_go_auth_cookie: Option<String>,
     pub opencode_go_api_key: Option<String>,
     pub glm_coding_plan_key: Option<String>,
-    pub glm_web_token: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -124,7 +122,6 @@ pub fn vault_credentials(state: State<'_, AppState>) -> Result<VaultCredentials,
         opencode_go_auth_cookie: credential_text(credentials, "opencodeGoAuthCookie"),
         opencode_go_api_key: credential_text(credentials, "opencodeGoApiKey"),
         glm_coding_plan_key: credential_text(credentials, "glmCodingPlanKey"),
-        glm_web_token: credential_text(credentials, "glmWebToken"),
     })
 }
 
@@ -139,7 +136,6 @@ pub fn vault_credential_status(state: State<'_, AppState>) -> Result<CredentialS
             opencode_go_auth_cookie: false,
             opencode_go_api_key: false,
             glm_coding_plan_key: false,
-            glm_web_token: false,
         });
     }
     let credentials = vault.credentials()?;
@@ -150,7 +146,6 @@ pub fn vault_credential_status(state: State<'_, AppState>) -> Result<CredentialS
         opencode_go_auth_cookie: has_text(credentials, "opencodeGoAuthCookie"),
         opencode_go_api_key: has_text(credentials, "opencodeGoApiKey"),
         glm_coding_plan_key: has_text(credentials, "glmCodingPlanKey"),
-        glm_web_token: has_text(credentials, "glmWebToken"),
     })
 }
 
@@ -482,7 +477,7 @@ pub fn clear_notifications(state: State<'_, AppState>) -> Result<(), String> {
 
 /// bearer auth 的凭据注入：按 providerId 从凭据库查 key（空串视为未配置，与
 /// vault_credential_status 的 has_text 语义一致），缺失时返回面向用户的错误。
-/// glm：Coding Plan Key 优先，缺失时降用控制台登录 JWT（实测两者皆可查配额）。
+/// glm：Coding Plan API Key（官方 glm-plan-usage 插件同款用法，可查配额与用量统计）。
 fn resolve_bearer_key<'a>(provider_id: &str, credentials: &'a Value) -> Result<&'a str, String> {
     let get_str = |key: &str| -> Option<&'a str> {
         credentials
@@ -498,10 +493,7 @@ fn resolve_bearer_key<'a>(provider_id: &str, credentials: &'a Value) -> Result<&
         "opencode-go" => {
             get_str("opencodeGoApiKey").ok_or_else(|| "缺少 OpenCode Go API Key".to_string())
         }
-        "glm" => get_str("glmCodingPlanKey")
-            .or_else(|| get_str("glmWebToken"))
-            .ok_or_else(|| "缺少智谱 Coding Plan Key 或控制台登录 JWT".to_string()),
-        "glm-web" => get_str("glmWebToken").ok_or_else(|| "缺少智谱控制台登录 JWT".to_string()),
+        "glm" => get_str("glmCodingPlanKey").ok_or_else(|| "缺少智谱 Coding Plan API Key".to_string()),
         _ => Err("不支持的 provider bearer auth".to_string()),
     }
 }
@@ -658,7 +650,6 @@ mod tests {
             opencode_go_auth_cookie: false,
             opencode_go_api_key: false,
             glm_coding_plan_key: false,
-            glm_web_token: false,
         })
         .expect("credential status should serialize");
         assert_eq!(status["deepseekUserToken"], false);
@@ -670,7 +661,6 @@ mod tests {
             opencode_go_auth_cookie: None,
             opencode_go_api_key: None,
             glm_coding_plan_key: None,
-            glm_web_token: None,
         })
         .expect("vault credentials should serialize");
         assert_eq!(credentials["deepseekUserToken"], "token");
@@ -685,11 +675,9 @@ mod tests {
             opencode_go_auth_cookie: false,
             opencode_go_api_key: false,
             glm_coding_plan_key: true,
-            glm_web_token: true,
         })
         .expect("credential status should serialize");
         assert_eq!(status["glmCodingPlanKey"], true);
-        assert_eq!(status["glmWebToken"], true);
 
         let credentials = serde_json::to_value(VaultCredentials {
             deepseek_api_key: None,
@@ -698,11 +686,9 @@ mod tests {
             opencode_go_auth_cookie: None,
             opencode_go_api_key: None,
             glm_coding_plan_key: Some("plan-key".to_string()),
-            glm_web_token: Some("web-token".to_string()),
         })
         .expect("vault credentials should serialize");
         assert_eq!(credentials["glmCodingPlanKey"], "plan-key");
-        assert_eq!(credentials["glmWebToken"], "web-token");
     }
 
     #[test]
@@ -711,28 +697,28 @@ mod tests {
             "deepseekApiKey": "sk-1",
             "deepseekUserToken": "tok-1",
             "opencodeGoApiKey": "oc-1",
-            "glmCodingPlanKey": "plan",
-            "glmWebToken": "web"
+            "glmCodingPlanKey": "plan"
         });
         assert_eq!(resolve_bearer_key("deepseek", &creds).unwrap(), "sk-1");
         assert_eq!(resolve_bearer_key("deepseek-platform", &creds).unwrap(), "tok-1");
         assert_eq!(resolve_bearer_key("opencode-go", &creds).unwrap(), "oc-1");
         assert_eq!(resolve_bearer_key("glm", &creds).unwrap(), "plan");
-        assert_eq!(resolve_bearer_key("glm-web", &creds).unwrap(), "web");
     }
 
     #[test]
-    fn glm_bearer_falls_back_to_web_token_when_plan_key_missing_or_blank() {
-        let no_plan = serde_json::json!({ "glmWebToken": "web" });
-        assert_eq!(resolve_bearer_key("glm", &no_plan).unwrap(), "web");
+    fn glm_bearer_requires_plan_key_and_ignores_legacy_web_token() {
+        // 旧版本保存过的 glmWebToken 残留在 vault 中不再参与鉴权
+        let legacy = serde_json::json!({ "glmCodingPlanKey": "plan", "glmWebToken": "web" });
+        assert_eq!(resolve_bearer_key("glm", &legacy).unwrap(), "plan");
+
+        let only_web = serde_json::json!({ "glmWebToken": "web" });
+        assert!(resolve_bearer_key("glm", &only_web).is_err());
 
         // 与 vault 侧 has_text 语义一致：空串视为未配置（保存端已 trim，不会存入空白串）
-        let blank_plan = serde_json::json!({ "glmCodingPlanKey": "", "glmWebToken": "web" });
-        assert_eq!(resolve_bearer_key("glm", &blank_plan).unwrap(), "web");
+        let blank_plan = serde_json::json!({ "glmCodingPlanKey": "" });
+        assert!(resolve_bearer_key("glm", &blank_plan).is_err());
 
-        let only_plan = serde_json::json!({ "glmCodingPlanKey": "plan" });
-        assert_eq!(resolve_bearer_key("glm", &only_plan).unwrap(), "plan");
-        assert!(resolve_bearer_key("glm-web", &only_plan).is_err());
+        assert!(resolve_bearer_key("glm-web", &legacy).is_err());
     }
 
     #[test]
@@ -740,10 +726,7 @@ mod tests {
         let creds = serde_json::json!({});
         assert!(resolve_bearer_key("glm", &creds)
             .unwrap_err()
-            .contains("Coding Plan Key"));
-        assert!(resolve_bearer_key("glm-web", &creds)
-            .unwrap_err()
-            .contains("控制台登录 JWT"));
+            .contains("Coding Plan API Key"));
         assert!(resolve_bearer_key("deepseek", &creds)
             .unwrap_err()
             .contains("DeepSeek"));

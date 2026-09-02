@@ -109,20 +109,9 @@ export function testOpenCodeApiKey(key: string): Promise<DiagnosisResult> {
   return diagnose("https://opencode.ai/zen/go/v1/usage", "bearer", key);
 }
 
-/** 智谱 Coding Plan Key：Coding Plan 配额接口探测 */
+/** 智谱 Coding Plan API Key：Coding Plan 配额接口探测 */
 export function testGlmCodingPlanKey(key: string): Promise<DiagnosisResult> {
   if (!key.trim())
     return Promise.resolve({ ok: false, status: 0, latencyMs: 0, code: "missing-api-key" });
   return diagnose("https://open.bigmodel.cn/api/monitor/usage/quota/limit", "bearer", key);
-}
-
-/** 智谱控制台登录 JWT：按量付费余额接口探测 */
-export function testGlmWebToken(token: string): Promise<DiagnosisResult> {
-  if (!token.trim())
-    return Promise.resolve({ ok: false, status: 0, latencyMs: 0, code: "missing-user-token" });
-  return diagnose(
-    "https://www.bigmodel.cn/api/biz/account/query-customer-account-report",
-    "bearer",
-    token,
-  );
 }

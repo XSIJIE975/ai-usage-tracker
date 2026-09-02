@@ -20,7 +20,7 @@ import { loadProviderHistory, type ProviderHistory } from "../stats/snapshot-his
 import { analyzeBurnRate } from "../stats/burn-rate";
 import { describeBurnRate } from "../stats/burn-rate-format";
 import { useAppStore } from "../store/useAppStore";
-import { useLanguage, useT } from "../i18n";
+import { applyParams, useLanguage, useT } from "../i18n";
 import { cn } from "../lib/utils";
 
 function useNow(intervalMs = 30_000) {
@@ -95,7 +95,7 @@ function statusBadge(status: ProviderSnapshot["status"]) {
 
 function MetricRow({ line, now }: { line: MetricLine; now: number }) {
   const t = useT();
-  const label = t(line.label);
+  const label = applyParams(t(line.label), line.params);
   const valueText = line.value !== undefined ? t(line.value) : undefined;
   if (line.type === "progress") {
     const percent = line.percentUsed ?? (line.limit ? Math.round(((line.used ?? 0) / line.limit) * 100) : 0);
