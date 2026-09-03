@@ -335,9 +335,13 @@ export function Dashboard() {
           />
           <Popover open={addOpen} onOpenChange={setAddOpen}>
             <PopoverTrigger asChild>
-              <Button size="sm" aria-label={t("添加供应商")} title={t("添加供应商")}>
-                <Plus className="h-3.5 w-3.5" /> {t("添加供应商")}
-              </Button>
+              <IconButton
+                aria-label={t("添加供应商")}
+                title={t("添加供应商")}
+                className="rounded-full bg-brand text-brand-fg shadow-sm hover:bg-brand-hover hover:text-brand-fg"
+              >
+                <Plus className="h-4 w-4" />
+              </IconButton>
             </PopoverTrigger>
             <PopoverContent align="end" className="w-80 p-0">
               <Command>
