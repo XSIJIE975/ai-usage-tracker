@@ -385,8 +385,31 @@ fn alert_tray_icon(default_icon: &tauri::image::Image<'_>) -> tauri::image::Imag
     tauri::image::Image::new_owned(rgba, width as u32, height as u32)
 }
 
+/// 托盘悬停提示文案（zh/en × 常态/告警态）
+pub fn tray_tooltip(language: &str, alert: bool) -> &'static str {
+    match (language == "en", alert) {
+        (false, false) => "AI 用量助手",
+        (false, true) => "AI 用量助手 — 有额度告警",
+        (true, false) => "AI Usage Tracker",
+        (true, true) => "AI Usage Tracker — quota alert",
+    }
+}
+
+/// 应用名（窗口标题与托盘提示共用，随界面语言）
+pub fn app_title(language: &str) -> &'static str {
+    if language == "en" {
+        "AI Usage Tracker"
+    } else {
+        "AI 用量助手"
+    }
+}
+
 #[tauri::command]
-pub fn set_tray_alert(app: AppHandle, active: bool) -> Result<(), String> {
+pub fn set_tray_alert(
+    app: AppHandle,
+    active: bool,
+    language: Option<String>,
+) -> Result<(), String> {
     let tray = app
         .tray_by_id("main-tray")
         .ok_or_else(|| "托盘未初始化".to_string())?;
@@ -396,15 +419,11 @@ pub fn set_tray_alert(app: AppHandle, active: bool) -> Result<(), String> {
             .ok_or_else(|| "缺少默认图标".to_string())?;
         tray.set_icon(Some(alert_tray_icon(default_icon)))
             .map_err(|error| error.to_string())?;
-        tray.set_tooltip(Some("AI 用量助手 — 有额度告警"))
-            .map_err(|error| error.to_string())?;
-    } else {
-        if let Some(icon) = app.default_window_icon().cloned() {
-            tray.set_icon(Some(icon)).map_err(|error| error.to_string())?;
-        }
-        tray.set_tooltip(Some("AI 用量助手"))
-            .map_err(|error| error.to_string())?;
+    } else if let Some(icon) = app.default_window_icon().cloned() {
+        tray.set_icon(Some(icon)).map_err(|error| error.to_string())?;
     }
+    tray.set_tooltip(Some(tray_tooltip(language.as_deref().unwrap_or("zh"), active)))
+        .map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -544,14 +563,24 @@ pub async fn diagnose_request(
     Ok(DiagnosisResult::new(ok, status, latency_ms, code, None))
 }
 
-/// 按界面语言重建托盘右键菜单（zh/en）；菜单事件处理在托盘创建时已注册，重建菜单不影响
+/// 按界面语言重建托盘右键菜单（zh/en）；菜单事件处理在托盘创建时已注册，重建菜单不影响。
+/// 同时刷新托盘悬停提示与两个窗口的标题，使它们跟随界面语言。
 #[tauri::command]
 pub fn refresh_tray_menu(app: AppHandle, language: String) -> Result<(), String> {
     let tray = app
         .tray_by_id("main-tray")
         .ok_or_else(|| "托盘未初始化".to_string())?;
     let menu = crate::build_tray_menu(&app, &language).map_err(|error| error.to_string())?;
-    tray.set_menu(Some(menu)).map_err(|error| error.to_string())
+    tray.set_menu(Some(menu)).map_err(|error| error.to_string())?;
+    tray.set_tooltip(Some(tray_tooltip(&language, false)))
+        .map_err(|error| error.to_string())?;
+    let title = app_title(&language);
+    for label in ["main", "quick"] {
+        if let Some(window) = app.get_webview_window(label) {
+            let _ = window.set_title(title);
+        }
+    }
+    Ok(())
 }
 
 // ─── 通知 ───
@@ -759,6 +788,16 @@ mod tests {
         .expect("provider response should serialize");
         assert_eq!(value["status"], 200);
         assert_eq!(value["bodyText"], "ok");
+    }
+
+    #[test]
+    fn tray_tooltip_and_title_follow_language_and_alert_state() {
+        assert_eq!(tray_tooltip("zh", false), "AI 用量助手");
+        assert_eq!(tray_tooltip("zh", true), "AI 用量助手 — 有额度告警");
+        assert_eq!(tray_tooltip("en", false), "AI Usage Tracker");
+        assert_eq!(tray_tooltip("en", true), "AI Usage Tracker — quota alert");
+        assert_eq!(app_title("zh"), "AI 用量助手");
+        assert_eq!(app_title("en"), "AI Usage Tracker");
     }
 
     #[test]

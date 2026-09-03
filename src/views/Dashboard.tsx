@@ -312,15 +312,16 @@ export function Dashboard() {
     void invoke("refresh_tray_menu", { language }).catch(() => undefined);
   }, [language]);
 
-  // 托盘图标随告警状态切换（去重，避免重复 set）
+  // 托盘图标随告警状态切换；语言变化时同步提示文案（去重，避免重复 set）
   const alertActiveMap = useAlertStore((state) => state.active);
   const anyAlertActive = Object.values(alertActiveMap).some(Boolean);
-  const trayAlertRef = useRef(false);
+  const trayStateRef = useRef("");
   useEffect(() => {
-    if (trayAlertRef.current === anyAlertActive) return;
-    trayAlertRef.current = anyAlertActive;
-    void invoke("set_tray_alert", { active: anyAlertActive }).catch(() => undefined);
-  }, [anyAlertActive]);
+    const key = `${anyAlertActive}|${language}`;
+    if (trayStateRef.current === key) return;
+    trayStateRef.current = key;
+    void invoke("set_tray_alert", { active: anyAlertActive, language }).catch(() => undefined);
+  }, [anyAlertActive, language]);
 
   const draggingInstance = draggingId
     ? ordered.find((instance) => instance.id === draggingId) ?? null
