@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { ComponentPropsWithoutRef, ComponentType } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { ComponentPropsWithoutRef, ComponentType, RefObject } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   AlertCircle,
@@ -33,11 +33,9 @@ import {
 import {
   SortableContext,
   arrayMove,
-  rectSortingStrategy,
   sortableKeyboardCoordinates,
   useSortable,
 } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
 import { useAppStore } from "../store/useAppStore";
 import { useAlertStore } from "../store/useAlertStore";
 import { selectUnreadCount, useNotificationStore } from "../store/useNotificationStore";
@@ -59,6 +57,27 @@ import { useLanguage, useT } from "../i18n";
 
 type ViewKey = "overview" | "settings";
 
+/** 瀑布流行步长：行高 8px + 行距 16px，跨行数 = ceil((内容高+行距)/步长) */
+const MASONRY_STEP = 24;
+
+/** 按内层自然高度换算网格跨行数（外层被 span 拉伸，不能测外层，否则高度反馈成环） */
+function useMasonrySpan(ref: RefObject<HTMLElement | null>): number {
+  const [span, setSpan] = useState(1);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const update = () => {
+      const height = el.offsetHeight;
+      if (height > 0) setSpan(Math.max(1, Math.ceil((height + 16) / MASONRY_STEP)));
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [ref]);
+  return span;
+}
+
 /** 可排序卡片：拖拽手柄在卡片头部左侧，排序变更提交后端持久化 */
 function SortableProviderCard({
   instance,
@@ -79,29 +98,30 @@ function SortableProviderCard({
   onDelete: () => void;
   onOpenStats: () => void;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+  const { attributes, listeners, setNodeRef, isDragging } = useSortable({
     id: instance.id,
   });
+  const measureRef = useRef<HTMLDivElement>(null);
+  // 变高卡片的位移换算按格子均一假设会算错，瀑布流下不做实时位移，落点由最近卡判定
+  const span = useMasonrySpan(measureRef);
   return (
-    <div
-      ref={setNodeRef}
-      style={{ transform: CSS.Transform.toString(transform), transition }}
-      className="list-none"
-    >
-      <ProviderCard
-        instance={instance}
-        snapshot={snapshot}
-        refreshing={refreshing}
-        onRefresh={onRefresh}
-        onTogglePin={onTogglePin}
-        onEdit={onEdit}
-        onDelete={onDelete}
-        onOpenStats={onOpenStats}
-        handleProps={
-          { ...attributes, ...listeners } as ComponentPropsWithoutRef<"button">
-        }
-        dragging={isDragging}
-      />
+    <div ref={setNodeRef} style={{ gridRowEnd: `span ${span}` }} className="list-none">
+      <div ref={measureRef}>
+        <ProviderCard
+          instance={instance}
+          snapshot={snapshot}
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+          onTogglePin={onTogglePin}
+          onEdit={onEdit}
+          onDelete={onDelete}
+          onOpenStats={onOpenStats}
+          handleProps={
+            { ...attributes, ...listeners } as ComponentPropsWithoutRef<"button">
+          }
+          dragging={isDragging}
+        />
+      </div>
     </div>
   );
 }
@@ -447,11 +467,8 @@ export function Dashboard() {
                 onDragEnd={onDragEnd}
                 onDragCancel={() => setDraggingId(null)}
               >
-                <SortableContext
-                  items={ordered.map((instance) => instance.id)}
-                  strategy={rectSortingStrategy}
-                >
-                  <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,340px),1fr))] justify-center gap-4">
+                <SortableContext items={ordered.map((instance) => instance.id)}>
+                  <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,340px),1fr))] justify-center gap-4 [grid-auto-rows:8px]">
                     {ordered.map((instance) => (
                       <SortableProviderCard
                         key={instance.id}

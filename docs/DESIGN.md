@@ -264,6 +264,9 @@
 
 - 网格列：`repeat(auto-fill, minmax(min(100%,340px), 1fr))` + `justify-center`，间距 `gap-4`；
   移除总览容器的最大宽度（设置视图保留 `max-w-3xl`）。720px 视口 1 列、980px 2 列、1180px 3 列。
+- **瀑布流（masonry）**：容器加 `[grid-auto-rows:8px]`，每张卡按内容自然高度跨行
+  （`gridRowEnd: span ceil((h+16)/24)`，hook `useMasonrySpan`，测量内层而非被拉伸的外层），
+  矮卡下方的空隙由后续卡片填充；卡片高度随内容变化时 ResizeObserver 自动重算。
 - 顺序的唯一事实：`pinned DESC, sort_order ASC, created_at ASC`（`selectOrderedInstances`），
   快速面板跟随同一顺序但不可拖拽、无统计按钮。
 - 拖拽用 @dnd-kit：卡片头部左侧 GripVertical 手柄（hover/聚焦显现）、`PointerSensor`
