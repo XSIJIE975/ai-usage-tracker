@@ -168,12 +168,15 @@ export function QuickWindow() {
   const refreshing = loading || anyProviderRefreshing;
   const anyAlert = Object.values(alertActiveMap).some(Boolean);
 
+  const rootRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
-  useFitWindowHeight(contentRef);
+  useFitWindowHeight(rootRef, contentRef);
 
   // 顶栏拖动与双击自管（不走 data-tauri-drag-region 的注入脚本，双击行为确定可控）：
-  // 单击进入系统拖动；双击的第二次按下放行给 dblclick 打开主窗口（与 Tauri drag.js 同手法）
+  // 按钮上不进入拖动（否则系统拖动循环吞掉 click，表现为按钮要双击）；
+  // 空白区单击进入系统拖动，双击的第二次按下放行给 dblclick（与 Tauri drag.js 同手法）
   function handleHeaderMouseDown(event: React.MouseEvent<HTMLElement>) {
+    if ((event.target as HTMLElement).closest("button")) return;
     if (event.button !== 0 || event.detail !== 1) return;
     event.preventDefault();
     void getCurrentWindow().startDragging();
@@ -187,11 +190,9 @@ export function QuickWindow() {
   return (
     // 窗口圆角由系统绘制，这里不再自绘圆角（避免滚动到底部时圆角与滚动内容错位）
     <div
-      ref={contentRef}
-      className="relative flex max-h-screen min-h-0 flex-col overflow-hidden bg-surface shadow-pop"
+      ref={rootRef}
+      className="relative flex h-screen flex-col overflow-hidden bg-surface shadow-pop"
     >
-      {/* 高度低于内容下限（240px）时窗口底部露出的底色兜底 */}
-      <div className="fixed inset-0 -z-10 bg-surface" aria-hidden />
       <header
         data-quick-header
         onMouseDown={handleHeaderMouseDown}
@@ -246,7 +247,9 @@ export function QuickWindow() {
       </div>
 
       <main className="flex-1 overflow-y-auto bg-canvas p-3">
-        {!ready ? (
+        {/* 高度测量的参照物：包裹层的自然高度不受视口钳制，内容超出上限时 main 内部滚动 */}
+        <div ref={contentRef}>
+          {!ready ? (
           <div className="flex h-40 items-center justify-center">
             <span className="h-5 w-5 animate-spin rounded-full border-2 border-line-strong border-t-brand" />
           </div>
@@ -315,6 +318,7 @@ export function QuickWindow() {
             )}
           </>
         )}
+        </div>
       </main>
     </div>
   );
