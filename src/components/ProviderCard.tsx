@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import type { MetricLine, ProviderInstance, ProviderSnapshot } from "../types/ipc";
 import { formatClock, formatReset } from "../lib/utils";
+import { errorHintTitle } from "../lib/error-hint";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Progress } from "./ui/progress";
 import { Badge } from "./ui/badge";
@@ -26,6 +27,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
+import { ErrorDetailsDialog } from "./ErrorDetailsDialog";
 import { DeepSeekLogo, GlmLogo, OpenCodeLogo } from "./brand/provider-logo";
 import { displayName } from "../lib/instance";
 import { providerName } from "../providers";
@@ -216,6 +218,7 @@ export function ProviderCard({
   const now = useNow();
   const t = useT();
   const refreshIntervalMinutes = useAppStore((state) => state.settings.refreshIntervalMinutes);
+  const [detailOpen, setDetailOpen] = useState(false);
   const kindName = providerName(instance.providerId);
   const title = displayName(instance, kindName);
   const hasNote = instance.note.trim().length > 0;
@@ -317,14 +320,47 @@ export function ProviderCard({
       </CardHeader>
       <CardContent className={compact ? "px-4 pb-4" : "px-5 pb-5"}>
         {snapshot?.message ? (
-          <p
-            className={cn(
-              "rounded-md px-3 py-2 text-xs leading-relaxed",
-              needsConfig ? "bg-info-soft text-info-soft-fg" : "bg-warning-soft text-warning-soft-fg",
-            )}
-          >
-            {snapshot.message}
-          </p>
+          needsConfig ? (
+            <div className="flex items-center justify-between gap-2 rounded-md bg-info-soft px-3 py-2">
+              <span className="flex min-w-0 items-center gap-2 text-xs leading-relaxed text-info-soft-fg">
+                <Settings2 className="h-3.5 w-3.5 shrink-0" />
+                <span className="min-w-0">{snapshot.message}</span>
+              </span>
+              {!compact && onEdit && (
+                <button
+                  type="button"
+                  onClick={onEdit}
+                  className="shrink-0 rounded-sm text-xs font-medium text-info-soft-fg underline-offset-2 transition-colors hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring"
+                >
+                  {t("去配置")}
+                </button>
+              )}
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between gap-2 rounded-md bg-warning-soft px-3 py-2">
+                <span className="flex min-w-0 items-center gap-2 text-xs text-warning-soft-fg">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                  <span className="min-w-0">{t(errorHintTitle(snapshot.message))}</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setDetailOpen(true)}
+                  className="shrink-0 rounded-sm text-xs font-medium text-warning-soft-fg underline-offset-2 transition-colors hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring"
+                  aria-label={t("查看异常详情")}
+                  title={t("查看异常详情")}
+                >
+                  {t("详情")}
+                </button>
+              </div>
+              <ErrorDetailsDialog
+                open={detailOpen}
+                onOpenChange={setDetailOpen}
+                title={`${title} · ${kindName}`}
+                message={snapshot.message}
+              />
+            </>
+          )
         ) : null}
         <div className={cn("divide-y divide-line", snapshot?.message ? "mt-2" : "")}>
           {(snapshot?.lines ?? []).map((line, index) => (
