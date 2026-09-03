@@ -7,6 +7,18 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 import { opencodeGoProvider, parseOpenCodeGoHtml } from "./opencode-go";
+import type { ProviderInstance } from "../types/ipc";
+
+const instance: ProviderInstance = {
+  id: "opencode-go",
+  providerId: "opencode-go",
+  note: "",
+  sortOrder: 0,
+  pinned: false,
+  autoRefresh: true,
+  threshold: 80,
+  createdAt: 0,
+};
 
 describe("parseOpenCodeGoHtml", () => {
   it("parses SolidJS SSR hydration output", () => {
@@ -87,17 +99,8 @@ describe("opencodeGoProvider.fetch", () => {
 
   it("uses the real workspace id from vault credentials instead of credential status booleans", async () => {
     invokeMock
-      .mockResolvedValueOnce({
-        deepseekApiKey: true,
-        opencodeGoWorkspaceId: true,
-        opencodeGoAuthCookie: true,
-        opencodeGoApiKey: false,
-      })
-      .mockResolvedValueOnce({
-        deepseekApiKey: "sk-test",
-        opencodeGoWorkspaceId: "wrk_01KZ6DTXDDNHR9BWAFVR4QGNR5",
-        opencodeGoAuthCookie: "Fe26.2-test",
-      })
+      .mockResolvedValueOnce({ workspaceId: true, cookie: true, apiKey: false })
+      .mockResolvedValueOnce({ workspaceId: "wrk_01KZ6DTXDDNHR9BWAFVR4QGNR5", cookie: "Fe26.2-test" })
       .mockResolvedValueOnce({
         status: 200,
         headers: {},
@@ -105,12 +108,13 @@ describe("opencodeGoProvider.fetch", () => {
           "<script>rollingUsage:$R[1]={usagePercent:10,resetInSec:100}weeklyUsage:$R[2]={usagePercent:20,resetInSec:200}monthlyUsage:$R[3]={usagePercent:30,resetInSec:300}</script>",
       });
 
-    const snapshot = await opencodeGoProvider.fetch();
+    const snapshot = await opencodeGoProvider.fetch(instance);
 
     expect(snapshot.status).toBe("ok");
     expect(invokeMock).toHaveBeenCalledWith(
       "provider_request",
       expect.objectContaining({
+        instanceId: "opencode-go",
         url: "https://opencode.ai/workspace/wrk_01KZ6DTXDDNHR9BWAFVR4QGNR5/go",
       }),
     );

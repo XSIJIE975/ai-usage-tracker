@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { CredentialStatus, HttpResult } from "../types/ipc";
+import type { HttpResult, InstanceCredentialStatus, ProviderInstance } from "../types/ipc";
 import type { StatsResult } from "./stats-result";
 
 // 端点与响应结构以 2026-09-02 实测为准（GLM_PROVIDER_PLAN.md 第 0 节 Spike 回填）：
@@ -214,9 +214,9 @@ export function parseToolUsage(data: GlmToolUsageRaw | undefined): GlmToolUsage 
   return { buckets, granularity: data?.granularity ?? "", fixed, tools, totals, totalCalls };
 }
 
-const requestGlm = (url: string): Promise<HttpResult> =>
+const requestGlm = (instanceId: string, url: string): Promise<HttpResult> =>
   invoke<HttpResult>("provider_request", {
-    providerId: "glm",
+    instanceId,
     url,
     method: "GET",
     auth: "bearer",
@@ -240,29 +240,35 @@ const emptyToolUsage = (): GlmToolUsage => ({
  * （失败降级为空工具数据，不拖垮模型统计）。
  */
 export const fetchGlmUsage = async (
+  instance: ProviderInstance,
   startMs: number,
   endMs: number,
 ): Promise<StatsResult<GlmUsageBundle>> => {
   try {
-    const status = await invoke<CredentialStatus>("vault_credential_status");
-    if (!status.glmCodingPlanKey) {
+    const status = await invoke<InstanceCredentialStatus>("vault_credential_status", {
+      instanceId: instance.id,
+    });
+    if (!status.planKey) {
       return { status: "needs_config", message: "请在设置中填写智谱 Coding Plan API Key" };
     }
 
     const query = buildGlmUsageQuery(startMs, endMs);
     const [modelHttp, toolHttp] = await Promise.all([
-      requestGlm(queryUrl(MODEL_USAGE_URL, query)),
-      requestGlm(queryUrl(TOOL_USAGE_URL, query)),
+      requestGlm(instance.id, queryUrl(MODEL_USAGE_URL, query)),
+      requestGlm(instance.id, queryUrl(TOOL_USAGE_URL, query)),
     ]);
 
     if (modelHttp.status !== 200) {
-      return { status: "error", message: `智谱用量接口返回 HTTP ${modelHttp.status}` };
+      return { status: "error", message: "智谱用量接口返回 HTTP {status}", params: { status: modelHttp.status } };
     }
     const modelJson = JSON.parse(modelHttp.bodyText) as GlmStatsEnvelope<GlmModelUsageRaw>;
     if (modelJson.success === false) {
       return {
         status: "error",
-        message: `智谱用量查询失败：code=${modelJson.code ?? "未知"}${modelJson.msg ? ` msg=${modelJson.msg}` : ""}`,
+        message: "智谱用量查询失败：{detail}",
+        params: {
+          detail: `code=${modelJson.code ?? "unknown"}${modelJson.msg ? ` msg=${modelJson.msg}` : ""}`,
+        },
       };
     }
 
@@ -282,6 +288,6 @@ export const fetchGlmUsage = async (
       return { status: "error", message: "智谱用量响应无法解析" };
     }
     const detail = error instanceof Error ? error.message : String(error);
-    return { status: "error", message: `智谱用量查询失败：${detail}` };
+    return { status: "error", message: "智谱用量查询失败：{detail}", params: { detail } };
   }
 };

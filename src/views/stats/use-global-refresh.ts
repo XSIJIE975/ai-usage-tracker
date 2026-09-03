@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useAppStore } from "../../store/useAppStore";
 
-/** 各供应商统计页最近一次已响应的序号，跨组件卸载保留 */
+/** 各实例统计页最近一次已响应的序号，跨组件卸载保留 */
 const handledTicks: Record<string, number> = {};
 
 /**
@@ -9,20 +9,22 @@ const handledTicks: Record<string, number> = {};
  * `manualRefreshTick`，本 hook 在序号变化时调用统计页的刷新回调，
  * 使全局刷新同时覆盖统计数据。
  *
- * 若组件卸载期间发生过全局刷新（如在总览点了刷新再切到统计页签），
+ * 若组件卸载期间发生过全局刷新（如在总览点了刷新再切回统计），
  * 重新挂载时依据模块级 `handledTicks` 补刷一次，避免停留在旧缓存。
+ * key 为 instanceId：同种类两个实例的统计互不串档。
  */
-export function useGlobalRefresh(onRefresh: () => void, providerId: string) {
+export function useGlobalRefresh(onRefresh: () => void, instanceId: string | null) {
   const tick = useAppStore((state) => state.manualRefreshTick);
   const callbackRef = useRef(onRefresh);
   callbackRef.current = onRefresh;
   const seenTickRef = useRef<number | null>(null);
 
   useEffect(() => {
+    if (instanceId === null) return;
     if (seenTickRef.current === null) {
       seenTickRef.current = tick;
-      const handled = handledTicks[providerId];
-      handledTicks[providerId] = tick;
+      const handled = handledTicks[instanceId];
+      handledTicks[instanceId] = tick;
       if (handled !== undefined && handled !== tick) {
         callbackRef.current();
       }
@@ -30,7 +32,7 @@ export function useGlobalRefresh(onRefresh: () => void, providerId: string) {
     }
     if (seenTickRef.current === tick) return;
     seenTickRef.current = tick;
-    handledTicks[providerId] = tick;
+    handledTicks[instanceId] = tick;
     callbackRef.current();
-  }, [tick, providerId]);
+  }, [tick, instanceId]);
 }

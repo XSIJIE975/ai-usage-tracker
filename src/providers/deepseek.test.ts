@@ -6,8 +6,20 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 import { invoke } from "@tauri-apps/api/core";
 import { deepseekProvider } from "./deepseek";
+import type { ProviderInstance } from "../types/ipc";
 
 const mockInvoke = vi.mocked(invoke);
+
+const instance: ProviderInstance = {
+  id: "deepseek",
+  providerId: "deepseek",
+  note: "",
+  sortOrder: 0,
+  pinned: false,
+  autoRefresh: true,
+  threshold: 50,
+  createdAt: 0,
+};
 
 describe("deepseekProvider", () => {
   beforeEach(() => {
@@ -15,26 +27,16 @@ describe("deepseekProvider", () => {
   });
 
   it("returns needs_config when key is missing", async () => {
-    mockInvoke.mockResolvedValueOnce({
-      deepseekApiKey: false,
-      opencodeGoWorkspaceId: false,
-      opencodeGoAuthCookie: false,
-      opencodeGoApiKey: false,
-    });
+    mockInvoke.mockResolvedValueOnce({});
 
-    const snapshot = await deepseekProvider.fetch();
+    const snapshot = await deepseekProvider.fetch(instance);
     expect(snapshot.status).toBe("needs_config");
     expect(mockInvoke).toHaveBeenCalledTimes(1);
   });
 
   it("parses balance response", async () => {
     mockInvoke
-      .mockResolvedValueOnce({
-        deepseekApiKey: true,
-        opencodeGoWorkspaceId: false,
-        opencodeGoAuthCookie: false,
-        opencodeGoApiKey: false,
-      })
+      .mockResolvedValueOnce({ apiKey: true })
       .mockResolvedValueOnce({
         status: 200,
         headers: {},
@@ -51,7 +53,7 @@ describe("deepseekProvider", () => {
         }),
       });
 
-    const snapshot = await deepseekProvider.fetch();
+    const snapshot = await deepseekProvider.fetch(instance);
     expect(snapshot.status).toBe("ok");
     expect(snapshot.lines[0]).toMatchObject({ label: "可用状态", value: "可用" });
     expect(snapshot.lines[1].value).toContain("12.34");
@@ -59,7 +61,7 @@ describe("deepseekProvider", () => {
       2,
       "provider_request",
       expect.objectContaining({
-        providerId: "deepseek",
+        instanceId: "deepseek",
         url: "https://api.deepseek.com/user/balance",
         method: "GET",
         auth: "bearer",
@@ -69,16 +71,12 @@ describe("deepseekProvider", () => {
 
   it("returns error for non-200 response", async () => {
     mockInvoke
-      .mockResolvedValueOnce({
-        deepseekApiKey: true,
-        opencodeGoWorkspaceId: false,
-        opencodeGoAuthCookie: false,
-        opencodeGoApiKey: false,
-      })
+      .mockResolvedValueOnce({ apiKey: true })
       .mockResolvedValueOnce({ status: 401, headers: {}, bodyText: "unauthorized" });
 
-    const snapshot = await deepseekProvider.fetch();
+    const snapshot = await deepseekProvider.fetch(instance);
     expect(snapshot.status).toBe("error");
-    expect(snapshot.message).toContain("401");
+    expect(snapshot.message).toBe("DeepSeek 余额接口返回 HTTP {status}{detail}");
+    expect(snapshot.messageParams).toMatchObject({ status: 401, detail: "：unauthorized" });
   });
 });

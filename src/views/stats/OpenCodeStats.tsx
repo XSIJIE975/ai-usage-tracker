@@ -22,7 +22,7 @@ import {
   sumCostUsd,
 } from "./opencode/cost-series";
 import { useHistoryPages } from "./opencode/use-history-pages";
-import { useLanguage, useT } from "../../i18n";
+import { applyParams, useLanguage, useT } from "../../i18n";
 import { useAutoRefresh } from "./use-auto-refresh";
 import { useGlobalRefresh } from "./use-global-refresh";
 
@@ -43,33 +43,40 @@ function RefreshOverlay() {
 }
 
 export function OpenCodeStats() {
+  const instance = useAppStore((state) =>
+    state.instances.find((item) => item.providerId === "opencode-go"),
+  );
   const [month, setMonth] = useState(currentMonth);
   const [model, setModel] = useState("all");
   const [keyId, setKeyId] = useState("all");
   const [refreshTick, setRefreshTick] = useState(0);
 
+  const cacheKey = instance ? `${instance.id}:${month.year}-${month.month}` : null;
   const refresh = () => {
-    monthlyCache.invalidate(`${month.year}-${month.month}`);
+    if (cacheKey !== null) monthlyCache.invalidate(cacheKey);
     setRefreshTick((tick) => tick + 1);
   };
 
   // 接入全局自动刷新
-  useAutoRefresh(refresh, "opencode-go");
+  useAutoRefresh(refresh, instance ?? null);
   // 接入顶栏手动全局刷新
-  useGlobalRefresh(refresh, "opencode-go");
+  useGlobalRefresh(refresh, instance?.id ?? null);
 
-  /** 全局刷新状态：顶栏「刷新」进行中（全局）或该供应商单刷进行中 */
+  /** 全局刷新状态：顶栏「刷新」进行中（全局）或该实例单刷进行中 */
   const globalRefreshing = useAppStore(
-    (state) => state.loading || Boolean(state.refreshingProviders["opencode-go"]),
+    (state) => state.loading || (instance ? Boolean(state.refreshingInstances[instance.id]) : false),
   );
 
   const { state: monthly, isRefreshing } = useStatsFetch(
     monthlyCache,
-    `${month.year}-${month.month}`,
-    () => fetchOpenCodeMonthlyCost(month.year, month.month),
+    cacheKey,
+    () =>
+      instance
+        ? fetchOpenCodeMonthlyCost(instance, month.year, month.month)
+        : Promise.resolve({ status: "needs_config" as const, message: "" }),
     refreshTick,
   );
-  const history = useHistoryPages(refreshTick);
+  const history = useHistoryPages(instance ?? null, refreshTick);
   const busy = isRefreshing || globalRefreshing;
   const t = useT();
   const language = useLanguage();
@@ -201,7 +208,11 @@ export function OpenCodeStats() {
           {history.configNeeded ? (
             <EmptyState
               icon={<KeyRound className="h-5 w-5" />}
-              title={history.errorMessage || t("缺少凭据配置")}
+              title={
+                history.errorMessage
+                  ? applyParams(t(history.errorMessage), history.errorParams)
+                  : t("缺少凭据配置")
+              }
               description={t("请前往设置页配置 Workspace ID 和 Auth Cookie。")}
             />
           ) : (
@@ -212,7 +223,9 @@ export function OpenCodeStats() {
               </div>
               {history.errorMessage ? (
                 <div className="flex items-center justify-center gap-2">
-                  <span className="text-xs text-danger">{history.errorMessage}</span>
+                  <span className="text-xs text-danger">
+                    {applyParams(t(history.errorMessage), history.errorParams)}
+                  </span>
                   <Button variant="outline" size="sm" onClick={() => history.goToPage(history.currentPage)}>
                     {t("重试")}
                   </Button>

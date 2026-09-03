@@ -1,36 +1,29 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
-import type { AppSettings, ProviderSnapshot, StoredSnapshot, VaultStatus } from "../types/ipc";
-import { providerModules } from "../providers";
+import type {
+  AppSettings,
+  ProviderInstance,
+  ProviderKind,
+  ProviderSnapshot,
+  StoredSnapshot,
+  VaultStatus,
+} from "../types/ipc";
+import { getProviderModule } from "../providers";
 import { useAlertStore } from "./useAlertStore";
 
 const DEFAULT_SETTINGS: AppSettings = {
   refreshEnabled: true,
   refreshIntervalMinutes: 5,
-  providers: Object.fromEntries(providerModules.map((provider) => [provider.id, true])),
   alertsEnabled: true,
-  alertThresholds: {
-    deepseekBalanceBelowCny: 50,
-    opencodeMonthlyUsedPercent: 80,
-    glmQuotaUsedPercent: 80,
-  },
   quickPanelShortcut: "Alt+KeyU",
   quickAutoHide: true,
+  resetTimeDisplay: "relative",
   interfaceLanguage: "auto",
 };
 
-/** 旧版本持久化的设置缺少新增字段时，用默认值补齐（providers/alertThresholds 为嵌套对象，需逐层合并） */
 function normalizeSettings(settings: Partial<AppSettings>): AppSettings {
-  return {
-    ...DEFAULT_SETTINGS,
-    ...settings,
-    providers: { ...DEFAULT_SETTINGS.providers, ...settings.providers },
-    alertThresholds: {
-      ...DEFAULT_SETTINGS.alertThresholds,
-      ...settings.alertThresholds,
-    },
-  };
+  return { ...DEFAULT_SETTINGS, ...settings };
 }
 
 function waitForTauriRuntime(timeoutMs = 5_000) {
@@ -90,26 +83,49 @@ async function invokeWithRetry<T>(command: string, timeoutMs = 4_000, attempts =
   throw lastError;
 }
 
+/** 实例 patch：字段缺省=不改，threshold null=清除 */
+export interface InstancePatch {
+  note?: string;
+  autoRefresh?: boolean;
+  pinned?: boolean;
+  threshold?: number | null;
+}
+
 interface AppStore {
   vaultStatus: VaultStatus | null;
   settings: AppSettings;
+  instances: ProviderInstance[];
+  /** loadInitial 是否完成（instances/snapshots 已就位）；初始刷新必须等它，避免空列表跑空循环 */
+  initialLoaded: boolean;
   snapshots: ProviderSnapshot[];
   loading: boolean;
-  refreshingProviders: Record<string, boolean>;
+  refreshingInstances: Record<string, boolean>;
   error: string | null;
   lastRefreshedAt: number;
   /** 手动全局刷新序号（顶栏「刷新」）；统计页据此联动刷新。自动定时刷新不递增。 */
   manualRefreshTick: number;
   loadInitial: () => Promise<void>;
+  reloadInstances: () => Promise<void>;
   refreshAll: (showLoading?: boolean, options?: { auto?: boolean }) => Promise<void>;
-  refreshProvider: (providerId: string) => Promise<void>;
+  refreshInstance: (instanceId: string) => Promise<void>;
+  addInstance: (
+    providerId: ProviderKind,
+    note: string,
+    credentials?: Record<string, string>,
+    options?: { autoRefresh?: boolean; threshold?: number | null },
+  ) => Promise<ProviderInstance>;
+  updateInstance: (id: string, patch: InstancePatch) => Promise<void>;
+  removeInstance: (id: string) => Promise<void>;
+  reorderInstances: (orderedIds: string[]) => Promise<void>;
+  saveInstanceCredentials: (id: string, credentials: Record<string, string | null>) => Promise<void>;
   saveSettings: (settings: AppSettings) => Promise<void>;
   setVaultStatus: (status: VaultStatus) => void;
   clearError: () => void;
 }
 
-function toProviderSnapshot(payload: ProviderSnapshot): ProviderSnapshot {
-  return payload;
+/** 行的 instance_id 是唯一事实（旧版快照 payload 里没有该字段） */
+function toSnapshot(item: StoredSnapshot): ProviderSnapshot {
+  return { ...item.payload, instanceId: item.instance_id };
 }
 
 function vaultBlockedReason(status: VaultStatus | null): string | null {
@@ -120,12 +136,27 @@ function vaultBlockedReason(status: VaultStatus | null): string | null {
   return "Credential Vault 未解锁";
 }
 
+function fallbackSnapshot(instance: ProviderInstance, error: unknown): ProviderSnapshot {
+  const module = getProviderModule(instance.providerId);
+  return {
+    instanceId: instance.id,
+    providerId: instance.providerId,
+    providerName: module?.name ?? instance.providerId,
+    status: "error",
+    updatedAt: Date.now(),
+    message: error instanceof Error ? error.message : String(error),
+    lines: [],
+  };
+}
+
 export const useAppStore = create<AppStore>((set, get) => ({
   vaultStatus: null,
   settings: DEFAULT_SETTINGS,
+  instances: [],
+  initialLoaded: false,
   snapshots: [],
   loading: false,
-  refreshingProviders: {},
+  refreshingInstances: {},
   error: null,
   lastRefreshedAt: 0,
   manualRefreshTick: 0,
@@ -143,21 +174,35 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
 
     try {
-      const [settings, snapshots] = await Promise.all([
+      const [settings, snapshots, instances] = await Promise.all([
         invokeWithTimeout<AppSettings>("get_settings", 4_000),
         invokeWithTimeout<StoredSnapshot[]>("get_latest_snapshots", 4_000),
+        invokeWithTimeout<ProviderInstance[]>("list_instances", 4_000),
       ]);
       set({
         settings: normalizeSettings(settings),
-        snapshots: snapshots.map((item) => toProviderSnapshot(item.payload)),
+        instances,
+        initialLoaded: true,
+        snapshots: snapshots.map(toSnapshot),
         error: null,
       });
     } catch (error) {
       set({
         settings: DEFAULT_SETTINGS,
+        instances: [],
+        initialLoaded: true,
         snapshots: [],
         error: error instanceof Error ? error.message : String(error),
       });
+    }
+  },
+
+  reloadInstances: async () => {
+    try {
+      const instances = await invoke<ProviderInstance[]>("list_instances");
+      set({ instances });
+    } catch {
+      // 留旧值兜底，下一轮事件/聚焦会再同步
     }
   },
 
@@ -166,29 +211,24 @@ export const useAppStore = create<AppStore>((set, get) => ({
     if (!options?.auto) {
       set((state) => ({ manualRefreshTick: state.manualRefreshTick + 1 }));
     }
-    const { settings, vaultStatus } = get();
+    const { instances, vaultStatus } = get();
     const blockedReason = vaultBlockedReason(vaultStatus);
     if (blockedReason) {
       set({ loading: false, error: blockedReason });
       return;
     }
 
+    const targets = options?.auto ? instances.filter((instance) => instance.autoRefresh) : instances;
     const results: ProviderSnapshot[] = [];
-    for (const provider of providerModules) {
-      if (options?.auto && !settings.providers[provider.id]) continue;
+    for (const instance of targets) {
+      const module = getProviderModule(instance.providerId);
+      if (!module) continue;
       try {
-        const snapshot = await provider.fetch();
+        const snapshot = await module.fetch(instance);
         results.push(snapshot);
-        await invoke("save_snapshot", { providerId: provider.id, payload: snapshot });
+        await invoke("save_snapshot", { instanceId: instance.id, payload: snapshot });
       } catch (error) {
-        results.push({
-          providerId: provider.id,
-          providerName: provider.name,
-          status: "error",
-          updatedAt: Date.now(),
-          message: error instanceof Error ? error.message : String(error),
-          lines: [],
-        });
+        results.push(fallbackSnapshot(instance, error));
       }
     }
 
@@ -197,7 +237,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const stored = await invoke<StoredSnapshot[]>("get_latest_snapshots");
       refreshedAt = Date.now();
       set({
-        snapshots: stored.map((item) => toProviderSnapshot(item.payload)),
+        snapshots: stored.map(toSnapshot),
         loading: false,
         error: null,
         lastRefreshedAt: refreshedAt,
@@ -212,15 +252,19 @@ export const useAppStore = create<AppStore>((set, get) => ({
       });
     }
     // 刷新落库后评估阈值告警（成功与失败的快照都参与，失败会解除告警态）
+    const observed = new Map(get().instances.map((instance) => [instance.id, instance]));
     for (const result of results) {
-      useAlertStore.getState().observe(result.providerId, result, get().settings);
+      const instance = observed.get(result.instanceId);
+      if (!instance) continue;
+      useAlertStore.getState().observe(instance, result, get().settings);
     }
     emitRefreshCompleted(refreshedAt);
   },
 
-  refreshProvider: async (providerId) => {
-    const provider = providerModules.find((item) => item.id === providerId);
-    if (!provider || get().refreshingProviders[providerId]) return;
+  refreshInstance: async (instanceId) => {
+    const instance = get().instances.find((item) => item.id === instanceId);
+    const module = instance ? getProviderModule(instance.providerId) : undefined;
+    if (!instance || !module || get().refreshingInstances[instanceId]) return;
     const blockedReason = vaultBlockedReason(get().vaultStatus);
     if (blockedReason) {
       set({ error: blockedReason });
@@ -228,48 +272,100 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
 
     set((state) => ({
-      refreshingProviders: { ...state.refreshingProviders, [providerId]: true },
+      refreshingInstances: { ...state.refreshingInstances, [instanceId]: true },
       error: null,
     }));
 
     let result: ProviderSnapshot;
     try {
-      result = await provider.fetch();
+      result = await module.fetch(instance);
     } catch (error) {
-      result = {
-        providerId: provider.id,
-        providerName: provider.name,
-        status: "error",
-        updatedAt: Date.now(),
-        message: error instanceof Error ? error.message : String(error),
-        lines: [],
-      };
+      result = fallbackSnapshot(instance, error);
     }
 
     let refreshedAt = Date.now();
     try {
-      await invoke("save_snapshot", { providerId, payload: result });
+      await invoke("save_snapshot", { instanceId, payload: result });
       const stored = await invoke<StoredSnapshot[]>("get_latest_snapshots");
       refreshedAt = Date.now();
       set({
-        snapshots: stored.map((item) => toProviderSnapshot(item.payload)),
+        snapshots: stored.map((item) => item.payload),
         error: null,
         lastRefreshedAt: refreshedAt,
       });
     } catch (error) {
       refreshedAt = Date.now();
       set({
-        snapshots: [...get().snapshots.filter((item) => item.providerId !== providerId), result],
+        snapshots: [...get().snapshots.filter((item) => item.instanceId !== instanceId), result],
         error: error instanceof Error ? error.message : String(error),
         lastRefreshedAt: refreshedAt,
       });
     } finally {
       set((state) => ({
-        refreshingProviders: { ...state.refreshingProviders, [providerId]: false },
+        refreshingInstances: { ...state.refreshingInstances, [instanceId]: false },
       }));
-      useAlertStore.getState().observe(providerId, result, get().settings);
+      useAlertStore.getState().observe(instance, result, get().settings);
       emitRefreshCompleted(refreshedAt);
     }
+  },
+
+  addInstance: async (providerId, note, credentials, options) => {
+    const instance = await invoke<ProviderInstance>("create_instance", {
+      providerId,
+      note,
+      credentials: credentials ?? undefined,
+      autoRefresh: options?.autoRefresh ?? true,
+      threshold: options?.threshold ?? null,
+    });
+    await get().reloadInstances();
+    return instance;
+  },
+
+  updateInstance: async (id, patch) => {
+    await invoke("update_instance", { id, patch });
+    set((state) => ({
+      instances: state.instances.map((instance) => {
+        if (instance.id !== id) return instance;
+        return {
+          ...instance,
+          note: patch.note !== undefined ? patch.note : instance.note,
+          autoRefresh: patch.autoRefresh !== undefined ? patch.autoRefresh : instance.autoRefresh,
+          pinned: patch.pinned !== undefined ? patch.pinned : instance.pinned,
+          threshold: patch.threshold !== undefined ? patch.threshold : instance.threshold,
+        };
+      }),
+    }));
+  },
+
+  removeInstance: async (id) => {
+    await invoke("delete_instance", { id });
+    set((state) => ({
+      instances: state.instances.filter((instance) => instance.id !== id),
+      snapshots: state.snapshots.filter((snapshot) => snapshot.instanceId !== id),
+    }));
+  },
+
+  reorderInstances: async (orderedIds) => {
+    const previous = get().instances;
+    const byId = new Map(previous.map((instance) => [instance.id, instance]));
+    const next = orderedIds
+      .map((id, index) => {
+        const instance = byId.get(id);
+        return instance ? { ...instance, sortOrder: index } : null;
+      })
+      .filter((instance): instance is ProviderInstance => instance !== null);
+    // 乐观更新，失败回滚并由事件重载收敛
+    set({ instances: next });
+    try {
+      await invoke("reorder_instances", { orderedIds });
+    } catch (error) {
+      set({ instances: previous });
+      set({ error: error instanceof Error ? error.message : String(error) });
+    }
+  },
+
+  saveInstanceCredentials: async (id, credentials) => {
+    await invoke("vault_save_credentials", { instanceId: id, credentials });
   },
 
   saveSettings: async (settings) => {

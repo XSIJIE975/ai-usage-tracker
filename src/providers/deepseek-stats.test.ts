@@ -122,14 +122,16 @@ describe("platformErrorMessage", () => {
   });
 
   it("reports wrapper code failures with msg", () => {
-    expect(platformErrorMessage({ code: 401, msg: "token invalid" })).toBe(
-      "DeepSeek 平台返回错误：token invalid",
-    );
+    expect(platformErrorMessage({ code: 401, msg: "token invalid" })).toEqual({
+      message: "DeepSeek 平台返回错误：{detail}",
+      params: { detail: "token invalid" },
+    });
   });
 
   it("reports biz_code failures with biz_msg", () => {
-    expect(platformErrorMessage({ code: 0, data: { biz_code: 1, biz_msg: "quota exceeded" } })).toBe(
-      "DeepSeek 平台返回错误：quota exceeded",
-    );
+    expect(platformErrorMessage({ code: 0, data: { biz_code: 1, biz_msg: "quota exceeded" } })).toEqual({
+      message: "DeepSeek 平台返回错误：{detail}",
+      params: { detail: "quota exceeded" },
+    });
   });
 });

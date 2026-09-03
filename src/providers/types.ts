@@ -1,8 +1,8 @@
-import type { ProviderSnapshot } from "../types/ipc";
+import type { ProviderInstance, ProviderKind, ProviderSnapshot } from "../types/ipc";
 
 export interface ProviderModule {
-  id: string;
+  id: ProviderKind;
   name: string;
   description: string;
-  fetch: () => Promise<ProviderSnapshot>;
+  fetch: (instance: ProviderInstance) => Promise<ProviderSnapshot>;
 }

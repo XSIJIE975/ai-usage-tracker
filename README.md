@@ -4,13 +4,14 @@
 
 ## 功能
 
-- 系统托盘快速面板：点击托盘图标即可查看 OpenCode Go 的 5 小时/周/月额度、DeepSeek 余额和智谱 GLM 配额进度，无需打开主窗口。
-- 用量总览：按 Provider 分卡片展示额度进度、账户余额与重置倒计时；额度使用超七成时进度条自动转为警示色。
-- 用量统计：内置统计图表，支持按时间范围、模型等维度查看 Token 消耗与请求趋势。
+- 系统托盘快速面板：点击托盘图标即可查看 OpenCode Go 的 5 小时/周/月额度、DeepSeek 余额和智谱 GLM 配额进度，无需打开主窗口；双击面板顶栏可打开主窗口并收起面板，面板高度随内容自适应。
+- 供应商多实例：同一供应商可添加多份配置（如两个 DeepSeek 账号），各自独立追踪、统计与告警；实例可写备注作为卡片标题。
+- 用量总览：按实例分卡片展示额度进度、账户余额与重置倒计时；卡片网格支持拖拽排序与置顶；额度使用超七成时进度条自动转为警示色。
+- 用量统计：卡片「查看统计」打开右侧统计抽屉，支持按时间范围、模型等维度查看 Token 消耗与请求趋势。
 - 凭据本地加密：凭据以 AES-256-GCM 加密存储在本机，加密密钥托管在系统钥匙串（Windows 凭据管理器 / macOS 钥匙串 / Linux Secret Service），启动即用、全程无需输入密码。
 - OpenCode Go：优先调用官方 `/zen/go/v1/usage` 接口，接口未上线时自动降级为抓取后台页面解析真实额度。
 - DeepSeek：通过官方 API Key 查询账户余额与可用状态。
-- 智谱 GLM：一枚 Coding Plan API Key 同时驱动配额卡片与用量统计——总览展示套餐档位（Lite / Pro / Max）、5 小时窗口与每周配额进度及重置倒计时，周配额作为主指标参与耗尽预测；配额已用比例达到阈值时发送系统通知。
+- 智谱 GLM：一枚 Coding Plan API Key 同时驱动配额卡片与用量统计——总览展示套餐档位（Lite / Pro / Max）、5 小时窗口与每周配额进度及重置倒计时；配额已用比例达到阈值时发送系统通知。
 - 刷新策略：全局间隔 5–120 分钟可调（超过 60 分钟以小时显示），可按 Provider 单独关闭自动刷新，手动刷新始终拉取全部 Provider。
 
 ## 开发环境
@@ -31,39 +32,16 @@ pnpm build
 pnpm tauri build --no-sign
 ```
 
-构建默认会产出供自动更新使用的签名产物，需要 `TAURI_SIGNING_PRIVATE_KEY`（及密码）；本地开发没有密钥时用 `--no-sign` 跳过。
-
-## 版本与发布流程
-
-项目使用 Changesets 管理版本。日常开发不触发打包：
-
-1. 日常开发在 `dev` 分支进行；凡是用户可见的变更，用 `pnpm changeset` 添加变更说明。
-2. 通过 PR 将代码合入 `main`，此阶段 CI 只运行前端测试、前端构建和 Rust 测试。
-3. Changesets 检测到变更说明后，自动创建或更新 Version Packages PR。
-4. 合并 Version Packages PR 后，GitHub Actions 才会在 Windows、macOS、Linux 上执行 Tauri 打包。
-5. 发布 workflow 会生成 `vX.Y.Z` draft release，安装包上传后由你在 GitHub 网页手动发布。
-
-发布 workflow 使用 `package.json` 作为版本源，并自动同步 `src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 和 `src-tauri/tauri.conf.json`。
-
-安装包与更新通道：
-
-- 产物矩阵：Windows x64 / ARM64 为 NSIS（按当前用户安装，更新无需管理员权限）、macOS 为 Universal DMG（同一安装包同时支持 Intel 与 Apple Silicon）、Linux x64 / ARM64 为 DEB + AppImage。
-- 构建使用仓库 Secrets（`TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`）签名更新产物，并随安装包上传 `latest.json` 更新清单。
-- `latest.json` 中的更新说明在全部平台构建完成后自动回填当期 CHANGELOG，应用内更新对话框直接展示。
-- 手动发布 draft release 后，旧版本启动时会静默检测到新版本：顶栏出现「新版本」徽标，设置 → 通用 →「关于与更新」可下载并安装。
-- 0.1.0 及更早的安装没有更新能力，需要手动下载安装包重装一次；之后的版本均可自动更新。
-- 需要为已发布版本重新构建（如补齐某个平台的产物）时，在 Actions 页手动运行 Release workflow 并填入版本号，即可强制重建该版本的草稿 Release。
-
 ## 使用
 
-1. 在「设置」中填写：
+1. 点击主窗口右上角「添加供应商」，选择供应商并填写凭据（可加备注区分多个账号）：
    - DeepSeek API Key：`sk-...`
-   - DeepSeek UserToken：platform.deepseek.com 网页登录态令牌，统计页使用（获取方式见下）
+   - DeepSeek UserToken：platform.deepseek.com 网页登录态令牌，统计使用（获取方式见下）
    - OpenCode Go Workspace ID：后台 URL 中的 `wrk_...`
    - OpenCode Auth Cookie：登录 `opencode.ai` 后浏览器里的 `auth` Cookie 值
    - OpenCode Go API Key（可选）：官方 `/usage` 接口上线后使用
    - 智谱 Coding Plan API Key：bigmodel.cn 控制台 Coding Plan 页生成（获取方式见下）
-2. 设置自动刷新间隔，或点击「刷新」手动更新。
+2. 实例的告警阈值与自动刷新开关在其配置弹窗（卡片 ⋯ 菜单）中设置；全局刷新间隔在设置中调整。
 3. 关闭主窗口后应用继续驻留托盘；托盘图标可打开快速面板。
 
 DeepSeek UserToken 获取方式（统计页使用，与 API Key 是两种不同凭据）：

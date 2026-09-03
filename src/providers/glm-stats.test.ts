@@ -6,7 +6,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 import { invoke } from "@tauri-apps/api/core";
-import type { HttpResult } from "../types/ipc";
+import type { HttpResult, ProviderInstance } from "../types/ipc";
 import { buildGlmUsageQuery, fetchGlmUsage, parseModelUsage, parseToolUsage } from "./glm-stats";
 
 const mockInvoke = vi.mocked(invoke);
@@ -24,14 +24,18 @@ const httpResult = (body: unknown, status = 200): HttpResult => ({
   bodyText: typeof body === "string" ? body : JSON.stringify(body),
 });
 
-const credentialStatus = (planKey: boolean) => ({
-  deepseekApiKey: false,
-  deepseekUserToken: false,
-  opencodeGoWorkspaceId: false,
-  opencodeGoAuthCookie: false,
-  opencodeGoApiKey: false,
-  glmCodingPlanKey: planKey,
-});
+const glmInstance: ProviderInstance = {
+  id: "glm",
+  providerId: "glm",
+  note: "",
+  sortOrder: 0,
+  pinned: false,
+  autoRefresh: true,
+  threshold: 80,
+  createdAt: 0,
+};
+
+const credentialStatus = (planKey: boolean) => ({ planKey });
 
 describe("buildGlmUsageQuery", () => {
   it("formats local datetime strings and steps the end back into the last day", () => {
@@ -117,7 +121,7 @@ describe("fetchGlmUsage", () => {
 
   it("returns needs_config when the Coding Plan API Key is missing", async () => {
     mockInvoke.mockResolvedValueOnce(credentialStatus(false));
-    const result = await fetchGlmUsage(0, 1);
+    const result = await fetchGlmUsage(glmInstance, 0, 1);
     expect(result).toMatchObject({ status: "needs_config" });
     expect(mockInvoke).toHaveBeenCalledTimes(1);
   });
@@ -127,7 +131,7 @@ describe("fetchGlmUsage", () => {
       .mockResolvedValueOnce(credentialStatus(true))
       .mockImplementationOnce((_, args) => {
         const options = args as Record<string, unknown>;
-        expect(options).toMatchObject({ providerId: "glm", method: "GET", auth: "bearer" });
+        expect(options).toMatchObject({ instanceId: "glm", method: "GET", auth: "bearer" });
         expect(String(options.url)).toContain(
           "startTime=2026-09-01%2000%3A00%3A00&endTime=2026-09-02%2023%3A59%3A59",
         );
@@ -140,7 +144,7 @@ describe("fetchGlmUsage", () => {
 
     const startMs = new Date(2026, 8, 1).getTime();
     const endMs = new Date(2026, 8, 3).getTime();
-    const result = await fetchGlmUsage(startMs, endMs);
+    const result = await fetchGlmUsage(glmInstance, startMs, endMs);
     expect(result).toMatchObject({ status: "ok" });
     if (result.status === "ok") {
       expect(result.data.models.totals.tokens).toBe(135110104);
@@ -153,8 +157,9 @@ describe("fetchGlmUsage", () => {
       .mockResolvedValueOnce(credentialStatus(true))
       .mockResolvedValueOnce(httpResult("boom", 500))
       .mockResolvedValueOnce(httpResult(loadToolUsage()));
-    const result = await fetchGlmUsage(0, 1);
-    expect(result).toMatchObject({ status: "error", message: expect.stringContaining("500") });
+    const result = await fetchGlmUsage(glmInstance, 0, 1);
+    expect(result).toMatchObject({ status: "error", params: { status: 500 } });
+    expect(result.status === "error" && result.message).toBe("智谱用量接口返回 HTTP {status}");
   });
 
   it("fails with server code/msg when success is false", async () => {
@@ -162,8 +167,9 @@ describe("fetchGlmUsage", () => {
       .mockResolvedValueOnce(credentialStatus(true))
       .mockResolvedValueOnce(httpResult({ code: 403, msg: "未开通 Coding Plan", success: false }))
       .mockResolvedValueOnce(httpResult(loadToolUsage()));
-    const result = await fetchGlmUsage(0, 1);
-    expect(result).toMatchObject({ status: "error", message: expect.stringContaining("未开通 Coding Plan") });
+    const result = await fetchGlmUsage(glmInstance, 0, 1);
+    expect(result).toMatchObject({ status: "error" });
+    expect(result.status === "error" && result.params?.detail).toContain("未开通 Coding Plan");
   });
 
   it("degrades to empty tool data when the tool endpoint fails", async () => {
@@ -171,7 +177,7 @@ describe("fetchGlmUsage", () => {
       .mockResolvedValueOnce(credentialStatus(true))
       .mockResolvedValueOnce(httpResult(loadModelUsage24h()))
       .mockResolvedValueOnce(httpResult("missing", 404));
-    const result = await fetchGlmUsage(0, 1);
+    const result = await fetchGlmUsage(glmInstance, 0, 1);
     expect(result).toMatchObject({ status: "ok" });
     if (result.status === "ok") {
       expect(result.data.tools.totalCalls).toBe(0);
@@ -184,7 +190,8 @@ describe("fetchGlmUsage", () => {
       .mockResolvedValueOnce(credentialStatus(true))
       .mockRejectedValueOnce(new Error("network down"))
       .mockResolvedValueOnce(httpResult(loadToolUsage()));
-    const result = await fetchGlmUsage(0, 1);
-    expect(result).toMatchObject({ status: "error", message: expect.stringContaining("network down") });
+    const result = await fetchGlmUsage(glmInstance, 0, 1);
+    expect(result).toMatchObject({ status: "error", params: { detail: "network down" } });
+    expect(result.status === "error" && result.message).toBe("智谱用量查询失败：{detail}");
   });
 });

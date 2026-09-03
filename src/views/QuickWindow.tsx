@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
+import { useFitWindowHeight } from "../hooks/use-fit-window-height";
 import { Bell, Gauge, Lock, RefreshCw, Timer, TriangleAlert, X } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import { useAlertStore } from "../store/useAlertStore";
@@ -12,6 +13,7 @@ import { BrandIcon } from "../components/BrandIcon";
 import { ProviderCard } from "../components/ProviderCard";
 import { NotificationCenterPanel } from "./NotificationCenterPanel";
 import { cn, formatClock } from "../lib/utils";
+import { selectOrderedInstances } from "../lib/instance";
 import { useT } from "../i18n";
 import { applyTheme } from "../lib/theme";
 import type { AppSettings } from "../types/ipc";
@@ -38,11 +40,12 @@ function useNextRefreshCountdown(): string | null {
 export function QuickWindow() {
   const {
     vaultStatus,
+    instances,
     snapshots,
     loadInitial,
     refreshAll,
-    refreshProvider,
-    refreshingProviders,
+    refreshInstance,
+    refreshingInstances,
     loading,
   } = useAppStore();
   const unread = useNotificationStore(selectUnreadCount);
@@ -108,12 +111,16 @@ export function QuickWindow() {
       const unlistenSettings = await listen<AppSettings>("settings-changed", (event) => {
         useAppStore.setState({ settings: event.payload });
       });
+      // 主窗口增删/排序实例时重载（高度随后自然跟随）
+      const unlistenInstances = await listen("instances-changed", () => {
+        if (!disposed) void syncFromBackend();
+      });
       // 主窗口上下文刷新产生的告警态变化同步到本窗口
-      const unlistenAlert = await listen<{ providerId: string; active: boolean }>(
+      const unlistenAlert = await listen<{ instanceId: string; active: boolean }>(
         "alert-state-changed",
         (event) => {
           useAlertStore.setState((state) => ({
-            active: { ...state.active, [event.payload.providerId]: event.payload.active },
+            active: { ...state.active, [event.payload.instanceId]: event.payload.active },
           }));
         },
       );
@@ -125,10 +132,11 @@ export function QuickWindow() {
         unlistenQuickShown();
         unlistenAlert();
         unlistenSettings();
+        unlistenInstances();
         return;
       }
 
-      unlisteners.push(unlistenFocus, unlistenVault, unlistenCredentials, unlistenQuickShown, unlistenAlert, unlistenSettings);
+      unlisteners.push(unlistenFocus, unlistenVault, unlistenCredentials, unlistenQuickShown, unlistenAlert, unlistenSettings, unlistenInstances);
     })();
 
     return () => {
@@ -156,18 +164,43 @@ export function QuickWindow() {
     await invoke("hide_quick_window");
   }
 
-  const anyProviderRefreshing = Object.values(refreshingProviders).some(Boolean);
+  const anyProviderRefreshing = Object.values(refreshingInstances).some(Boolean);
   const refreshing = loading || anyProviderRefreshing;
   const anyAlert = Object.values(alertActiveMap).some(Boolean);
 
+  const rootRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  useFitWindowHeight(rootRef, contentRef);
+
+  // 顶栏拖动与双击自管（不走 data-tauri-drag-region 的注入脚本，双击行为确定可控）：
+  // 按钮上不进入拖动（否则系统拖动循环吞掉 click，表现为按钮要双击）；
+  // 空白区单击进入系统拖动，双击的第二次按下放行给 dblclick（与 Tauri drag.js 同手法）
+  function handleHeaderMouseDown(event: React.MouseEvent<HTMLElement>) {
+    if ((event.target as HTMLElement).closest("button")) return;
+    if (event.button !== 0 || event.detail !== 1) return;
+    event.preventDefault();
+    void getCurrentWindow().startDragging();
+  }
+
+  function handleHeaderDoubleClick(event: React.MouseEvent<HTMLElement>) {
+    if ((event.target as HTMLElement).closest("button")) return;
+    // 双击即「去主窗口操作」：主窗口起来后收起面板（光标在面板内，失焦自动隐藏不会触发）
+    void openMain().then(() => hideQuick());
+  }
+
   return (
     // 窗口圆角由系统绘制，这里不再自绘圆角（避免滚动到底部时圆角与滚动内容错位）
-    <div className="relative flex h-screen flex-col overflow-hidden bg-surface shadow-pop">
+    <div
+      ref={rootRef}
+      className="relative flex h-screen flex-col overflow-hidden bg-surface shadow-pop"
+    >
       <header
-        data-tauri-drag-region
+        data-quick-header
+        onMouseDown={handleHeaderMouseDown}
+        onDoubleClick={handleHeaderDoubleClick}
         className="flex h-11 shrink-0 items-center justify-between border-b border-line bg-surface-2/60 px-3"
       >
-        <div className="flex items-center gap-2" data-tauri-drag-region>
+        <div className="flex items-center gap-2">
           <BrandIcon size={20} className="rounded-[5px]" />
           <span className="text-[13px] font-semibold text-fg">{t("AI 用量助手")}</span>
         </div>
@@ -215,7 +248,9 @@ export function QuickWindow() {
       </div>
 
       <main className="flex-1 overflow-y-auto bg-canvas p-3">
-        {!ready ? (
+        {/* 高度测量的参照物：包裹层的自然高度不受视口钳制，内容超出上限时 main 内部滚动 */}
+        <div ref={contentRef}>
+          {!ready ? (
           <div className="flex h-40 items-center justify-center">
             <span className="h-5 w-5 animate-spin rounded-full border-2 border-line-strong border-t-brand" />
           </div>
@@ -254,7 +289,7 @@ export function QuickWindow() {
                 {t("有额度告警待处理，点击查看通知中心")}
               </button>
             )}
-            {snapshots.length === 0 ? (
+            {instances.length === 0 && snapshots.length === 0 ? (
               <div className="flex h-52 flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-line-strong bg-surface p-4 text-center">
                 <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-surface-2 text-fg-muted">
                   <Gauge className="h-5 w-5" />
@@ -266,19 +301,25 @@ export function QuickWindow() {
               </div>
             ) : (
               <div className="space-y-3">
-                {snapshots.map((snapshot) => (
+                {selectOrderedInstances(instances).map((instance) => (
                   <ProviderCard
-                    key={snapshot.providerId}
-                    snapshot={snapshot}
+                    key={instance.id}
+                    instance={instance}
+                    snapshot={
+                      snapshots.find((snapshot) => snapshot.instanceId === instance.id) ?? null
+                    }
                     compact
-                    refreshing={loading || refreshingProviders[snapshot.providerId]}
-                    onRefresh={() => void refreshProvider(snapshot.providerId)}
+                    refreshing={
+                      loading || refreshingInstances[instance.id]
+                    }
+                    onRefresh={() => void refreshInstance(instance.id)}
                   />
                 ))}
               </div>
             )}
           </>
         )}
+        </div>
       </main>
     </div>
   );

@@ -2,13 +2,13 @@ import { AlertTriangle, KeyRound, LoaderCircle } from "lucide-react";
 import { Card } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
 import { EmptyState } from "../../components/ui/empty-state";
-import { useT } from "../../i18n";
+import { applyParams, useT } from "../../i18n";
 
 export type StatsAsyncState<T> =
   | { kind: "loading" }
   | { kind: "ready"; data: T }
-  | { kind: "needs_config"; message: string }
-  | { kind: "error"; message: string };
+  | { kind: "needs_config"; message: string; params?: Record<string, string | number> }
+  | { kind: "error"; message: string; params?: Record<string, string | number> };
 
 /**
  * 统计模块异步三态卡片：
@@ -30,7 +30,7 @@ export function StatsStateCard<T>({ state, onRetry }: { state: StatsAsyncState<T
       <Card className="p-5">
         <EmptyState
           icon={<KeyRound className="h-5 w-5" />}
-          title={state.message}
+          title={applyParams(t(state.message), state.params)}
           description={t("请前往设置页配置对应凭据后回来重试。")}
         />
       </Card>
@@ -43,7 +43,7 @@ export function StatsStateCard<T>({ state, onRetry }: { state: StatsAsyncState<T
         <EmptyState
           icon={<AlertTriangle className="h-5 w-5" />}
           title={t("用量数据加载失败")}
-          description={state.message}
+          description={applyParams(t(state.message), state.params)}
           action={
             onRetry ? (
               <Button variant="outline" size="sm" onClick={onRetry}>

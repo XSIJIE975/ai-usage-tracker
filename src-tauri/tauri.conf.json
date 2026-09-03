@@ -14,8 +14,8 @@
       {
         "label": "main",
         "title": "AI 用量助手",
-        "width": 980,
-        "height": 720,
+        "width": 1180,
+        "height": 760,
         "minWidth": 720,
         "minHeight": 520,
         "center": true
@@ -24,7 +24,7 @@
         "label": "quick",
         "title": "AI 用量助手",
         "width": 380,
-        "height": 560,
+        "height": 320,
         "decorations": false,
         "alwaysOnTop": true,
         "resizable": false,
@@ -42,8 +42,8 @@
     "createUpdaterArtifacts": true,
     "category": "DeveloperTool",
     "publisher": "XSIJIE",
-    "shortDescription": "跨平台 AI 订阅与 API 用量监控工具",
-    "longDescription": "在系统托盘快速查看 OpenCode Go 和 DeepSeek 等 AI 服务的用量、额度和余额。",
+    "shortDescription": "Cross-platform AI usage and quota tracker",
+    "longDescription": "Track AI subscription quotas and API usage for OpenCode Go, DeepSeek and Zhipu GLM from the system tray — balance, quota windows, usage charts and threshold alerts. All data stays on your device.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

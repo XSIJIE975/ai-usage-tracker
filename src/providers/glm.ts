@@ -1,5 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { CredentialStatus, HttpResult, MetricLine, ProviderSnapshot } from "../types/ipc";
+import type {
+  HttpResult,
+  InstanceCredentialStatus,
+  MetricLine,
+  ProviderInstance,
+  ProviderSnapshot,
+} from "../types/ipc";
 import type { ProviderModule } from "./types";
 
 // 端点与响应结构以 GLM_PROVIDER_PLAN.md 3.2/3.3/3.4 的实测结论为准（2026-09-01）：
@@ -112,13 +118,19 @@ export function parseQuotaLimits(data: GlmQuotaData | undefined): MetricLine[] {
 }
 
 /** 配额响应整体处理：区分「未订阅/无数据」与「返回了未识别的类型」两种空结果 */
-function processQuota(result: HttpResult): { ok: boolean; lines: MetricLine[]; error?: string } {
+function processQuota(result: HttpResult): {
+  ok: boolean;
+  lines: MetricLine[];
+  error?: string;
+  errorParams?: Record<string, string | number>;
+} {
   if (result.status !== 200) {
     const detail = result.bodyText?.trim() || "";
     return {
       ok: false,
       lines: [],
-      error: `Coding Plan 配额接口返回 HTTP ${result.status}${detail ? `：${truncate(detail)}` : ""}`,
+      error: "Coding Plan 配额接口返回 HTTP {status}{detail}",
+      errorParams: { status: result.status, detail: detail ? `：${truncate(detail)}` : "" },
     };
   }
   try {
@@ -127,7 +139,10 @@ function processQuota(result: HttpResult): { ok: boolean; lines: MetricLine[]; e
       return {
         ok: false,
         lines: [],
-        error: `Coding Plan 配额查询失败：code=${json.code ?? "未知"}${json.msg ? ` msg=${truncate(json.msg, 120)}` : ""}`,
+        error: "Coding Plan 配额查询失败：{detail}",
+        errorParams: {
+          detail: `code=${json.code ?? "unknown"}${json.msg ? ` msg=${truncate(json.msg, 120)}` : ""}`,
+        },
       };
     }
     const lines = parseQuotaLimits(json.data);
@@ -145,15 +160,23 @@ function processQuota(result: HttpResult): { ok: boolean; lines: MetricLine[]; e
     }
     return { ok: true, lines };
   } catch (error) {
-    return { ok: false, lines: [], error: `Coding Plan 配额返回数据解析失败：${toErrorText(error)}` };
+    return {
+      ok: false,
+      lines: [],
+      error: "Coding Plan 配额返回数据解析失败：{detail}",
+      errorParams: { detail: toErrorText(error) },
+    };
   }
 }
 
-async function fetchGlmSnapshot(): Promise<ProviderSnapshot> {
-  const status = await invoke<CredentialStatus>("vault_credential_status");
+async function fetchGlmSnapshot(instance: ProviderInstance): Promise<ProviderSnapshot> {
+  const status = await invoke<InstanceCredentialStatus>("vault_credential_status", {
+    instanceId: instance.id,
+  });
   const updatedAt = Date.now();
-  if (!status.glmCodingPlanKey) {
+  if (!status.planKey) {
     return {
+      instanceId: instance.id,
       providerId: "glm",
       providerName: PROVIDER_NAME,
       status: "needs_config",
@@ -163,10 +186,15 @@ async function fetchGlmSnapshot(): Promise<ProviderSnapshot> {
     };
   }
 
-  let outcome: { ok: boolean; lines: MetricLine[]; error?: string };
+  let outcome: {
+    ok: boolean;
+    lines: MetricLine[];
+    error?: string;
+    errorParams?: Record<string, string | number>;
+  };
   try {
     const result = await invoke<HttpResult>("provider_request", {
-      providerId: "glm",
+      instanceId: instance.id,
       url: QUOTA_URL,
       method: "GET",
       auth: "bearer",
@@ -174,21 +202,29 @@ async function fetchGlmSnapshot(): Promise<ProviderSnapshot> {
     });
     outcome = processQuota(result);
   } catch (error) {
-    outcome = { ok: false, lines: [], error: `Coding Plan 配额查询失败：${toErrorText(error)}` };
+    outcome = {
+      ok: false,
+      lines: [],
+      error: "Coding Plan 配额查询失败：{detail}",
+      errorParams: { detail: toErrorText(error) },
+    };
   }
 
   if (!outcome.ok) {
     return {
+      instanceId: instance.id,
       providerId: "glm",
       providerName: PROVIDER_NAME,
       status: "error",
       updatedAt,
       message: outcome.error ?? "Coding Plan 配额查询失败",
+      messageParams: outcome.errorParams,
       lines: [],
     };
   }
 
   return {
+    instanceId: instance.id,
     providerId: "glm",
     providerName: PROVIDER_NAME,
     status: "ok",

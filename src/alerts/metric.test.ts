@@ -1,16 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderSnapshot } from "../types/ipc";
-import {
-  downsampleByHour,
-  extractMetric,
-  parseMetricValue,
-  type MetricPoint,
-} from "./snapshot-history";
-
-const HOUR = 3_600_000;
+import { extractMetric, parseMetricValue } from "./metric";
 
 const snapshot = (lines: ProviderSnapshot["lines"]): ProviderSnapshot => ({
-  providerId: "p",
+  instanceId: "p",
+  providerId: "deepseek",
   providerName: "P",
   status: "ok",
   updatedAt: 0,
@@ -61,32 +55,5 @@ describe("extractMetric", () => {
   it("无可用行 → null", () => {
     expect(extractMetric(snapshot([]))).toBeNull();
     expect(extractMetric(snapshot([{ type: "badge", label: "状态", value: "错误" }]))).toBeNull();
-  });
-});
-
-describe("downsampleByHour", () => {
-  it("同一小时保留最后一个点", () => {
-    const base = 1_700_000_000_000;
-    const points: MetricPoint[] = [
-      { t: base, v: 1 },
-      { t: base + HOUR / 2, v: 2 },
-      { t: base + HOUR, v: 3 },
-    ];
-    expect(downsampleByHour(points)).toEqual([
-      { t: base + HOUR / 2, v: 2 },
-      { t: base + HOUR, v: 3 },
-    ]);
-  });
-
-  it("乱序输入输出仍按时间升序", () => {
-    const base = 1_700_000_000_000;
-    const points: MetricPoint[] = [
-      { t: base + 2 * HOUR, v: 3 },
-      { t: base, v: 1 },
-    ];
-    expect(downsampleByHour(points)).toEqual([
-      { t: base, v: 1 },
-      { t: base + 2 * HOUR, v: 3 },
-    ]);
   });
 });

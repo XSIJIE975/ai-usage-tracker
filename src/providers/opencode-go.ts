@@ -1,10 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
-  CredentialStatus,
   HttpResult,
+  InstanceCredentialStatus,
+  InstanceCredentials,
   MetricLine,
+  ProviderInstance,
   ProviderSnapshot,
-  VaultCredentials,
 } from "../types/ipc";
 import type { ProviderModule } from "./types";
 
@@ -107,14 +108,17 @@ function buildLines(windows: Partial<Record<string, ScrapedWindow>>, updatedAt: 
   return lines;
 }
 
-async function fetchUsage(): Promise<ProviderSnapshot> {
-  const status = await invoke<CredentialStatus>("vault_credential_status");
-  const credentials = await invoke<VaultCredentials>("vault_credentials");
+async function fetchUsage(instance: ProviderInstance): Promise<ProviderSnapshot> {
+  const [status, credentials] = await Promise.all([
+    invoke<InstanceCredentialStatus>("vault_credential_status", { instanceId: instance.id }),
+    invoke<InstanceCredentials>("vault_credentials", { instanceId: instance.id }),
+  ]);
   const updatedAt = Date.now();
-  const workspaceId = credentials.opencodeGoWorkspaceId?.trim() ?? "";
-  const authCookie = credentials.opencodeGoAuthCookie?.trim() ?? "";
+  const workspaceId = credentials.workspaceId?.trim() ?? "";
+  const authCookie = credentials.cookie?.trim() ?? "";
   if (!workspaceId || !authCookie) {
     return {
+      instanceId: instance.id,
       providerId: "opencode-go",
       providerName: "OpenCode Go",
       status: "needs_config",
@@ -124,9 +128,9 @@ async function fetchUsage(): Promise<ProviderSnapshot> {
     };
   }
 
-  if (status.opencodeGoApiKey) {
+  if (status.apiKey) {
     const official = await invoke<HttpResult>("provider_request", {
-      providerId: "opencode-go",
+      instanceId: instance.id,
       url: "https://opencode.ai/zen/go/v1/usage",
       method: "GET",
       auth: "bearer",
@@ -155,6 +159,7 @@ async function fetchUsage(): Promise<ProviderSnapshot> {
         }
         if (Object.keys(windows).length > 0) {
           return {
+            instanceId: instance.id,
             providerId: "opencode-go",
             providerName: "OpenCode Go",
             status: "ok",
@@ -170,7 +175,7 @@ async function fetchUsage(): Promise<ProviderSnapshot> {
 
   const url = `https://opencode.ai/workspace/${encodeURIComponent(workspaceId)}/go`;
   const dashboard = await invoke<HttpResult>("provider_request", {
-    providerId: "opencode-go",
+    instanceId: instance.id,
     url,
     method: "GET",
     auth: "cookie",
@@ -182,11 +187,13 @@ async function fetchUsage(): Promise<ProviderSnapshot> {
 
   if (dashboard.status !== 200) {
     return {
+      instanceId: instance.id,
       providerId: "opencode-go",
       providerName: "OpenCode Go",
       status: "error",
       updatedAt,
-      message: `OpenCode Go 后台返回 HTTP ${dashboard.status}，请检查 Cookie 是否过期`,
+      message: "OpenCode Go 后台返回 HTTP {status}，请检查 Cookie 是否过期",
+      messageParams: { status: dashboard.status },
       lines: [],
     };
   }
@@ -194,6 +201,7 @@ async function fetchUsage(): Promise<ProviderSnapshot> {
   const title = dashboard.bodyText.match(/<title>([^<]*)<\/title>/i)?.[1]?.trim();
   if (title && title.toLowerCase().includes("openauth")) {
     return {
+      instanceId: instance.id,
       providerId: "opencode-go",
       providerName: "OpenCode Go",
       status: "error",
@@ -207,6 +215,7 @@ async function fetchUsage(): Promise<ProviderSnapshot> {
   const lines = buildLines(windows, updatedAt);
   if (lines.length === 0) {
     return {
+      instanceId: instance.id,
       providerId: "opencode-go",
       providerName: "OpenCode Go",
       status: "error",
@@ -217,6 +226,7 @@ async function fetchUsage(): Promise<ProviderSnapshot> {
   }
 
   return {
+    instanceId: instance.id,
     providerId: "opencode-go",
     providerName: "OpenCode Go",
     status: "ok",

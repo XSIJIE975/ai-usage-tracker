@@ -190,13 +190,24 @@ impl Vault {
         }
     }
 
+    /// 凭据容器：v2 内层为 instances（按实例嵌套）；迁移窗口期兼容 v1 的扁平 credentials
     pub fn credentials(&self) -> Result<&Value, String> {
         self.credentials
             .as_ref()
-            .and_then(|payload| payload.get("credentials"))
+            .and_then(|payload| payload.get("instances").or_else(|| payload.get("credentials")))
             .ok_or_else(|| "Credential Vault 未解锁".to_string())
     }
 
+    /// 内层 payload 版本（1=扁平凭据、2=按实例嵌套）；未解锁返回 None
+    pub fn inner_version(&self) -> Option<u8> {
+        self.credentials
+            .as_ref()
+            .and_then(|payload| payload.get("version"))
+            .and_then(Value::as_u64)
+            .map(|version| version as u8)
+    }
+
+    /// credentials 参数为 v2 内层的 instances 对象（instanceId → {slot: value}）
     pub fn save_credentials(&mut self, credentials: &Value) -> Result<(), String> {
         self.ensure_unlocked()?;
         let key = self
@@ -205,8 +216,8 @@ impl Vault {
             .ok_or_else(|| "Credential Vault 未解锁".to_string())?;
         let nonce = random_bytes(NONCE_LEN);
         let payload = serde_json::json!({
-            "version": 1,
-            "credentials": credentials
+            "version": 2,
+            "instances": credentials
         });
         self.write_vault(key, &nonce, &payload)?;
         self.credentials = Some(payload);
@@ -220,8 +231,8 @@ impl Vault {
         key_bytes.zeroize();
         let nonce = random_bytes(NONCE_LEN);
         let payload = serde_json::json!({
-            "version": 1,
-            "credentials": {}
+            "version": 2,
+            "instances": {}
         });
         self.write_vault(&key, &nonce, &payload)?;
         self.key = Some(key);
@@ -284,8 +295,8 @@ fn read_vault_file(path: &PathBuf) -> Result<VaultFile, String> {
     serde_json::from_slice(&bytes).map_err(|error| error.to_string())
 }
 
-/// 旧版主密码的 KDF，仅用于凭据库迁移。
-fn derive_legacy_key(password: &str, salt: &[u8]) -> Result<[u8; KEY_LEN], String> {
+/// 旧版主密码的 KDF，仅用于凭据库迁移（测试借它构造历史 vault 文件）。
+pub(crate) fn derive_legacy_key(password: &str, salt: &[u8]) -> Result<[u8; KEY_LEN], String> {
     let params = Params::new(19_456, 2, 1, Some(KEY_LEN)).map_err(|error| error.to_string())?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let mut key = [0u8; KEY_LEN];
@@ -301,7 +312,7 @@ fn key_array(bytes: &[u8]) -> Result<[u8; KEY_LEN], String> {
         .map_err(|_| "设备密钥长度异常，请重新保存凭据".to_string())
 }
 
-fn encrypt(key: &[u8; KEY_LEN], nonce: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, String> {
+pub(crate) fn encrypt(key: &[u8; KEY_LEN], nonce: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, String> {
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
     cipher
         .encrypt(Nonce::from_slice(nonce), plaintext)

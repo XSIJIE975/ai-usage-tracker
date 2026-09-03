@@ -8,6 +8,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 import { invoke } from "@tauri-apps/api/core";
+import type { ProviderInstance } from "../types/ipc";
 import {
   OPENCODE_RPC_ENDPOINT,
   OPENCODE_RPC_ID_HISTORY,
@@ -23,7 +24,18 @@ const mockInvoke = vi.mocked(invoke);
 const readFixture = (name: string): string =>
   readFileSync(new URL(`./__fixtures__/${name}`, import.meta.url), "utf8");
 
-const vaultCredentials = { opencodeGoWorkspaceId: "wrk_test_ws", opencodeGoAuthCookie: "Fe26.2" };
+const vaultCredentials = { workspaceId: "wrk_test_ws", cookie: "Fe26.2" };
+
+const instance: ProviderInstance = {
+  id: "opencode-go",
+  providerId: "opencode-go",
+  note: "",
+  sortOrder: 0,
+  pinned: false,
+  autoRefresh: true,
+  threshold: 80,
+  createdAt: 0,
+};
 
 describe("buildRpcEnvelope", () => {
   it("serializes the monthly envelope with string/number typed args and l=4", () => {
@@ -63,7 +75,7 @@ describe("fetchOpenCodeMonthlyCost", () => {
       .mockResolvedValueOnce(vaultCredentials)
       .mockResolvedValueOnce({ status: 200, headers: {}, bodyText: readFixture("opencode-rpc-monthly.txt") });
 
-    const result = await fetchOpenCodeMonthlyCost(2026, 8);
+    const result = await fetchOpenCodeMonthlyCost(instance, 2026, 8);
 
     expect(result.status).toBe("ok");
     if (result.status !== "ok") return;
@@ -76,9 +88,9 @@ describe("fetchOpenCodeMonthlyCost", () => {
       { id: "key_TESTKEYBBBBBBBBBBBBBBBBB", displayName: "user@example.com - workbuddy" },
     ]);
 
-    expect(mockInvoke).toHaveBeenNthCalledWith(1, "vault_credentials");
+    expect(mockInvoke).toHaveBeenNthCalledWith(1, "vault_credentials", { instanceId: "opencode-go" });
     expect(mockInvoke).toHaveBeenNthCalledWith(2, "provider_request", {
-      providerId: "opencode-go",
+      instanceId: "opencode-go",
       url: OPENCODE_RPC_ENDPOINT,
       method: "POST",
       auth: "cookie",
@@ -93,9 +105,9 @@ describe("fetchOpenCodeMonthlyCost", () => {
   });
 
   it("returns needs_config without any request when workspace id is missing", async () => {
-    invokeMock.mockResolvedValueOnce({ opencodeGoWorkspaceId: "   ", opencodeGoAuthCookie: "" });
+    invokeMock.mockResolvedValueOnce({ workspaceId: "   ", cookie: "" });
 
-    const result = await fetchOpenCodeMonthlyCost(2026, 8);
+    const result = await fetchOpenCodeMonthlyCost(instance, 2026, 8);
 
     expect(result).toEqual({
       status: "needs_config",
@@ -109,10 +121,11 @@ describe("fetchOpenCodeMonthlyCost", () => {
       .mockResolvedValueOnce(vaultCredentials)
       .mockResolvedValueOnce({ status: 503, headers: {}, bodyText: "<html>down</html>" });
 
-    const result = await fetchOpenCodeMonthlyCost(2026, 8);
+    const result = await fetchOpenCodeMonthlyCost(instance, 2026, 8);
 
     expect(result.status).toBe("error");
-    expect(result.status === "error" && result.message).toContain("HTTP 503");
+    expect(result.status === "error" && result.params?.status).toBe(503);
+    expect(result.status === "error" && result.message).toBe("opencode.ai 接口返回 HTTP {status}");
   });
 
   it("surfaces the x-error server business message with a workspace-mismatch hint", async () => {
@@ -124,12 +137,12 @@ describe("fetchOpenCodeMonthlyCost", () => {
         bodyText: ";0x1;((self.$R=self.$R||{})[\"server-fn:0\"]=[],($R=>$R[0]=Object.assign(new Error(\"boom\"),{stack:\"s\"}))($R[\"server-fn:0\"]))",
       });
 
-    const result = await fetchOpenCodeMonthlyCost(2026, 8);
+    const result = await fetchOpenCodeMonthlyCost(instance, 2026, 8);
 
     expect(result).toEqual({
       status: "error",
-      message:
-        'opencode.ai：actor of type "account" is not associated with a workspace。请核对设置中的 Workspace ID 与 Auth Cookie 是否来自同一账号',
+      message: "opencode.ai：{detail}。请核对设置中的 Workspace ID 与 Auth Cookie 是否来自同一账号",
+      params: { detail: 'actor of type "account" is not associated with a workspace' },
     });
   });
 
@@ -143,11 +156,12 @@ describe("fetchOpenCodeMonthlyCost", () => {
           ';0x3;((self.$R=self.$R||{})["server-fn:0"]=[],($R=>$R[0]=Object.assign(new RangeError("Invalid time value"),{stack:"..."}))($R["server-fn:0"]))',
       });
 
-    const result = await fetchOpenCodeMonthlyCost(2026, 8);
+    const result = await fetchOpenCodeMonthlyCost(instance, 2026, 8);
 
     expect(result).toEqual({
       status: "error",
       message: "opencode.ai 服务端内部错误（时间处理异常），请稍后重试或切换到其他月份查看。",
+      params: {},
     });
   });
 
@@ -161,7 +175,7 @@ describe("fetchOpenCodeMonthlyCost", () => {
           ';0x2;((self.$R=self.$R||{})["server-fn:0"]=[],($R=>$R[0]=new Response(null,$R[1]={headers:new Headers([["location","/auth/authorize"]]),status:302}))($R["server-fn:0"]))',
       });
 
-    const result = await fetchOpenCodeMonthlyCost(2026, 8);
+    const result = await fetchOpenCodeMonthlyCost(instance, 2026, 8);
 
     expect(result).toEqual({
       status: "error",
@@ -174,7 +188,7 @@ describe("fetchOpenCodeMonthlyCost", () => {
       .mockResolvedValueOnce(vaultCredentials)
       .mockResolvedValueOnce({ status: 200, headers: {}, bodyText: "<html>unexpected</html>" });
 
-    const result = await fetchOpenCodeMonthlyCost(2026, 8);
+    const result = await fetchOpenCodeMonthlyCost(instance, 2026, 8);
 
     expect(result).toEqual({
       status: "error",
@@ -198,7 +212,7 @@ describe("fetchOpenCodeHistoryPage", () => {
       .mockResolvedValueOnce(vaultCredentials)
       .mockResolvedValueOnce({ status: 200, headers: {}, bodyText: readFixture("opencode-rpc-history.txt") });
 
-    const result = await fetchOpenCodeHistoryPage(0);
+    const result = await fetchOpenCodeHistoryPage(instance, 0);
 
     expect(result.status).toBe("ok");
     if (result.status !== "ok") return;
@@ -218,7 +232,7 @@ describe("fetchOpenCodeHistoryPage", () => {
       .mockResolvedValueOnce(vaultCredentials)
       .mockResolvedValueOnce({ status: 200, headers: {}, bodyText: readFixture("opencode-rpc-history.txt") });
 
-    const result = await fetchOpenCodeHistoryPage(0);
+    const result = await fetchOpenCodeHistoryPage(instance, 0);
 
     expect(result.status).toBe("ok");
     if (result.status !== "ok") return;
@@ -242,10 +256,10 @@ describe("fetchOpenCodeHistoryPage", () => {
       .mockResolvedValueOnce(vaultCredentials)
       .mockResolvedValueOnce({ status: 200, headers: {}, bodyText: readFixture("opencode-rpc-history.txt") });
 
-    await fetchOpenCodeHistoryPage(2);
+    await fetchOpenCodeHistoryPage(instance, 2);
 
     expect(mockInvoke).toHaveBeenNthCalledWith(2, "provider_request", {
-      providerId: "opencode-go",
+      instanceId: "opencode-go",
       url: OPENCODE_RPC_ENDPOINT,
       method: "POST",
       auth: "cookie",

@@ -1,18 +1,8 @@
 import { AlertCircle, CheckCircle2 } from "lucide-react";
-import type { CredentialStatus, VaultCredentials } from "../../types/ipc";
-
-export interface ProviderSettingsProps {
-  saveDisabled: boolean;
-  notice?: string;
-  credentials: VaultCredentials | null;
-  credentialStatus: CredentialStatus | null;
-  onChanged: () => Promise<void>;
-  onReload: () => Promise<void>;
-  onOpenGeneral: () => void;
-}
 
 export type SaveMessage = { kind: "success" | "error"; text: string } | null;
 
+/** 表单内联的保存结果提示（InstanceDialog 使用） */
 export function SaveMessageBanner({ message }: { message: SaveMessage }) {
   if (!message) return null;
   return message.kind === "success" ? (
