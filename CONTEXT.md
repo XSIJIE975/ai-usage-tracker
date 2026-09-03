@@ -113,7 +113,7 @@ _Avoid_：主密钥、机器密钥、机器绑定密钥（它不是从机器派�
 
 ## latest.json
 
-tauri-action 随发布产物自动上传的静态更新清单，记录各平台更新包的下载地址与签名。`releases/latest/download/latest.json` 恒指向最新已发布 Release，是应用内自动更新通道的唯一数据源。
+应用内自动更新通道的唯一数据源，`releases/latest/download/latest.json` 恒指向最新已发布 Release。多平台构建各自上传更新产物后，由发布流程末尾的 `fill-updater-notes.mjs` 依据 Release 上的签名文件确定性重建（避免并行构建写清单的竞态）。macOS 为 universal 统一构建：更新插件按运行时架构匹配 `darwin-aarch64` / `darwin-x86_64` 键而不认识 `darwin-universal`，因此清单里两种架构的键都指向同一个 universal 产物。
 
 ## 自动更新
 
