@@ -22,7 +22,7 @@ import {
   sumCostUsd,
 } from "./opencode/cost-series";
 import { useHistoryPages } from "./opencode/use-history-pages";
-import { useLanguage, useT } from "../../i18n";
+import { applyParams, useLanguage, useT } from "../../i18n";
 import { useAutoRefresh } from "./use-auto-refresh";
 import { useGlobalRefresh } from "./use-global-refresh";
 
@@ -208,7 +208,11 @@ export function OpenCodeStats() {
           {history.configNeeded ? (
             <EmptyState
               icon={<KeyRound className="h-5 w-5" />}
-              title={history.errorMessage || t("缺少凭据配置")}
+              title={
+                history.errorMessage
+                  ? applyParams(t(history.errorMessage), history.errorParams)
+                  : t("缺少凭据配置")
+              }
               description={t("请前往设置页配置 Workspace ID 和 Auth Cookie。")}
             />
           ) : (
@@ -219,7 +223,9 @@ export function OpenCodeStats() {
               </div>
               {history.errorMessage ? (
                 <div className="flex items-center justify-center gap-2">
-                  <span className="text-xs text-danger">{history.errorMessage}</span>
+                  <span className="text-xs text-danger">
+                    {applyParams(t(history.errorMessage), history.errorParams)}
+                  </span>
                   <Button variant="outline" size="sm" onClick={() => history.goToPage(history.currentPage)}>
                     {t("重试")}
                   </Button>

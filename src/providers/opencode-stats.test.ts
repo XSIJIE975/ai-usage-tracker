@@ -124,7 +124,8 @@ describe("fetchOpenCodeMonthlyCost", () => {
     const result = await fetchOpenCodeMonthlyCost(instance, 2026, 8);
 
     expect(result.status).toBe("error");
-    expect(result.status === "error" && result.message).toContain("HTTP 503");
+    expect(result.status === "error" && result.params?.status).toBe(503);
+    expect(result.status === "error" && result.message).toBe("opencode.ai 接口返回 HTTP {status}");
   });
 
   it("surfaces the x-error server business message with a workspace-mismatch hint", async () => {
@@ -140,8 +141,8 @@ describe("fetchOpenCodeMonthlyCost", () => {
 
     expect(result).toEqual({
       status: "error",
-      message:
-        'opencode.ai：actor of type "account" is not associated with a workspace。请核对设置中的 Workspace ID 与 Auth Cookie 是否来自同一账号',
+      message: "opencode.ai：{detail}。请核对设置中的 Workspace ID 与 Auth Cookie 是否来自同一账号",
+      params: { detail: 'actor of type "account" is not associated with a workspace' },
     });
   });
 
@@ -160,6 +161,7 @@ describe("fetchOpenCodeMonthlyCost", () => {
     expect(result).toEqual({
       status: "error",
       message: "opencode.ai 服务端内部错误（时间处理异常），请稍后重试或切换到其他月份查看。",
+      params: {},
     });
   });
 

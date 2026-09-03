@@ -88,13 +88,21 @@ type PlatformEnvelope = Pick<DeepSeekAmountResponse, "code" | "msg"> & {
   readonly data?: { readonly biz_code?: number; readonly biz_msg?: string };
 };
 
-/** code/biz_code 非 0 时返回错误消息，健康包裹层返回 null。 */
-export const platformErrorMessage = (envelope: PlatformEnvelope): string | null => {
+/** code/biz_code 非 0 时返回错误消息（模板 + 实参），健康包裹层返回 null。 */
+export const platformErrorMessage = (
+  envelope: PlatformEnvelope,
+): { message: string; params: Record<string, string> } | null => {
   if ((envelope.code ?? 0) !== 0) {
-    return `DeepSeek 平台返回错误：${envelope.msg || "未知错误"}`;
+    return {
+      message: "DeepSeek 平台返回错误：{detail}",
+      params: { detail: envelope.msg || "unknown" },
+    };
   }
   if ((envelope.data?.biz_code ?? 0) !== 0) {
-    return `DeepSeek 平台返回错误：${envelope.data?.biz_msg || "未知错误"}`;
+    return {
+      message: "DeepSeek 平台返回错误：{detail}",
+      params: { detail: envelope.data?.biz_msg || "unknown" },
+    };
   }
   return null;
 };

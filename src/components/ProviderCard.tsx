@@ -324,7 +324,7 @@ export function ProviderCard({
             <div className="flex items-center justify-between gap-2 rounded-md bg-info-soft px-3 py-2">
               <span className="flex min-w-0 items-center gap-2 text-xs leading-relaxed text-info-soft-fg">
                 <Settings2 className="h-3.5 w-3.5 shrink-0" />
-                <span className="min-w-0">{snapshot.message}</span>
+                <span className="min-w-0">{applyParams(t(snapshot.message), snapshot.messageParams)}</span>
               </span>
               {!compact && onEdit && (
                 <button
@@ -341,7 +341,9 @@ export function ProviderCard({
               <div className="flex items-center justify-between gap-2 rounded-md bg-warning-soft px-3 py-2">
                 <span className="flex min-w-0 items-center gap-2 text-xs text-warning-soft-fg">
                   <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                  <span className="min-w-0">{t(errorHintTitle(snapshot.message))}</span>
+                  <span className="min-w-0">
+                    {t(errorHintTitle(snapshot.message, snapshot.messageParams))}
+                  </span>
                 </span>
                 <button
                   type="button"
@@ -358,6 +360,7 @@ export function ProviderCard({
                 onOpenChange={setDetailOpen}
                 title={`${title} · ${kindName}`}
                 message={snapshot.message}
+                messageParams={snapshot.messageParams}
               />
             </>
           )

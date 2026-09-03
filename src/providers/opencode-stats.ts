@@ -90,16 +90,19 @@ const WORKSPACE_MISMATCH_HINT = "请核对设置中的 Workspace ID 与 Auth Coo
  * 服务端应用层错误通过 x-error 响应头传递（HTTP 仍为 200）。
  * 值为 "true" 时无实际信息（真正的线索在响应体），跳过。
  */
-const serverBusinessError = (http: HttpResult): string | null => {
+const serverBusinessError = (http: HttpResult): { message: string; params: Record<string, string> } | null => {
   const detail = http.headers["x-error"];
   if (!detail || detail === "true") return null;
   if (detail.includes("not associated with a workspace")) {
-    return `opencode.ai：${detail}。${WORKSPACE_MISMATCH_HINT}`;
+    return {
+      message: `opencode.ai：{detail}。${WORKSPACE_MISMATCH_HINT}`,
+      params: { detail },
+    };
   }
   if (detail.includes("Invalid time value")) {
-    return "opencode.ai 服务端内部错误（时间处理异常），请稍后重试或切换到其他月份查看。";
+    return { message: "opencode.ai 服务端内部错误（时间处理异常），请稍后重试或切换到其他月份查看。", params: {} };
   }
-  return `opencode.ai 服务端错误：${detail}`;
+  return { message: "opencode.ai 服务端错误：{detail}", params: { detail } };
 };
 
 /** 未登录/登录态失效时服务端返回指向 /auth/authorize 的重定向 Response 包装。 */
@@ -114,12 +117,18 @@ const executeRpc = async <T>(
 ): Promise<StatsResult<T>> => {
   const http = await postRpc(instanceId, serverId, envelope);
   if (http.status !== 200) {
-    return { status: "error", message: `opencode.ai 接口返回 HTTP ${http.status}` };
+    return {
+      status: "error",
+      message: "opencode.ai 接口返回 HTTP {status}",
+      params: { status: http.status },
+    };
   }
   const authExpired = authExpiredMessage(http.bodyText);
   if (authExpired !== null) return { status: "error", message: authExpired };
   const businessError = serverBusinessError(http);
-  if (businessError !== null) return { status: "error", message: businessError };
+  if (businessError !== null) {
+    return { status: "error", message: businessError.message, params: businessError.params };
+  }
   try {
     return { status: "ok", data: mapPayload(parseRpcResponse(http.bodyText)) };
   } catch {

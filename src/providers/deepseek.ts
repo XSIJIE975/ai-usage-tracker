@@ -50,9 +50,8 @@ async function fetchBalance(instance: ProviderInstance): Promise<ProviderSnapsho
       providerName: "DeepSeek",
       status: "error",
       updatedAt,
-      message: `DeepSeek 余额接口返回 HTTP ${result.status}${
-        detail ? `：${detail.length > 300 ? `${detail.slice(0, 300)}...` : detail}` : ""
-      }`,
+      message: "DeepSeek 余额接口返回 HTTP {status}{detail}",
+      messageParams: { status: result.status, detail: detail ? `：${detail.length > 300 ? `${detail.slice(0, 300)}...` : detail}` : "" },
       lines: [],
     };
   }
@@ -113,7 +112,8 @@ async function fetchBalance(instance: ProviderInstance): Promise<ProviderSnapsho
       providerName: "DeepSeek",
       status: "error",
       updatedAt,
-      message: `DeepSeek 返回数据解析失败：${error instanceof Error ? error.message : String(error)}`,
+      message: "DeepSeek 返回数据解析失败：{detail}",
+      messageParams: { detail: error instanceof Error ? error.message : String(error) },
       lines: [],
     };
   }

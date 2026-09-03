@@ -76,6 +76,7 @@ describe("deepseekProvider", () => {
 
     const snapshot = await deepseekProvider.fetch(instance);
     expect(snapshot.status).toBe("error");
-    expect(snapshot.message).toContain("401");
+    expect(snapshot.message).toBe("DeepSeek 余额接口返回 HTTP {status}{detail}");
+    expect(snapshot.messageParams).toMatchObject({ status: 401, detail: "：unauthorized" });
   });
 });

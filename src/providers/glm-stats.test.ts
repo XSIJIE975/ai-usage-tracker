@@ -158,7 +158,8 @@ describe("fetchGlmUsage", () => {
       .mockResolvedValueOnce(httpResult("boom", 500))
       .mockResolvedValueOnce(httpResult(loadToolUsage()));
     const result = await fetchGlmUsage(glmInstance, 0, 1);
-    expect(result).toMatchObject({ status: "error", message: expect.stringContaining("500") });
+    expect(result).toMatchObject({ status: "error", params: { status: 500 } });
+    expect(result.status === "error" && result.message).toBe("智谱用量接口返回 HTTP {status}");
   });
 
   it("fails with server code/msg when success is false", async () => {
@@ -167,7 +168,8 @@ describe("fetchGlmUsage", () => {
       .mockResolvedValueOnce(httpResult({ code: 403, msg: "未开通 Coding Plan", success: false }))
       .mockResolvedValueOnce(httpResult(loadToolUsage()));
     const result = await fetchGlmUsage(glmInstance, 0, 1);
-    expect(result).toMatchObject({ status: "error", message: expect.stringContaining("未开通 Coding Plan") });
+    expect(result).toMatchObject({ status: "error" });
+    expect(result.status === "error" && result.params?.detail).toContain("未开通 Coding Plan");
   });
 
   it("degrades to empty tool data when the tool endpoint fails", async () => {
@@ -189,6 +191,7 @@ describe("fetchGlmUsage", () => {
       .mockRejectedValueOnce(new Error("network down"))
       .mockResolvedValueOnce(httpResult(loadToolUsage()));
     const result = await fetchGlmUsage(glmInstance, 0, 1);
-    expect(result).toMatchObject({ status: "error", message: expect.stringContaining("network down") });
+    expect(result).toMatchObject({ status: "error", params: { detail: "network down" } });
+    expect(result.status === "error" && result.message).toBe("智谱用量查询失败：{detail}");
   });
 });

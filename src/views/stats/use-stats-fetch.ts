@@ -5,8 +5,10 @@ import type { StatsAsyncState } from "./StatsStateCard";
 
 const toState = <T,>(result: StatsResult<T>): StatsAsyncState<T> => {
   if (result.status === "ok") return { kind: "ready", data: result.data };
-  if (result.status === "needs_config") return { kind: "needs_config", message: result.message };
-  return { kind: "error", message: result.message };
+  if (result.status === "needs_config") {
+    return { kind: "needs_config", message: result.message, params: result.params };
+  }
+  return { kind: "error", message: result.message, params: result.params };
 };
 
 export interface StatsFetchResult<T> {

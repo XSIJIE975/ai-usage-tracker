@@ -10,10 +10,10 @@ import {
   DialogTitle,
 } from "./ui/dialog";
 import { Button } from "./ui/button";
-import { useT } from "../i18n";
+import { applyParams, useT } from "../i18n";
 
 /**
- * 异常详情弹窗：展示供应商接口返回的原始报错全文。
+ * 异常详情弹窗：展示供应商接口返回的原始报错全文（模板帧翻译、动态值原样）。
  * 宽度钳制到视口内（快速面板 380px 视口也能完整容纳）。
  */
 export function ErrorDetailsDialog({
@@ -21,15 +21,18 @@ export function ErrorDetailsDialog({
   onOpenChange,
   title,
   message,
+  messageParams,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** 来源实例显示名（弹窗描述行） */
   title: string;
   message: string;
+  messageParams?: Record<string, string | number>;
 }) {
   const t = useT();
   const [copied, setCopied] = useState(false);
+  const localized = applyParams(t(message), messageParams);
 
   useEffect(() => {
     if (!open) setCopied(false);
@@ -37,7 +40,7 @@ export function ErrorDetailsDialog({
 
   async function copy() {
     try {
-      await navigator.clipboard.writeText(message);
+      await navigator.clipboard.writeText(localized);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1_500);
     } catch {
@@ -54,7 +57,7 @@ export function ErrorDetailsDialog({
         </DialogHeader>
         <DialogBody>
           <pre className="max-h-[40vh] overflow-y-auto whitespace-pre-wrap break-all rounded-md bg-surface-2 p-3 font-mono text-xs leading-relaxed text-fg-secondary">
-            {message}
+            {localized}
           </pre>
         </DialogBody>
         <DialogFooter>

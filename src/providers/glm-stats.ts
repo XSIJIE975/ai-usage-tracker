@@ -259,13 +259,16 @@ export const fetchGlmUsage = async (
     ]);
 
     if (modelHttp.status !== 200) {
-      return { status: "error", message: `智谱用量接口返回 HTTP ${modelHttp.status}` };
+      return { status: "error", message: "智谱用量接口返回 HTTP {status}", params: { status: modelHttp.status } };
     }
     const modelJson = JSON.parse(modelHttp.bodyText) as GlmStatsEnvelope<GlmModelUsageRaw>;
     if (modelJson.success === false) {
       return {
         status: "error",
-        message: `智谱用量查询失败：code=${modelJson.code ?? "未知"}${modelJson.msg ? ` msg=${modelJson.msg}` : ""}`,
+        message: "智谱用量查询失败：{detail}",
+        params: {
+          detail: `code=${modelJson.code ?? "unknown"}${modelJson.msg ? ` msg=${modelJson.msg}` : ""}`,
+        },
       };
     }
 
@@ -285,6 +288,6 @@ export const fetchGlmUsage = async (
       return { status: "error", message: "智谱用量响应无法解析" };
     }
     const detail = error instanceof Error ? error.message : String(error);
-    return { status: "error", message: `智谱用量查询失败：${detail}` };
+    return { status: "error", message: "智谱用量查询失败：{detail}", params: { detail } };
   }
 };

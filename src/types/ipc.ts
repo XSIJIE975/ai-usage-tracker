@@ -59,7 +59,10 @@ export interface ProviderSnapshot {
   providerName: string;
   status: "ok" | "error" | "needs_config";
   updatedAt: number;
+  /** 中文模板串（含 {placeholder}），渲染端 applyParams(t(message), messageParams) 翻译 */
   message?: string;
+  /** message 模板的占位符实参 */
+  messageParams?: Record<string, string | number>;
   lines: MetricLine[];
 }
 

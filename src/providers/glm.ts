@@ -118,13 +118,19 @@ export function parseQuotaLimits(data: GlmQuotaData | undefined): MetricLine[] {
 }
 
 /** 配额响应整体处理：区分「未订阅/无数据」与「返回了未识别的类型」两种空结果 */
-function processQuota(result: HttpResult): { ok: boolean; lines: MetricLine[]; error?: string } {
+function processQuota(result: HttpResult): {
+  ok: boolean;
+  lines: MetricLine[];
+  error?: string;
+  errorParams?: Record<string, string | number>;
+} {
   if (result.status !== 200) {
     const detail = result.bodyText?.trim() || "";
     return {
       ok: false,
       lines: [],
-      error: `Coding Plan 配额接口返回 HTTP ${result.status}${detail ? `：${truncate(detail)}` : ""}`,
+      error: "Coding Plan 配额接口返回 HTTP {status}{detail}",
+      errorParams: { status: result.status, detail: detail ? `：${truncate(detail)}` : "" },
     };
   }
   try {
@@ -133,7 +139,10 @@ function processQuota(result: HttpResult): { ok: boolean; lines: MetricLine[]; e
       return {
         ok: false,
         lines: [],
-        error: `Coding Plan 配额查询失败：code=${json.code ?? "未知"}${json.msg ? ` msg=${truncate(json.msg, 120)}` : ""}`,
+        error: "Coding Plan 配额查询失败：{detail}",
+        errorParams: {
+          detail: `code=${json.code ?? "unknown"}${json.msg ? ` msg=${truncate(json.msg, 120)}` : ""}`,
+        },
       };
     }
     const lines = parseQuotaLimits(json.data);
@@ -151,7 +160,12 @@ function processQuota(result: HttpResult): { ok: boolean; lines: MetricLine[]; e
     }
     return { ok: true, lines };
   } catch (error) {
-    return { ok: false, lines: [], error: `Coding Plan 配额返回数据解析失败：${toErrorText(error)}` };
+    return {
+      ok: false,
+      lines: [],
+      error: "Coding Plan 配额返回数据解析失败：{detail}",
+      errorParams: { detail: toErrorText(error) },
+    };
   }
 }
 
@@ -172,7 +186,12 @@ async function fetchGlmSnapshot(instance: ProviderInstance): Promise<ProviderSna
     };
   }
 
-  let outcome: { ok: boolean; lines: MetricLine[]; error?: string };
+  let outcome: {
+    ok: boolean;
+    lines: MetricLine[];
+    error?: string;
+    errorParams?: Record<string, string | number>;
+  };
   try {
     const result = await invoke<HttpResult>("provider_request", {
       instanceId: instance.id,
@@ -183,7 +202,12 @@ async function fetchGlmSnapshot(instance: ProviderInstance): Promise<ProviderSna
     });
     outcome = processQuota(result);
   } catch (error) {
-    outcome = { ok: false, lines: [], error: `Coding Plan 配额查询失败：${toErrorText(error)}` };
+    outcome = {
+      ok: false,
+      lines: [],
+      error: "Coding Plan 配额查询失败：{detail}",
+      errorParams: { detail: toErrorText(error) },
+    };
   }
 
   if (!outcome.ok) {
@@ -194,6 +218,7 @@ async function fetchGlmSnapshot(instance: ProviderInstance): Promise<ProviderSna
       status: "error",
       updatedAt,
       message: outcome.error ?? "Coding Plan 配额查询失败",
+      messageParams: outcome.errorParams,
       lines: [],
     };
   }

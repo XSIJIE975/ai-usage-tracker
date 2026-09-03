@@ -9,8 +9,10 @@ export interface HistoryPages {
   hasPrev: boolean;
   hasNext: boolean;
   loading: boolean;
-  /** 非空表示最近一次加载失败的原因 */
+  /** 非空表示最近一次加载失败的原因（中文模板串） */
   errorMessage: string;
+  /** errorMessage 模板的占位符实参 */
+  errorParams?: Record<string, string | number>;
   /** 失败原因是缺少凭据配置（引导前往设置页） */
   configNeeded: boolean;
   goToPage: (page: number) => void;
@@ -33,6 +35,7 @@ export const useHistoryPages = (
   const [hasNext, setHasNext] = useState(true);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [errorParams, setErrorParams] = useState<Record<string, string | number> | undefined>(undefined);
   const [configNeeded, setConfigNeeded] = useState(false);
   const requestRef = useRef(0);
 
@@ -42,12 +45,14 @@ export const useHistoryPages = (
       const requestId = ++requestRef.current;
       setLoading(true);
       setErrorMessage("");
+      setErrorParams(undefined);
       fetchOpenCodeHistoryPage(instance, page)
       .then((result) => {
         if (requestId !== requestRef.current) return;
         if (result.status !== "ok") {
           setConfigNeeded(result.status === "needs_config");
           setErrorMessage(result.message);
+          setErrorParams(result.params);
           setLoading(false);
           return;
         }
@@ -62,6 +67,7 @@ export const useHistoryPages = (
         if (requestId !== requestRef.current) return;
         setConfigNeeded(false);
         setErrorMessage(error instanceof Error ? error.message : String(error));
+        setErrorParams(undefined);
         setLoading(false);
       });
   }, [instance]);
@@ -95,6 +101,7 @@ export const useHistoryPages = (
     hasNext,
     loading,
     errorMessage,
+    errorParams,
     configNeeded,
     goToPage,
     nextPage,

@@ -103,8 +103,8 @@ describe("glmProvider.fetch", () => {
     const snapshot = await glmProvider.fetch(glmInstance);
     expect(snapshot.status).toBe("error");
     expect(snapshot.lines).toHaveLength(0);
-    expect(snapshot.message).toContain("403");
-    expect(snapshot.message).toContain("未开通 Coding Plan");
+    expect(snapshot.messageParams?.detail).toContain("403");
+    expect(snapshot.messageParams?.detail).toContain("未开通 Coding Plan");
   });
 
   it("reports unrecognized window types instead of claiming the plan is unsubscribed", async () => {
@@ -126,7 +126,8 @@ describe("glmProvider.fetch", () => {
 
     const snapshot = await glmProvider.fetch(glmInstance);
     expect(snapshot.status).toBe("error");
-    expect(snapshot.message).toContain("401");
+    expect(snapshot.message).toBe("Coding Plan 配额接口返回 HTTP {status}{detail}");
+    expect(snapshot.messageParams).toMatchObject({ status: 401, detail: "：unauthorized" });
   });
 
   it("returns error when the request rejects", async () => {
@@ -136,7 +137,8 @@ describe("glmProvider.fetch", () => {
 
     const snapshot = await glmProvider.fetch(glmInstance);
     expect(snapshot.status).toBe("error");
-    expect(snapshot.message).toContain("network down");
+    expect(snapshot.message).toBe("Coding Plan 配额查询失败：{detail}");
+    expect(snapshot.messageParams).toMatchObject({ detail: "network down" });
   });
 });
 

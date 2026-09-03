@@ -39,9 +39,13 @@ const isUserTokenConfigured = (status: InstanceCredentialStatus): boolean =>
 
 const parseJson = <T>(text: string): T => JSON.parse(text) as T;
 
-const statsError = (message: string): StatsResult<DeepSeekUsageBundle> => ({
+const statsError = (
+  message: string,
+  params?: Record<string, string | number>,
+): StatsResult<DeepSeekUsageBundle> => ({
   status: "error",
   message,
+  ...(params ? { params } : {}),
 });
 
 export const fetchDeepSeekUsage = async (
@@ -64,18 +68,18 @@ export const fetchDeepSeekUsage = async (
       requestPlatformText(instance.id, platformUrl("/usage/by_api_key/cost", query)),
     ]);
     if (amountHttp.status !== 200) {
-      return statsError(`DeepSeek 平台接口返回 HTTP ${amountHttp.status}`);
+      return statsError("DeepSeek 平台接口返回 HTTP {status}", { status: amountHttp.status });
     }
     if (costHttp.status !== 200) {
-      return statsError(`DeepSeek 平台接口返回 HTTP ${costHttp.status}`);
+      return statsError("DeepSeek 平台接口返回 HTTP {status}", { status: costHttp.status });
     }
 
     const amount = parseJson<DeepSeekAmountResponse>(amountHttp.bodyText);
     const cost = parseJson<DeepSeekCostResponse>(costHttp.bodyText);
     const amountError = platformErrorMessage(amount);
-    if (amountError !== null) return statsError(amountError);
+    if (amountError !== null) return statsError(amountError.message, amountError.params);
     const costError = platformErrorMessage(cost);
-    if (costError !== null) return statsError(costError);
+    if (costError !== null) return statsError(costError.message, costError.params);
 
     return { status: "ok", data: mergeDeepSeekUsage(amount, cost) };
   } catch (error) {
@@ -83,6 +87,6 @@ export const fetchDeepSeekUsage = async (
       return { status: "error", message: "DeepSeek 响应无法解析" };
     }
     const detail = error instanceof Error ? error.message : String(error);
-    return { status: "error", message: `DeepSeek 用量查询失败：${detail}` };
+    return { status: "error", message: "DeepSeek 用量查询失败：{detail}", params: { detail } };
   }
 };

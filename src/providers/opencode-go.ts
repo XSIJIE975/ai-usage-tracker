@@ -192,7 +192,8 @@ async function fetchUsage(instance: ProviderInstance): Promise<ProviderSnapshot>
       providerName: "OpenCode Go",
       status: "error",
       updatedAt,
-      message: `OpenCode Go 后台返回 HTTP ${dashboard.status}，请检查 Cookie 是否过期`,
+      message: "OpenCode Go 后台返回 HTTP {status}，请检查 Cookie 是否过期",
+      messageParams: { status: dashboard.status },
       lines: [],
     };
   }
