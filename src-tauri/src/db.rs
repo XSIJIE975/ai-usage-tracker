@@ -143,6 +143,7 @@ impl Db {
             "alertsEnabled": true,
             "quickPanelShortcut": "Alt+KeyU",
             "quickAutoHide": true,
+            "resetTimeDisplay": "relative",
             "interfaceLanguage": "auto"
         });
         let row = self

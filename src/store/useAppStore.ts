@@ -18,6 +18,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   alertsEnabled: true,
   quickPanelShortcut: "Alt+KeyU",
   quickAutoHide: true,
+  resetTimeDisplay: "relative",
   interfaceLanguage: "auto",
 };
 

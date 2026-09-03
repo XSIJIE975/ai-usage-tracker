@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { formatRefreshLabel, formatReset, normalizeOpenCodeAuthCookie } from "./utils";
+import {
+  formatRefreshLabel,
+  formatReset,
+  formatResetAt,
+  normalizeOpenCodeAuthCookie,
+} from "./utils";
 
 describe("normalizeOpenCodeAuthCookie", () => {
   it("keeps a bare cookie value", () => {
@@ -56,5 +61,22 @@ describe("formatReset", () => {
     expect(formatReset(new Date(now - 1).toISOString(), now)).toBe("即将重置");
     expect(formatReset(undefined, now)).toBe("重置时间未知");
     expect(formatReset("invalid-date", now)).toBe("重置时间未知");
+  });
+});
+
+describe("formatResetAt", () => {
+  // 用本地时间构造输入，断言与本地时区无关
+  const local = new Date(2026, 8, 8, 14, 30);
+
+  it("中文输出 M/D HH:mm（24 小时制）", () => {
+    expect(formatResetAt(local.toISOString(), "zh")).toBe("9/8 14:30");
+  });
+
+  it("英文输出 12 小时制", () => {
+    expect(formatResetAt(local.toISOString(), "en")).toBe("9/8, 02:30 PM");
+  });
+
+  it("无效输入返回占位符", () => {
+    expect(formatResetAt("invalid-date", "zh")).toBe("-");
   });
 });

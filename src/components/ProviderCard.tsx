@@ -13,7 +13,7 @@ import {
   Trash2,
 } from "lucide-react";
 import type { MetricLine, ProviderInstance, ProviderSnapshot } from "../types/ipc";
-import { formatClock, formatReset } from "../lib/utils";
+import { formatClock, formatReset, formatResetAt } from "../lib/utils";
 import { errorHintTitle } from "../lib/error-hint";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Progress } from "./ui/progress";
@@ -32,7 +32,7 @@ import { DeepSeekLogo, GlmLogo, OpenCodeLogo } from "./brand/provider-logo";
 import { displayName } from "../lib/instance";
 import { providerName } from "../providers";
 import { useAppStore } from "../store/useAppStore";
-import { applyParams, useT } from "../i18n";
+import { applyParams, useLanguage, useT } from "../i18n";
 import { cn } from "../lib/utils";
 
 function useNow(intervalMs = 30_000) {
@@ -104,6 +104,8 @@ function StatusBadge({ snapshot }: { snapshot: ProviderSnapshot | null }) {
 
 function MetricRow({ line, now }: { line: MetricLine; now: number }) {
   const t = useT();
+  const language = useLanguage();
+  const resetTimeDisplay = useAppStore((state) => state.settings.resetTimeDisplay);
   const label = applyParams(t(line.label), line.params);
   const valueText = line.value !== undefined ? t(line.value) : undefined;
   if (line.type === "progress") {
@@ -111,7 +113,7 @@ function MetricRow({ line, now }: { line: MetricLine; now: number }) {
     const remaining =
       line.percentUsed === undefined ? undefined : Math.max(0, 100 - line.percentUsed);
     const resetTitle = line.resetsAt
-      ? new Intl.DateTimeFormat("zh-CN", {
+      ? new Intl.DateTimeFormat(language === "en" ? "en-US" : "zh-CN", {
           dateStyle: "short",
           timeStyle: "short",
         }).format(new Date(line.resetsAt))
@@ -135,7 +137,24 @@ function MetricRow({ line, now }: { line: MetricLine; now: number }) {
             {line.percentUsed !== undefined ? `${t("剩余")} ${remaining?.toFixed(1)}%` : `${t("已用")} ${percent}%`}
           </span>
           {line.resetsAt ? (
-            <span title={resetTitle}>{formatReset(line.resetsAt, now, t)}</span>
+            <button
+              type="button"
+              onClick={() => {
+                const current = useAppStore.getState().settings;
+                void useAppStore.getState().saveSettings({
+                  ...current,
+                  resetTimeDisplay: resetTimeDisplay === "absolute" ? "relative" : "absolute",
+                });
+              }}
+              className="tnum rounded-sm transition-colors duration-fast hover:text-fg-secondary hover:underline hover:underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring"
+              title={`${t("点击切换重置时间显示")} · ${resetTitle ?? ""}`}
+              aria-label={`${t("点击切换重置时间显示")}（${resetTitle ?? ""}）`}
+              aria-pressed={resetTimeDisplay === "absolute"}
+            >
+              {resetTimeDisplay === "absolute"
+                ? applyParams(t("{time} 重置"), { time: formatResetAt(line.resetsAt, language) })
+                : formatReset(line.resetsAt, now, t)}
+            </button>
           ) : null}
         </div>
       </div>

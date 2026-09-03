@@ -74,6 +74,19 @@ export function formatBytes(value: number) {
   return `${text} ${units[index]}`;
 }
 
+/** 重置时刻的绝对时间显示（M/D HH:mm，en 为 12 小时制），无效输入返回占位符 */
+export function formatResetAt(iso: string, language: "zh" | "en" = "zh"): string {
+  const date = new Date(iso);
+  if (!Number.isFinite(date.getTime())) return "-";
+  return new Intl.DateTimeFormat(language === "en" ? "en-US" : "zh-CN", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: language === "en",
+  }).format(date);
+}
+
 export function formatReset(iso?: string | null, now = Date.now(), translate?: (s: string) => string) {
   const t = translate ?? ((s: string) => s);
   if (!iso) return t("重置时间未知");

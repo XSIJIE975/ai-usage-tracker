@@ -64,6 +64,8 @@ export const en: Record<string, string> = {
   "网络连接失败": "Network connection failed",
   "获取用量失败": "Failed to fetch usage",
   "详情": "Details",
+  "点击切换重置时间显示": "Click to switch reset time display",
+  "{time} 重置": "resets {time}",
   "查看异常详情": "View error details",
   "异常详情": "Error details",
   "复制": "Copy",

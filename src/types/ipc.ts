@@ -81,6 +81,8 @@ export interface AppSettings {
   quickPanelShortcut: string;
   /** 快速面板失焦自动隐藏 */
   quickAutoHide: boolean;
+  /** 卡片重置时间的展示：relative 倒计时 / absolute 具体时刻 */
+  resetTimeDisplay: "relative" | "absolute";
   /** 界面语言：auto 按系统语言检测（中文→中文，否则英文） */
   interfaceLanguage: "auto" | "zh" | "en";
 }
