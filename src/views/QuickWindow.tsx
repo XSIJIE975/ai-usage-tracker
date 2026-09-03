@@ -184,7 +184,8 @@ export function QuickWindow() {
 
   function handleHeaderDoubleClick(event: React.MouseEvent<HTMLElement>) {
     if ((event.target as HTMLElement).closest("button")) return;
-    void openMain();
+    // 双击即「去主窗口操作」：主窗口起来后收起面板（光标在面板内，失焦自动隐藏不会触发）
+    void openMain().then(() => hideQuick());
   }
 
   return (
