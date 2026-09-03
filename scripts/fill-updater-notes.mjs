@@ -6,8 +6,20 @@ const releaseId = process.env.RELEASE_ID;
 
 // 各更新产物对应的 platforms 键。基础键给新版 updater，带后缀的键兼容旧版。
 // 映射需与 release.yml 构建矩阵保持一致。
+// macOS 为 universal 构建：updater 插件按运行时架构匹配 darwin-aarch64/x86_64(-app)，
+// 不认识 darwin-universal，因此两种架构的键都要指到同一个 universal 产物。
 const PLATFORM_MAP = [
-  { pattern: /_universal\.app\.tar\.gz\.sig$/, keys: ["darwin-universal", "darwin-universal-app"] },
+  {
+    pattern: /_universal\.app\.tar\.gz\.sig$/,
+    keys: [
+      "darwin-universal",
+      "darwin-universal-app",
+      "darwin-aarch64",
+      "darwin-aarch64-app",
+      "darwin-x86_64",
+      "darwin-x86_64-app",
+    ],
+  },
   { pattern: /_aarch64\.app\.tar\.gz\.sig$/, keys: ["darwin-aarch64", "darwin-aarch64-app"] },
   { pattern: /_x64-setup\.exe\.sig$/, keys: ["windows-x86_64", "windows-x86_64-nsis"] },
   { pattern: /_arm64-setup\.exe\.sig$/, keys: ["windows-aarch64", "windows-aarch64-nsis"] },
