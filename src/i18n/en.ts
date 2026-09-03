@@ -77,7 +77,6 @@ export const en: Record<string, string> = {
   "没有匹配的供应商": "No matching providers",
   "同一供应商可以添加多份配置，各自独立追踪、统计与告警。": "One provider can have multiple configs, each tracked, charted and alerted independently.",
   "备注": "Note",
-  "选填": "Optional",
   "如：公司主账号": "e.g. Work account",
   "备注会作为卡片标题；留空时显示供应商名。": "Shown as the card title; falls back to the provider name when empty.",
   "本机设备密钥已丢失，保存时将重建凭据库。": "Device key lost — saving will rebuild the vault.",

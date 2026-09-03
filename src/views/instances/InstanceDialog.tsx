@@ -277,7 +277,6 @@ export function InstanceDialog({
           <div className="space-y-2.5">
             <div className="flex items-center justify-between">
               <Label htmlFor="instance-note">{t("备注")}</Label>
-              <span className="text-xs text-fg-muted">{t("选填")}</span>
             </div>
             <Input
               id="instance-note"
