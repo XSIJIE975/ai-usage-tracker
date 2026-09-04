@@ -25,6 +25,7 @@ import { useHistoryPages } from "./opencode/use-history-pages";
 import { applyParams, useLanguage, useT } from "../../i18n";
 import { useAutoRefresh } from "./use-auto-refresh";
 import { useGlobalRefresh } from "./use-global-refresh";
+import type { ProviderInstance } from "../../types/ipc";
 
 const monthlyCache = createUsageCache();
 
@@ -42,41 +43,35 @@ function RefreshOverlay() {
   );
 }
 
-export function OpenCodeStats() {
-  const instance = useAppStore((state) =>
-    state.instances.find((item) => item.providerId === "opencode-go"),
-  );
+export function OpenCodeStats({ instance }: { instance: ProviderInstance }) {
   const [month, setMonth] = useState(currentMonth);
   const [model, setModel] = useState("all");
   const [keyId, setKeyId] = useState("all");
   const [refreshTick, setRefreshTick] = useState(0);
 
-  const cacheKey = instance ? `${instance.id}:${month.year}-${month.month}` : null;
+  const cacheKey = `${instance.id}:${month.year}-${month.month}`;
   const refresh = () => {
-    if (cacheKey !== null) monthlyCache.invalidate(cacheKey);
+    monthlyCache.invalidate(cacheKey);
     setRefreshTick((tick) => tick + 1);
   };
 
   // 接入全局自动刷新
-  useAutoRefresh(refresh, instance ?? null);
+  useAutoRefresh(refresh, instance);
   // 接入顶栏手动全局刷新
-  useGlobalRefresh(refresh, instance?.id ?? null);
+  useGlobalRefresh(refresh, instance.id);
 
   /** 全局刷新状态：顶栏「刷新」进行中（全局）或该实例单刷进行中 */
   const globalRefreshing = useAppStore(
-    (state) => state.loading || (instance ? Boolean(state.refreshingInstances[instance.id]) : false),
+    (state) => state.loading || Boolean(state.refreshingInstances[instance.id]),
   );
 
   const { state: monthly, isRefreshing } = useStatsFetch(
     monthlyCache,
     cacheKey,
-    () =>
-      instance
-        ? fetchOpenCodeMonthlyCost(instance, month.year, month.month)
-        : Promise.resolve({ status: "needs_config" as const, message: "" }),
+    () => fetchOpenCodeMonthlyCost(instance, month.year, month.month),
     refreshTick,
   );
-  const history = useHistoryPages(instance ?? null, refreshTick);
+  const history = useHistoryPages(instance, refreshTick);
   const busy = isRefreshing || globalRefreshing;
   const t = useT();
   const language = useLanguage();

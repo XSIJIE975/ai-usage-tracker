@@ -20,6 +20,7 @@ import { OverviewCards } from "./deepseek/OverviewCards";
 import { ModelUsageTable } from "./deepseek/ModelUsageTable";
 import { customRangeError, isoDate, resolveRangeMs, timeRangeOptions, type TimeRange } from "./time-range";
 import { useT } from "../../i18n";
+import type { ProviderInstance } from "../../types/ipc";
 import {
   aggregateUsage,
   buildStackedSeries,
@@ -46,10 +47,7 @@ function RefreshOverlay() {
   );
 }
 
-export function DeepSeekStats() {
-  const instance = useAppStore((state) =>
-    state.instances.find((item) => item.providerId === "deepseek"),
-  );
+export function DeepSeekStats({ instance }: { instance: ProviderInstance }) {
   const [range, setRange] = useState<TimeRange>("7d");
   const [apiKeyId, setApiKeyId] = useState("all");
   const [metric, setMetric] = useState<UsageMetric>("tokens");
@@ -62,12 +60,12 @@ export function DeepSeekStats() {
   const t = useT();
   // cache key 前缀 instanceId：同种类两个实例的统计互不串数据
   const cacheKey =
-    rangeMs === null || !instance ? null : `${instance.id}:${rangeMs.startMs}:${rangeMs.endMs}`;
+    rangeMs === null ? null : `${instance.id}:${rangeMs.startMs}:${rangeMs.endMs}`;
   const { state, isRefreshing } = useStatsFetch(
     usageCache,
     cacheKey,
     () =>
-      rangeMs === null || !instance
+      rangeMs === null
         ? Promise.reject(new Error("时间范围无效"))
         : fetchDeepSeekUsage(instance, rangeMs.startMs, rangeMs.endMs),
     refreshTick,
@@ -79,13 +77,13 @@ export function DeepSeekStats() {
   };
 
   // 接入全局自动刷新
-  useAutoRefresh(refresh, instance ?? null);
+  useAutoRefresh(refresh, instance);
   // 接入顶栏手动全局刷新
-  useGlobalRefresh(refresh, instance?.id ?? null);
+  useGlobalRefresh(refresh, instance.id);
 
   /** 全局刷新状态：顶栏「刷新」进行中（全局）或该实例单刷进行中 */
   const globalRefreshing = useAppStore(
-    (state) => state.loading || (instance ? Boolean(state.refreshingInstances[instance.id]) : false),
+    (state) => state.loading || Boolean(state.refreshingInstances[instance.id]),
   );
   const busy = isRefreshing || globalRefreshing;
 

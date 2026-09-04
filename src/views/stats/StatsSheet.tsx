@@ -43,7 +43,8 @@ export function StatsSheet({
           <SheetDescription>{t("用量统计")}</SheetDescription>
         </SheetHeader>
         <SheetBody>
-          <StatsComponent />
+          {/* 必须传实例：同种类可建多个实例（如两个 GLM 账号），统计各自取数 */}
+          <StatsComponent instance={instance} />
         </SheetBody>
       </SheetContent>
     </Sheet>
