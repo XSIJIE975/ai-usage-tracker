@@ -13,7 +13,7 @@ import {
   Trash2,
 } from "lucide-react";
 import type { MetricLine, ProviderInstance, ProviderSnapshot } from "../types/ipc";
-import { formatClock, formatReset, formatResetAt } from "../lib/utils";
+import { formatClock, formatInt, formatReset, formatResetAt } from "../lib/utils";
 import { errorHintTitle } from "../lib/error-hint";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Progress } from "./ui/progress";
@@ -102,7 +102,18 @@ function StatusBadge({ snapshot }: { snapshot: ProviderSnapshot | null }) {
   );
 }
 
-function MetricRow({ line, now }: { line: MetricLine; now: number }) {
+/** 额度行展示模式：percent 百分比进度（默认）/ amount 原始数值（翻卡背面，仅行内带 used/limit 时生效） */
+export type MetricDisplay = "percent" | "amount";
+
+function MetricRow({
+  line,
+  now,
+  display,
+}: {
+  line: MetricLine;
+  now: number;
+  display: MetricDisplay;
+}) {
   const t = useT();
   const language = useLanguage();
   const resetTimeDisplay = useAppStore((state) => state.settings.resetTimeDisplay);
@@ -112,6 +123,9 @@ function MetricRow({ line, now }: { line: MetricLine; now: number }) {
     const percent = line.percentUsed ?? (line.limit ? Math.round(((line.used ?? 0) / line.limit) * 100) : 0);
     const remaining =
       line.percentUsed === undefined ? undefined : Math.max(0, 100 - line.percentUsed);
+    const used = line.used;
+    const limit = line.limit;
+    const showAmount = display === "amount" && used !== undefined && limit !== undefined;
     const resetTitle = line.resetsAt
       ? new Intl.DateTimeFormat(language === "en" ? "en-US" : "zh-CN", {
           dateStyle: "short",
@@ -123,9 +137,11 @@ function MetricRow({ line, now }: { line: MetricLine; now: number }) {
         <div className="flex items-center justify-between gap-3 text-[13px]">
           <span className="text-fg-secondary">{label}</span>
           <span className="tnum font-medium text-fg">
-            {line.percentUsed !== undefined
-              ? `${t("已用")} ${line.percentUsed.toFixed(1)}%`
-              : `${line.suffix ?? ""}${(line.used ?? 0).toFixed(2)} / ${line.suffix ?? ""}${(line.limit ?? 0).toFixed(2)}`}
+            {showAmount
+              ? `${t("已用")} ${formatInt(used)} / ${formatInt(limit)}`
+              : line.percentUsed !== undefined
+                ? `${t("已用")} ${line.percentUsed.toFixed(1)}%`
+                : `${line.suffix ?? ""}${(line.used ?? 0).toFixed(2)} / ${line.suffix ?? ""}${(line.limit ?? 0).toFixed(2)}`}
           </span>
         </div>
         <Progress
@@ -134,7 +150,11 @@ function MetricRow({ line, now }: { line: MetricLine; now: number }) {
         />
         <div className="flex items-center justify-between text-xs text-fg-muted">
           <span className="tnum">
-            {line.percentUsed !== undefined ? `${t("剩余")} ${remaining?.toFixed(1)}%` : `${t("已用")} ${percent}%`}
+            {showAmount
+              ? `${t("剩余")} ${formatInt(Math.max(0, limit - used))}`
+              : line.percentUsed !== undefined
+                ? `${t("剩余")} ${remaining?.toFixed(1)}%`
+                : `${t("已用")} ${percent}%`}
           </span>
           {line.resetsAt ? (
             <button
@@ -206,38 +226,49 @@ function CompactUpdatedAt({
   );
 }
 
-export interface ProviderCardProps {
+/** 卡片主体（header + content）：翻卡正反两面复用同一结构，保证两面同构等高 */
+interface CardBodyProps {
+  display: MetricDisplay;
   instance: ProviderInstance;
   snapshot: ProviderSnapshot | null;
-  compact?: boolean;
-  refreshing?: boolean;
+  compact: boolean;
+  refreshing: boolean;
+  /** 该面可翻（由卡片能否翻面决定，驱动 header 右侧为翻面按钮让位） */
+  canFlip: boolean;
+  now: number;
+  onOpenDetail: () => void;
   onRefresh?: () => void;
   onTogglePin?: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
   onOpenStats?: () => void;
-  /** dnd 手柄的 listeners/attributes（由外层 Sortable 传入，仅主窗口网格） */
   handleProps?: ComponentPropsWithoutRef<"button">;
-  dragging?: boolean;
+  /** 翻面容器的 face 类（flip-face-front / flip-face-back）；非翻卡卡片为空 */
+  faceClassName?: string;
+  /** 该面是否当前朝向用户（隐藏面移出可访问树） */
+  faceVisible: boolean;
 }
 
-export function ProviderCard({
+function CardBody({
+  display,
   instance,
   snapshot,
-  compact = false,
-  refreshing = false,
+  compact,
+  refreshing,
+  canFlip,
+  now,
+  onOpenDetail,
   onRefresh,
   onTogglePin,
   onEdit,
   onDelete,
   onOpenStats,
   handleProps,
-  dragging = false,
-}: ProviderCardProps) {
-  const now = useNow();
+  faceClassName,
+  faceVisible,
+}: CardBodyProps) {
   const t = useT();
   const refreshIntervalMinutes = useAppStore((state) => state.settings.refreshIntervalMinutes);
-  const [detailOpen, setDetailOpen] = useState(false);
   const kindName = providerName(instance.providerId);
   const title = displayName(instance, kindName);
   const hasNote = instance.note.trim().length > 0;
@@ -245,14 +276,14 @@ export function ProviderCard({
   const statsDisabled = snapshot?.status !== "ok";
 
   return (
-    <Card
-      className={cn(
-        "group/card transition-shadow duration-normal hover:shadow-pop",
-        dragging && "opacity-40",
-      )}
-    >
+    <div className={faceClassName} aria-hidden={!faceVisible}>
       <CardHeader
-        className={cn("flex-row items-center justify-between space-y-0", compact ? "p-4 pb-2" : "p-5 pb-3")}
+        className={cn(
+          "flex-row items-center justify-between space-y-0",
+          compact ? "p-4 pb-2" : "p-5 pb-3",
+          // 右上角翻面按钮占位：header 右侧按钮组让出按钮宽度（参考稿 header padding-right: 36px）
+          canFlip && "pr-10",
+        )}
       >
         <div className="flex min-w-0 flex-1 items-center gap-2.5">
           {!compact && handleProps && (
@@ -356,37 +387,28 @@ export function ProviderCard({
               )}
             </div>
           ) : (
-            <>
-              <div className="flex items-center justify-between gap-2 rounded-md bg-warning-soft px-3 py-2">
-                <span className="flex min-w-0 items-center gap-2 text-xs text-warning-soft-fg">
-                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                  <span className="min-w-0">
-                    {t(errorHintTitle(snapshot.message, snapshot.messageParams))}
-                  </span>
+            <div className="flex items-center justify-between gap-2 rounded-md bg-warning-soft px-3 py-2">
+              <span className="flex min-w-0 items-center gap-2 text-xs text-warning-soft-fg">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                <span className="min-w-0">
+                  {t(errorHintTitle(snapshot.message, snapshot.messageParams))}
                 </span>
-                <button
-                  type="button"
-                  onClick={() => setDetailOpen(true)}
-                  className="shrink-0 rounded-sm text-xs font-medium text-warning-soft-fg underline-offset-2 transition-colors hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring"
-                  aria-label={t("查看异常详情")}
-                  title={t("查看异常详情")}
-                >
-                  {t("详情")}
-                </button>
-              </div>
-              <ErrorDetailsDialog
-                open={detailOpen}
-                onOpenChange={setDetailOpen}
-                title={`${title} · ${kindName}`}
-                message={snapshot.message}
-                messageParams={snapshot.messageParams}
-              />
-            </>
+              </span>
+              <button
+                type="button"
+                onClick={onOpenDetail}
+                className="shrink-0 rounded-sm text-xs font-medium text-warning-soft-fg underline-offset-2 transition-colors hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring"
+                aria-label={t("查看异常详情")}
+                title={t("查看异常详情")}
+              >
+                {t("详情")}
+              </button>
+            </div>
           )
         ) : null}
         <div className={cn("divide-y divide-line", snapshot?.message ? "mt-2" : "")}>
           {(snapshot?.lines ?? []).map((line, index) => (
-            <MetricRow key={`${line.label}-${index}`} line={line} now={now} />
+            <MetricRow key={`${line.label}-${index}`} line={line} now={now} display={display} />
           ))}
         </div>
         {(!snapshot || snapshot.lines.length === 0) && !snapshot?.message ? (
@@ -407,6 +429,184 @@ export function ProviderCard({
           </div>
         )}
       </CardContent>
-    </Card>
+    </div>
+  );
+}
+
+/** 翻面图标：顺时针循环箭头（按参考稿内联 feather 风格原始路径，保证还原度） */
+function FlipIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+    >
+      <polyline points="23 4 23 10 17 10" />
+      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+    </svg>
+  );
+}
+
+/**
+ * 右上角翻面按钮：作为 .flip-inner 的独立图层放进翻卡 3D 上下文，
+ * 随所属面刚性翻转（翻转中不分层、不闪切）。正反两面各挂一枚，
+ * backface-visibility 保证只有朝向用户的一面可见、可点。
+ * 背面那枚贴在图层局部【左侧】并预转 180°：经整卡 180° 旋转后
+ * 恰好出现在用户视角的右上角、且内容不镜像。
+ */
+function FlipCorner({
+  back = false,
+  faceActive,
+  pressed,
+  onToggle,
+}: {
+  /** 是否背面（数值面）按钮：贴局部左侧 + 预转 180° */
+  back?: boolean;
+  /** 所属面当前是否朝向用户（隐藏面退出 Tab 序与可访问树） */
+  faceActive: boolean;
+  /** 翻面状态（aria-pressed） */
+  pressed: boolean;
+  onToggle: () => void;
+}) {
+  const t = useT();
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      tabIndex={faceActive ? 0 : -1}
+      aria-hidden={!faceActive}
+      aria-pressed={pressed}
+      aria-label={t("切换数值/百分比展示")}
+      title={t("切换数值/百分比展示")}
+      className={cn("flip-toggle", back && "flip-toggle-back")}
+    >
+      <FlipIcon className="flip-toggle-icon" />
+    </button>
+  );
+}
+
+export interface ProviderCardProps {
+  instance: ProviderInstance;
+  snapshot: ProviderSnapshot | null;
+  compact?: boolean;
+  refreshing?: boolean;
+  onRefresh?: () => void;
+  onTogglePin?: () => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
+  onOpenStats?: () => void;
+  /** dnd 手柄的 listeners/attributes（由外层 Sortable 传入，仅主窗口网格） */
+  handleProps?: ComponentPropsWithoutRef<"button">;
+  dragging?: boolean;
+  /** 翻面朝向（受控）。主窗口网格传入，使拖拽浮起副本与占位卡共享朝向；缺省时内部自持 */
+  flipped?: boolean;
+  /** 翻面切换回调（受控时配套传入）；缺省时点击按钮切换内部状态 */
+  onToggleFlip?: () => void;
+}
+
+export function ProviderCard({
+  instance,
+  snapshot,
+  compact = false,
+  refreshing = false,
+  onRefresh,
+  onTogglePin,
+  onEdit,
+  onDelete,
+  onOpenStats,
+  handleProps,
+  dragging = false,
+  flipped: flippedProp,
+  onToggleFlip,
+}: ProviderCardProps) {
+  const now = useNow();
+  const [detailOpen, setDetailOpen] = useState(false);
+  // 翻面朝向：受控（主窗口网格，拖拽浮起副本与占位卡共享）或内部自持（快速面板）。
+  // 每卡片独立，不进全局设置，卡片之间、主/快窗口之间互不联动
+  const [localFlipped, setLocalFlipped] = useState(false);
+  const flipped = flippedProp ?? localFlipped;
+  const toggleFlip = () => (onToggleFlip ? onToggleFlip() : setLocalFlipped((value) => !value));
+  const kindName = providerName(instance.providerId);
+  const title = displayName(instance, kindName);
+  const needsConfig = snapshot?.status === "needs_config";
+  // 仅当存在「百分比与原始数值俱全」的进度行时提供翻卡（当前即 GLM 配额行，
+  // OpenCode 行只有百分比、DeepSeek 无进度行，天然不出现按钮）
+  const canFlip = (snapshot?.lines ?? []).some(
+    (line) =>
+      line.type === "progress" &&
+      line.percentUsed !== undefined &&
+      line.used !== undefined &&
+      line.limit !== undefined,
+  );
+
+  const bodyProps = {
+    instance,
+    snapshot,
+    compact,
+    refreshing,
+    now,
+    onOpenDetail: () => setDetailOpen(true),
+    onRefresh,
+    onTogglePin,
+    onEdit,
+    onDelete,
+    onOpenStats,
+    handleProps,
+  };
+
+  return (
+    <div className={cn("relative", dragging && "opacity-40")}>
+      <Card
+        className={cn(
+          "group/card hover:shadow-pop",
+          // 翻转卡片的 box-shadow 过渡由 .flip-card 统一声明，避免与 transform 过渡互相覆盖。
+          // 注意不能在这里加 opacity：opacity<1 会强制 preserve-3d 变 flat，
+          // 拖拽占位的翻转卡会退化成整卡平面镜像（backface-visibility 同时失效）
+          canFlip ? "flip-card" : "transition-shadow duration-normal",
+          flipped && "flip-card-flipped",
+        )}
+      >
+        {canFlip ? (
+          // 正反两面 grid 同格叠放（取最大高度），翻转不动布局。
+          // 两面内容固定：正面恒百分比、背面（自带 rotateY(180)，翻后朝向用户）恒数值。
+          // 翻面按钮同为 .flip-inner 图层，随整卡在同一个 3D 上下文里刚性同步翻转
+          <div className="flip-inner">
+            <CardBody
+              display="percent"
+              faceClassName="flip-face flip-face-front"
+              faceVisible={!flipped}
+              canFlip
+              {...bodyProps}
+            />
+            <CardBody
+              display="amount"
+              faceClassName="flip-face flip-face-back"
+              faceVisible={flipped}
+              canFlip
+              {...bodyProps}
+            />
+            <FlipCorner faceActive={!flipped} pressed={flipped} onToggle={toggleFlip} />
+            <FlipCorner back faceActive={flipped} pressed={flipped} onToggle={toggleFlip} />
+          </div>
+        ) : (
+          <CardBody display="percent" faceVisible canFlip={false} {...bodyProps} />
+        )}
+      </Card>
+      {/* 详情弹窗 portal 到 body，放卡片外避免在翻面上下文里随两面重复挂载 */}
+      {snapshot?.message && !needsConfig && (
+        <ErrorDetailsDialog
+          open={detailOpen}
+          onOpenChange={setDetailOpen}
+          title={`${title} · ${kindName}`}
+          message={snapshot.message}
+          messageParams={snapshot.messageParams}
+        />
+      )}
+    </div>
   );
 }

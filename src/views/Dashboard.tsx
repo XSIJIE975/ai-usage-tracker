@@ -83,6 +83,8 @@ function SortableProviderCard({
   instance,
   snapshot,
   refreshing,
+  flipped,
+  onToggleFlip,
   onRefresh,
   onTogglePin,
   onEdit,
@@ -92,6 +94,9 @@ function SortableProviderCard({
   instance: ProviderInstance;
   snapshot: ReturnType<typeof useAppStore.getState>["snapshots"][number] | null;
   refreshing: boolean;
+  /** 翻面朝向由 Dashboard 统一持有：拖拽浮起副本与占位卡保持同一朝向 */
+  flipped: boolean;
+  onToggleFlip: () => void;
   onRefresh: () => void;
   onTogglePin: () => void;
   onEdit?: () => void;
@@ -111,6 +116,8 @@ function SortableProviderCard({
           instance={instance}
           snapshot={snapshot}
           refreshing={refreshing}
+          flipped={flipped}
+          onToggleFlip={onToggleFlip}
           onRefresh={onRefresh}
           onTogglePin={onTogglePin}
           onEdit={onEdit}
@@ -155,6 +162,19 @@ export function Dashboard() {
   const [editing, setEditing] = useState<ProviderInstance | null>(null);
   const [deleting, setDeleting] = useState<ProviderInstance | null>(null);
   const [statsInstance, setStatsInstance] = useState<ProviderInstance | null>(null);
+  // 各卡片的翻面朝向（id -> 是否数值面）：提升到此处持有，
+  // 拖拽时 DragOverlay 浮起副本才能与占位卡保持同一朝向
+  const [flippedIds, setFlippedIds] = useState<ReadonlySet<string>>(new Set());
+  const toggleFlipped = (id: string) =>
+    setFlippedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
 
   const ordered = useMemo(() => selectOrderedInstances(instances), [instances]);
   const snapshotOf = (instanceId: string) =>
@@ -476,6 +496,8 @@ export function Dashboard() {
                         instance={instance}
                         snapshot={snapshotOf(instance.id)}
                         refreshing={loading || refreshingInstances[instance.id]}
+                        flipped={flippedIds.has(instance.id)}
+                        onToggleFlip={() => toggleFlipped(instance.id)}
                         onRefresh={() => void refreshInstance(instance.id)}
                         onTogglePin={() =>
                           void updateInstance(instance.id, { pinned: !instance.pinned })
@@ -489,10 +511,11 @@ export function Dashboard() {
                 </SortableContext>
                 <DragOverlay dropAnimation={null}>
                   {draggingInstance && (
-                    <div className="w-full max-w-[460px] shadow-pop">
+                    <div className="w-full max-w-[460px] rounded-lg shadow-pop">
                       <ProviderCard
                         instance={draggingInstance}
                         snapshot={snapshotOf(draggingInstance.id)}
+                        flipped={flippedIds.has(draggingInstance.id)}
                       />
                     </div>
                   )}

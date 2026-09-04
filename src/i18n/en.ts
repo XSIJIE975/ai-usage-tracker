@@ -66,6 +66,7 @@ export const en: Record<string, string> = {
   "详情": "Details",
   "点击切换重置时间显示": "Click to switch reset time display",
   "{time} 重置": "resets {time}",
+  "切换数值/百分比展示": "Toggle between amount and percentage",
   "查看异常详情": "View error details",
   "异常详情": "Error details",
   "复制": "Copy",
