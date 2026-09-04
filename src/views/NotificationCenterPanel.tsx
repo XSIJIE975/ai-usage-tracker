@@ -61,7 +61,11 @@ export function NotificationCenterPanel({
     <div
       className={cn(
         "flex flex-col overflow-hidden rounded-lg border border-line bg-surface shadow-pop",
-        inline ? "h-full w-full" : "absolute right-0 top-full z-30 mt-2 max-h-[380px] w-[360px]",
+        // inline（快速面板）：高度随内容自适应，上限留出顶栏空间后内部滚动；
+        // 主窗口：顶栏下方的固定宽度下拉
+        inline
+          ? "max-h-[min(480px,calc(100vh-4rem))] w-full"
+          : "absolute right-0 top-full z-30 mt-2 max-h-[380px] w-[360px]",
       )}
     >
       <div className="flex items-center justify-between border-b border-line px-4 py-2.5">

@@ -277,6 +277,23 @@
   底部一行「查看统计」outline 按钮（`needs_config` / `error` 状态禁用并带 title 说明）。
 - 有重置时间的额度行，重置倒计时文本可点击，在「相对倒计时 / 具体时刻」间切换
   （偏好存全局设置 `resetTimeDisplay`，主窗口与快速面板同步，默认相对）。
+- **翻卡切换（百分比 ↔ 数值）**：额度行同时具备 `percentUsed` 与 `used/limit`（当前即 GLM
+  配额行）的卡片，右上角出现**贴角方形翻面按钮**（36px、仅左下大圆角 13px、`surface-2` 底、
+  内联 feather 风格顺时针循环箭头 `FlipIcon`；hover 加深底色/提亮图标，按压 `scale: 0.9`；
+  header 右侧按钮组经 `pr-10` 让位，参考稿同款 `padding-right`）。点击整卡 3D 翻面，
+  背面以原始数值展示（`已用 x / y` + `剩余 z`）。按钮是 `.flip-inner` 的独立图层，
+  **正反两面各挂一枚**，随所属面在同一个 3D 上下文里刚性翻转，不分层不闪切；注意
+  **背面那枚贴在图层局部左侧并预转 180°**——整卡 rotateY(180°) 会把局部右侧映射到用户视角
+  左侧，贴左侧 + 预转才能落在用户视角右上角且内容不镜像。**图标随翻面同步旋转**：所在面
+  背对时 `rotateY(180°)`，翻到该面时沿同款缓动 500ms 转正。翻面是**每卡片独立的临时状态**
+  （组件本地 state，不进全局设置）：卡片之间、主窗口与快速面板之间互不联动，刷新数据保持，
+  窗口重载后回到百分比面。实现：`.flip-card`（preserve-3d，transition 同时含 transform 与
+  box-shadow；节奏为组件级 token `--flip-duration: 650ms` + `--flip-ease:
+  cubic-bezier(0.32, 0.72, 0, 1)` 强缓出，`perspective(1200px)` 内联在翻转 transform 里）、
+  两面 `CardBody` 同构经 `.flip-inner` grid
+  同格叠放取最大高度（瀑布流跨行与快速面板窗口高度都按卡片自然高度驱动，两面必须等高）、
+  face 用 `backface-visibility: hidden`；`prefers-reduced-motion` 下关闭翻转过渡与图标旋转
+  （reduced-motion 媒体块置于本节末尾，靠源码顺序压过 transition 简写）。
 - 异常态不直接展示原始报错：卡片上只放一行按内容轻分类的友好占位（凭据无效或已过期 /
   网络连接失败 / 获取用量失败，`lib/error-hint.ts`）+「详情」入口，点开 `ErrorDetailsDialog`
   查看并可复制完整原文；`needs_config` 保留原文（短且可操作）并在主窗口附「去配置」入口。
@@ -291,9 +308,12 @@
 
 ## 7. 动效
 
-- 时长：`duration-fast`(120ms) 用于 hover 变色；`duration-normal`(200ms) 用于宽度/阴影。
+- 时长：`duration-fast`(120ms) 用于 hover 变色；`duration-normal`(200ms) 用于宽度/阴影；
+  卡片 3D 翻面使用组件级 `--flip-duration: 650ms` + `--flip-ease: cubic-bezier(0.32, 0.72, 0, 1)`
+  强缓出（对齐参考稿，无过冲），翻面按钮图标同步旋转 500ms。
 - 加载：统一使用旋转细环  
   `h-5 w-5 animate-spin rounded-full border-2 border-line-strong border-t-brand`。
+- `prefers-reduced-motion: reduce`：翻面等位移动画关闭过渡直接切换，颜色/阴影过渡保留。
 
 ## 8. 新页面检查清单
 

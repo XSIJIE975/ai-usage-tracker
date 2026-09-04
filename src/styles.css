@@ -55,6 +55,7 @@
   /* 动效时长 */
   --transition-duration-fast: 120ms;
   --transition-duration-normal: 200ms;
+  --transition-duration-slow: 450ms;
 }
 
 /* ---------- 语义 Token：浅色主题（默认） ---------- */
@@ -370,4 +371,118 @@ input {
 /* 数字等宽（指标数值统一使用） */
 .tnum {
   font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 卡片 3D 翻面（百分比 ↔ 数值切换，见 DESIGN.md 6.10） ---------- */
+/* transition 同时声明 transform 与 box-shadow：翻转动画与 hover 阴影过渡互不覆盖 */
+.flip-card {
+  /* 翻面节奏对齐参考稿：650ms 强缓出，无过冲 */
+  --flip-duration: 650ms;
+  --flip-ease: cubic-bezier(0.32, 0.72, 0, 1);
+
+  transform-style: preserve-3d;
+  transition:
+    transform var(--flip-duration) var(--flip-ease),
+    box-shadow var(--transition-duration-normal) ease;
+}
+
+.flip-card-flipped {
+  /* perspective 内联在 transform 里：翻转元素的父级是瀑布流格子/列表容器，不便加 perspective 属性 */
+  transform: perspective(1200px) rotateY(180deg);
+}
+
+/* 正反两面 grid 同格叠放取最大高度：瀑布流跨行与快速面板窗口高度都按卡片自然高度驱动，
+   两面必须等高，避免翻转引起布局抖动 */
+.flip-inner {
+  display: grid;
+  transform-style: preserve-3d;
+}
+
+.flip-face {
+  grid-area: 1 / 1;
+  backface-visibility: hidden;
+}
+
+.flip-face-back {
+  transform: rotateY(180deg);
+}
+
+/* ---------- 右上角翻面按钮：贴卡片内角的方形按钮，正反两面各一枚 ----------
+   位于翻卡 3D 上下文内（.flip-inner 的独立图层），随所属面一起刚性翻转，
+   backface-visibility 保证只显示朝向用户的一枚；背面那枚贴图层局部左侧并预转 180°，
+   整卡翻转后恰好落在用户视角右上角且内容不镜像。
+   图标在所在面转为背对时随翻面同步缓动旋转 180°，翻回时转正 */
+.flip-toggle {
+  grid-area: 1 / 1;
+  justify-self: end;
+  align-self: start;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-top-right-radius: calc(var(--radius-lg) - 1px);
+  border-bottom-left-radius: 13px;
+  background: var(--surface-2);
+  color: var(--fg-muted);
+  cursor: pointer;
+  transform: translateZ(1px); /* 抬离面 1px：压在同面内容之上，且与整卡同步变换 */
+  backface-visibility: hidden;
+  transition:
+    background var(--transition-duration-fast) ease,
+    color var(--transition-duration-fast) ease,
+    scale var(--transition-duration-fast) ease;
+}
+
+.flip-toggle:hover {
+  background: color-mix(in srgb, var(--fg) 8%, var(--surface-2));
+  color: var(--fg-secondary);
+}
+
+.flip-toggle:active {
+  scale: 0.9;
+}
+
+.flip-toggle:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--color-focus-ring);
+}
+
+/* 背面（数值面）按钮：贴图层局部左侧 + 预转 180°，圆角方向随镜像对调 */
+.flip-toggle-back {
+  justify-self: start;
+  border-top-right-radius: 0;
+  border-top-left-radius: calc(var(--radius-lg) - 1px);
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 13px;
+  transform: rotateY(180deg) translateZ(1px);
+}
+
+/* 循环箭头图标：所在面背对用户时预转 180°，翻到该面时随同步缓动转正 */
+.flip-toggle-icon {
+  width: 16px;
+  height: 16px;
+  transition: transform 500ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.flip-toggle-back .flip-toggle-icon,
+.flip-card-flipped .flip-face-front .flip-toggle-icon {
+  transform: rotateY(180deg);
+}
+
+.flip-card-flipped .flip-toggle-back .flip-toggle-icon {
+  transform: rotateY(0deg);
+}
+
+/* 减少动态效果：关闭翻转过渡与图标旋转，点击后直接切面（保留颜色过渡）。
+   置于本节末尾：transition 简写会重置 duration，须靠源码顺序压过前面的完整声明 */
+@media (prefers-reduced-motion: reduce) {
+  .flip-card {
+    transition: box-shadow var(--transition-duration-normal) ease;
+  }
+  .flip-toggle,
+  .flip-toggle-icon {
+    transition: none;
+  }
 }
