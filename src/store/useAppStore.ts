@@ -106,7 +106,7 @@ interface AppStore {
   manualRefreshTick: number;
   loadInitial: () => Promise<void>;
   reloadInstances: () => Promise<void>;
-  refreshAll: (showLoading?: boolean, options?: { auto?: boolean }) => Promise<void>;
+  refreshAll: (options?: { auto?: boolean }) => Promise<void>;
   refreshInstance: (instanceId: string) => Promise<void>;
   addInstance: (
     providerId: ProviderKind,
@@ -206,8 +206,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   },
 
-  refreshAll: async (showLoading = true, options) => {
-    if (showLoading) set({ loading: true, error: null });
+  // 刷新一律置 loading：手动、聚焦回填、自动定时刷新都要让顶栏与卡片按钮联动转起来，
+  // 否则自动刷新全程无可见反馈，用户只能靠更新时间变化才能察觉
+  refreshAll: async (options) => {
+    set({ loading: true, error: null });
     if (!options?.auto) {
       set((state) => ({ manualRefreshTick: state.manualRefreshTick + 1 }));
     }

@@ -218,7 +218,7 @@ export function Dashboard() {
     if (!vaultStatus?.unlocked) return;
     if (!initialLoaded) return;
     if (lastRefreshedAt === 0) {
-      void refreshAll(false);
+      void refreshAll();
       return;
     }
     if (!settings.refreshEnabled || settings.refreshIntervalMinutes <= 0) return;
@@ -227,7 +227,7 @@ export function Dashboard() {
     const elapsed = Date.now() - lastRefreshedAt;
     const delay = Math.max(0, settings.refreshIntervalMinutes * 60_000 - elapsed);
     const timer = window.setTimeout(() => {
-      void refreshAll(false, { auto: true });
+      void refreshAll({ auto: true });
     }, delay);
     return () => window.clearTimeout(timer);
   }, [
@@ -422,7 +422,7 @@ export function Dashboard() {
               </>
             )}
           </div>
-          <Button size="sm" variant="outline" onClick={() => void refreshAll(true)} disabled={refreshing}>
+          <Button size="sm" variant="outline" onClick={() => void refreshAll()} disabled={refreshing}>
             <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} /> {t("刷新")}
           </Button>
         </div>

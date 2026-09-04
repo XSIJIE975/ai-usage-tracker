@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
 import { useFitWindowHeight } from "../hooks/use-fit-window-height";
-import { Bell, Gauge, Lock, RefreshCw, Timer, TriangleAlert, X } from "lucide-react";
+import { Bell, Gauge, LoaderCircle, Lock, RefreshCw, Timer, TriangleAlert, X } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import { useAlertStore } from "../store/useAlertStore";
 import { selectUnreadCount, useNotificationStore } from "../store/useNotificationStore";
@@ -42,6 +42,9 @@ export function QuickWindow() {
     vaultStatus,
     instances,
     snapshots,
+    settings,
+    initialLoaded,
+    lastRefreshedAt,
     loadInitial,
     refreshAll,
     refreshInstance,
@@ -53,13 +56,19 @@ export function QuickWindow() {
   const countdown = useNextRefreshCountdown();
   const [ready, setReady] = useState(false);
   const [noticeOpen, setNoticeOpen] = useState(false);
+  // quick 窗口启动即隐藏（tauri.conf.json visible=false），由 quick-shown 唤醒。
+  // 自动刷新定时器只在面板可见时调度，避免与主窗口对同一批实例双倍抓取
+  const [panelVisible, setPanelVisible] = useState(false);
+  // 标题栏自管拖动：记录拖动起手时刻。拖动循环会先失焦再回焦，
+  // 回焦若无条件刷新，表现为「每次拖完面板自动刷新倒计时就被重置」
+  const dragStartedAtRef = useRef(0);
   const t = useT();
 
   const syncFromBackend = useCallback(async () => {
     await loadInitial();
     void useNotificationStore.getState().load();
     if (useAppStore.getState().vaultStatus?.unlocked) {
-      await refreshAll(false);
+      await refreshAll();
     }
   }, [loadInitial, refreshAll]);
 
@@ -75,6 +84,11 @@ export function QuickWindow() {
       const window = getCurrentWindow();
       const unlistenFocus = await window.onFocusChanged(({ payload: focused }) => {
         if (focused) {
+          // 拖动结束的回焦不算「用户回来看数据」：起手后 10 秒内的回焦直接跳过
+          if (dragStartedAtRef.current > 0 && Date.now() - dragStartedAtRef.current < 10_000) {
+            return;
+          }
+          dragStartedAtRef.current = 0;
           void syncFromBackend();
           return;
         }
@@ -94,7 +108,10 @@ export function QuickWindow() {
               cursor.x <= position.x + size.width &&
               cursor.y >= position.y &&
               cursor.y <= position.y + size.height;
-            if (!inside) await invoke("hide_quick_window");
+            if (!inside) {
+              setPanelVisible(false);
+              await invoke("hide_quick_window");
+            }
           } catch {
             // 查询失败时保守处理：不隐藏
           }
@@ -105,7 +122,14 @@ export function QuickWindow() {
       const unlistenQuickShown = await listen("quick-shown", () => {
         // 兜底：每次显示前重读主题，防止错过广播事件
         applyTheme();
+        setPanelVisible(true);
         void syncFromBackend();
+      });
+      // 主窗口（或本窗口）刷新完成时同步倒计时基准，两边窗口的自动刷新节奏保持一致
+      const unlistenRefreshed = await listen<{ refreshedAt: number }>("refresh-completed", (event) => {
+        useAppStore.setState((state) => ({
+          lastRefreshedAt: Math.max(state.lastRefreshedAt, event.payload.refreshedAt),
+        }));
       });
       // 主窗口保存设置（界面语言、自动刷新等）时实时同步到本窗口，无需等聚焦重载
       const unlistenSettings = await listen<AppSettings>("settings-changed", (event) => {
@@ -133,10 +157,11 @@ export function QuickWindow() {
         unlistenAlert();
         unlistenSettings();
         unlistenInstances();
+        unlistenRefreshed();
         return;
       }
 
-      unlisteners.push(unlistenFocus, unlistenVault, unlistenCredentials, unlistenQuickShown, unlistenAlert, unlistenSettings, unlistenInstances);
+      unlisteners.push(unlistenFocus, unlistenVault, unlistenCredentials, unlistenQuickShown, unlistenAlert, unlistenSettings, unlistenInstances, unlistenRefreshed);
     })();
 
     return () => {
@@ -145,12 +170,44 @@ export function QuickWindow() {
     };
   }, [syncFromBackend]);
 
+  // 自动刷新调度：与主窗口 Dashboard 同款——以 lastRefreshedAt 为基准排单次定时器，
+  // 刷新完成后 lastRefreshedAt 更新，effect 随之重排下一轮。仅面板可见时调度，
+  // 隐藏期间不抓取（再次呼出时 quick-shown → syncFromBackend 兜底刷新）
+  useEffect(() => {
+    if (!panelVisible) return;
+    if (!vaultStatus?.unlocked) return;
+    if (!initialLoaded) return;
+    // 首轮数据由 quick-shown 的 syncFromBackend 拉取，这里只负责后续周期
+    if (lastRefreshedAt === 0) return;
+    if (!settings.refreshEnabled || settings.refreshIntervalMinutes <= 0) return;
+    if (!instances.some((instance) => instance.autoRefresh)) return;
+
+    const elapsed = Date.now() - lastRefreshedAt;
+    const delay = Math.max(0, settings.refreshIntervalMinutes * 60_000 - elapsed);
+    const timer = window.setTimeout(() => {
+      void refreshAll({ auto: true });
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [
+    panelVisible,
+    vaultStatus?.unlocked,
+    initialLoaded,
+    lastRefreshedAt,
+    settings.refreshEnabled,
+    settings.refreshIntervalMinutes,
+    instances,
+    refreshAll,
+  ]);
+
   // Esc：通知面板打开时先关面板，否则收起整个窗口
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       if (noticeOpen) setNoticeOpen(false);
-      else void invoke("hide_quick_window").catch(() => undefined);
+      else {
+        setPanelVisible(false);
+        void invoke("hide_quick_window").catch(() => undefined);
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -161,6 +218,7 @@ export function QuickWindow() {
   }
 
   async function hideQuick() {
+    setPanelVisible(false);
     await invoke("hide_quick_window");
   }
 
@@ -179,6 +237,7 @@ export function QuickWindow() {
     if ((event.target as HTMLElement).closest("button")) return;
     if (event.button !== 0 || event.detail !== 1) return;
     event.preventDefault();
+    dragStartedAtRef.current = Date.now();
     void getCurrentWindow().startDragging();
   }
 
@@ -220,7 +279,7 @@ export function QuickWindow() {
             </IconButton>
           </div>
           <IconButton
-            onClick={() => void refreshAll(true)}
+            onClick={() => void refreshAll()}
             disabled={refreshing}
             title={t("刷新")}
             aria-label={t("刷新")}
@@ -236,11 +295,20 @@ export function QuickWindow() {
         </div>
       </header>
 
-      {/* 状态条：下次自动刷新倒计时 + 最近更新时间 */}
+      {/* 状态条：下次自动刷新倒计时 + 最近更新时间；刷新进行中倒计时基准未更新，
+          继续走秒会像卡住，此时显示「刷新中」提示 */}
       <div className="flex shrink-0 items-center justify-between border-b border-line bg-surface-2/40 px-3 py-1.5 text-[11px] text-fg-muted">
         <span className="flex items-center gap-1">
-          <Timer className="h-3 w-3" />
-          {countdown ? `${countdown} ${t("后自动刷新")}` : t("自动刷新已关闭")}
+          {refreshing ? (
+            <LoaderCircle className="h-3 w-3 animate-spin" />
+          ) : (
+            <Timer className="h-3 w-3" />
+          )}
+          {refreshing
+            ? t("刷新中")
+            : countdown
+              ? `${countdown} ${t("后自动刷新")}`
+              : t("自动刷新已关闭")}
         </span>
         <span className="tnum">
           {snapshots.length > 0 ? `${t("最近更新")} ${formatClock(Math.max(...snapshots.map((item) => item.updatedAt)))}` : t("等待刷新")}
@@ -274,8 +342,9 @@ export function QuickWindow() {
         ) : (
           <>
             {noticeOpen ? (
-              // 通知中心直接在快速面板内查看，无需跳转主窗口
-              <div className="absolute inset-x-2 top-12 bottom-2 z-40">
+              // 通知中心直接在快速面板内查看，无需跳转主窗口；
+              // 只定位不钉高度，面板按内容自适应（上限在组件内，内部滚动）
+              <div className="absolute inset-x-2 top-12 z-40">
                 <NotificationCenterPanel inline onClose={() => setNoticeOpen(false)} />
               </div>
             ) : null}
@@ -295,7 +364,7 @@ export function QuickWindow() {
                   <Gauge className="h-5 w-5" />
                 </div>
                 <p className="text-[13px] text-fg-secondary">{t("还没有用量数据")}</p>
-                <Button size="sm" onClick={() => void refreshAll(true)}>
+                <Button size="sm" onClick={() => void refreshAll()}>
                   {t("立即刷新")}
                 </Button>
               </div>
