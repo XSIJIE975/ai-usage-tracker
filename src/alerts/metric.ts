@@ -10,7 +10,7 @@ export function parseMetricValue(raw: string): number | null {
 
 /**
  * 从快照抽取主指标，按结构而非文案匹配（对 i18n 与供应商扩展稳健）：
- * - 存在 progress 行时取 resetsAt 最远的一行（OpenCode：本月额度是重置周期最长的窗口）
+ * - 存在 progress 行时取 resetsAt 最远的一行（OpenCode：本月额度是重置周期最长的窗口；GLM：周配额）
  * - 否则取第一个可解析数值的 text 行（DeepSeek：badge 之后第一个 text 就是账户余额）
  */
 export function extractMetric(
@@ -27,10 +27,20 @@ export function extractMetric(
       return { value: primary.percentUsed, resetsAt: primary.resetsAt };
     }
   }
+  const balance = extractBalanceValue(snapshot);
+  return balance !== null ? { value: balance } : null;
+}
+
+/**
+ * 从快照抽取账户余额（第一个可解析数值的 text 行）。与主指标相互独立：
+ * GLM 快照同时含 progress 行（配额）与 text 行（账户余额），主指标取配额百分比，
+ * 余额告警规则用本函数取余额数值。
+ */
+export function extractBalanceValue(snapshot: ProviderSnapshot): number | null {
   for (const line of snapshot.lines) {
     if (line.type !== "text" || typeof line.value !== "string") continue;
     const value = parseMetricValue(line.value);
-    if (value !== null) return { value };
+    if (value !== null) return value;
   }
   return null;
 }

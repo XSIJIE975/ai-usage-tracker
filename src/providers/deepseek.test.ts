@@ -18,6 +18,7 @@ const instance: ProviderInstance = {
   pinned: false,
   autoRefresh: true,
   threshold: 50,
+  balanceThreshold: null,
   createdAt: 0,
 };
 

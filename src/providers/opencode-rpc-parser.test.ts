@@ -40,7 +40,7 @@ describe("parseRpcResponse", () => {
     const records = parseRpcResponse(readFixture("opencode-rpc-history.txt")) as Array<UnknownRecord>;
 
     expect(records).toHaveLength(5);
-    expect(records[0]?.id).toBe("usg_01M0RQAHVRFTDQ51HDN47DM8CW");
+    expect(records[0]?.id).toBe("usg_01TEST0000000000000000000A1");
     expect(records[0]?.timeCreated).toBe("2026-08-24T01:49:24.000Z");
     expect(records[0]?.timeDeleted).toBeNull();
     expect(records[3]?.cost).toBe(20852);

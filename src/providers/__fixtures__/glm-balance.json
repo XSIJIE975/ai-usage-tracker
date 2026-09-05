@@ -1,0 +1,19 @@
+{
+  "code": 200,
+  "msg": "操作成功",
+  "data": {
+    "balance": 42.75,
+    "rechargeAmount": 30,
+    "giveAmount": 15.25,
+    "totalSpendAmount": 2.5,
+    "todaySpendAmount": null,
+    "availableBalance": 42.75,
+    "frozenBalance": 0,
+    "creditBalance": null,
+    "availableCreditBalance": null,
+    "creditStatus": "NOT_OPEN",
+    "modelSpendAmountList": null,
+    "isKA": false
+  },
+  "success": true
+}

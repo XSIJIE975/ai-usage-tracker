@@ -1,0 +1,34 @@
+{
+  "code": 200,
+  "msg": "操作成功",
+  "data": {
+    "x_time": ["2026-09-04 00:00", "2026-09-04 01:00", "2026-09-04 02:00", "2026-09-04 03:00", "2026-09-04 04:00", "2026-09-04 05:00", "2026-09-04 06:00", "2026-09-04 07:00", "2026-09-04 08:00", "2026-09-04 09:00", "2026-09-04 10:00", "2026-09-04 11:00", "2026-09-04 12:00", "2026-09-04 13:00", "2026-09-04 14:00", "2026-09-04 15:00", "2026-09-04 16:00", "2026-09-04 17:00", "2026-09-04 18:00", "2026-09-04 19:00", "2026-09-04 20:00", "2026-09-04 21:00", "2026-09-04 22:00", "2026-09-04 23:00"],
+    "networkSearchCount": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7],
+    "webReadMcpCount": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5],
+    "zreadMcpCount": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    "totalUsage": {
+      "totalNetworkSearchCount": 7,
+      "totalWebReadMcpCount": 5,
+      "totalZreadMcpCount": 0,
+      "totalSearchMcpCount": 12,
+      "toolDetails": [
+        { "modelName": "search-prime", "totalUsageCount": 7 },
+        { "modelName": "web-reader", "totalUsageCount": 5 }
+      ],
+      "toolSummaryList": [
+        { "toolCode": "search-prime", "toolName": "联网搜索 MCP", "toolNameI18n": "Web Search MCP", "totalUsageCount": 7, "sortOrder": 1 },
+        { "toolCode": "web-reader", "toolName": "网页读取 MCP", "toolNameI18n": "Web Read MCP", "totalUsageCount": 5, "sortOrder": 2 }
+      ]
+    },
+    "toolDataList": [
+      { "toolCode": "search-prime", "toolName": "联网搜索 MCP", "toolNameI18n": "Web Search MCP", "sortOrder": 1, "usageCount": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7], "totalUsageCount": 7 },
+      { "toolCode": "web-reader", "toolName": "网页读取 MCP", "toolNameI18n": "Web Read MCP", "sortOrder": 2, "usageCount": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5], "totalUsageCount": 5 }
+    ],
+    "toolSummaryList": [
+      { "toolCode": "search-prime", "toolName": "联网搜索 MCP", "toolNameI18n": "Web Search MCP", "totalUsageCount": 7, "sortOrder": 1 },
+      { "toolCode": "web-reader", "toolName": "网页读取 MCP", "toolNameI18n": "Web Read MCP", "totalUsageCount": 5, "sortOrder": 2 }
+    ],
+    "granularity": "hourly"
+  },
+  "success": true
+}

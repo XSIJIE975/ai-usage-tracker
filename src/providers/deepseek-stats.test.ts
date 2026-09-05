@@ -61,17 +61,17 @@ describe("mergeDeepSeekUsage", () => {
   it("matches exact usage numbers and converted cost for a fixture row", () => {
     const bundle = mergeDeepSeekUsage(loadAmountFixture(), loadCostFixture());
     const row = bundle.rows.find(
-      (item) => item.model === "deepseek-v4-flash" && item.requests === 58,
+      (item) => item.model === "deepseek-v4-flash" && item.requests === 24,
     );
     expect(row).toEqual({
       day: expect.any(String),
       model: "deepseek-v4-flash",
-      keyId: "194627f8-55fd-4f85-a57e-47fce0dcd32c",
-      cacheHitTokens: 14433280,
-      cacheMissTokens: 262481,
-      outputTokens: 55183,
-      requests: 58,
-      costCny: 0.6615126,
+      keyId: "00000000-0000-4000-8000-000000000001",
+      cacheHitTokens: 480000,
+      cacheMissTokens: 32000,
+      outputTokens: 512,
+      requests: 24,
+      costCny: 0.512,
     });
   });
 
@@ -80,7 +80,7 @@ describe("mergeDeepSeekUsage", () => {
     const row = bundle.rows.find(
       (item) => item.model === "deepseek-chat & deepseek-reasoner" && item.requests === 1,
     );
-    expect(row?.costCny).toBe(0.0021);
+    expect(row?.costCny).toBe(0.0047);
   });
 
   it("records cost 0 when the cost response has no matching bucket", () => {
@@ -95,7 +95,7 @@ describe("mergeDeepSeekUsage", () => {
   it("deduplicates api keys by tracking_id keeping first name", () => {
     const bundle = mergeDeepSeekUsage(loadAmountFixture(), loadCostFixture());
     expect(bundle.apiKeys).toEqual([
-      { id: "194627f8-55fd-4f85-a57e-47fce0dcd32c", name: "HP-Book14 Pro" },
+      { id: "00000000-0000-4000-8000-000000000001", name: "My Workstation" },
     ]);
   });
 

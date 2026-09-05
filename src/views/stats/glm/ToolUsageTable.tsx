@@ -3,16 +3,19 @@ import { DataTable, THead, TBody, Th, Tr, Td } from "../../../components/ui/data
 import { modelColor } from "../../../components/charts/palette";
 import { EmptyState } from "../../../components/ui/empty-state";
 import { formatInt } from "../../../lib/utils";
-import { useT } from "../../../i18n";
+import { useLanguage, useT } from "../../../i18n";
 import type { GlmToolUsage } from "../../../providers/glm-stats";
 
 /**
- * 工具用量表：固定序列（联网搜索/网页阅读 MCP/Zread MCP，名称为中文词条，t() 翻译）
- * + 动态 toolDataList（服务端工具名原样展示；en 缺键时 t() 回退原名）。
+ * 工具用量表：只渲染解析后的展示序列（动态 toolDataList 为权威，固定序列兜底）。
+ * 动态序列带服务端双语名：英文界面优先 i18nName，中文界面原样展示；
+ * 固定序列名为中文词条 key，走 t() 翻译。
  */
 export function GlmToolUsageTable({ tools }: { tools: GlmToolUsage }) {
   const t = useT();
-  const rows = [...tools.fixed, ...tools.tools];
+  const language = useLanguage();
+  const toolName = (tool: { name: string; i18nName?: string }): string =>
+    language === "en" && tool.i18nName ? tool.i18nName : t(tool.name);
 
   if (tools.totalCalls === 0) {
     return (
@@ -34,7 +37,7 @@ export function GlmToolUsageTable({ tools }: { tools: GlmToolUsage }) {
         </tr>
       </THead>
       <TBody>
-        {rows.map((tool) => {
+        {tools.tools.map((tool) => {
           const share = tools.totalCalls > 0 ? (tool.total / tools.totalCalls) * 100 : 0;
           const color = modelColor(tool.name);
           return (
@@ -42,7 +45,7 @@ export function GlmToolUsageTable({ tools }: { tools: GlmToolUsage }) {
               <Td>
                 <div className="flex items-center gap-2">
                   <span className="h-2.5 w-2.5 shrink-0 rounded-[3px]" style={{ backgroundColor: color }} />
-                  <span className="min-w-0 flex-1 truncate text-xs">{t(tool.name)}</span>
+                  <span className="min-w-0 flex-1 truncate text-xs">{toolName(tool)}</span>
                 </div>
               </Td>
               <Td align="right" className="font-medium tnum">{formatInt(tool.total)}</Td>

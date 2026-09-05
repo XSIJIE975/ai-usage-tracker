@@ -30,21 +30,26 @@ DeepSeek 开放平台网页（platform.deepseek.com）登录后保存在浏览�
 
 `sk-...` 形式的密钥，用于调用 DeepSeek 官方推理 API 与余额查询接口。与 UserToken 是两种不同凭据：API Key 授权程序访问账号的推理能力，UserToken 代表用户本人对开放平台控制台的会话。
 
+## 账户余额
+
+按量付费（预付费）现金账户的可用金额，单位元；DeepSeek 与智谱 GLM 各自的余额接口返回，展示为卡片上的文本行。与 Coding Plan 配额（订阅制请求点数）是两种量纲，同一张智谱卡片上并存、互不折算。智谱实例可另设余额告警阈值（元），与配额百分比阈值相互独立。
+_Avoid_：余额（单独说「余额」时分不清指账户余额还是配额余量，说清楚是哪个）
+
 ## OpenCode Go
 
 第二个受支持的供应商（provider 标识 `opencode-go`），基于 opencode.ai 的用量服务。凭据为 Workspace ID 与 Auth Cookie（两者必填），可选配 API Key 供官方 usage 接口上线后使用。设置页中与 DeepSeek 并列的供应商页签即指它。
 
 ## 智谱 GLM
 
-第三个受支持的供应商（provider 标识 `glm`），追踪智谱 bigmodel.cn 的 Coding Plan 订阅配额。数据来自控制台私有接口（见 ADR-0009/0010），凭据仅需一枚 Coding Plan API Key。
+第三个受支持的供应商（provider 标识 `glm`），同时追踪智谱 bigmodel.cn 的两样东西：Coding Plan 订阅配额与账户余额（按量付费现金账户）。两者数据都来自控制台私有接口（见 ADR-0009/0010/0013），凭据仅需一枚 Coding Plan API Key。
 
 ## Coding Plan API Key
 
-智谱控制台 Coding Plan 页「生成 API Key」所得的密钥（长期有效），即 Claude Code 等 Anthropic 兼容客户端里配置的 `ANTHROPIC_AUTH_TOKEN`。用于配额与用量统计查询（Bearer 注入，官方 glm-plan-usage 插件同款用法，见 ADR-0010）。
+智谱控制台 Coding Plan 页「生成 API Key」所得的密钥（长期有效），即 Claude Code 等 Anthropic 兼容客户端里配置的 `ANTHROPIC_AUTH_TOKEN`。用于配额、用量统计与账户余额查询（Bearer 注入，官方 glm-plan-usage 插件同款用法，余额通道见 ADR-0013）。
 
 ## Coding Plan
 
-智谱的订阅制编码套餐，分 Lite / Pro / Max 档（快照上以小写 `level` 显示，如 `lite`）。额度机制为「5 小时窗口 + 周配额」双窗口的请求点数（接口类型 `CREDIT_LIMIT`）。
+智谱的订阅制编码套餐，分 Lite / Pro / Max 档（快照上以小写 `level` 显示，如 `lite`）。额度机制为「5 小时窗口 + 周配额」双窗口的请求点数（接口类型 `CREDIT_LIMIT`）。与账户余额是两种量纲：套餐消耗请求点数，不扣现金。
 
 ## 5 小时窗口
 
@@ -60,7 +65,12 @@ Coding Plan 的按模型 Token 消耗统计（`model-usage` 端点，列式结�
 
 ## 工具用量
 
-Coding Plan 的工具调用统计（`tool-usage` 端点）：固定三项（联网搜索、网页阅读 MCP、Zread MCP）加动态 MCP 工具列表。快照卡片不含它，仅在统计页展示。
+Coding Plan 的工具调用统计（`tool-usage` 端点），只提供**调用次数**（官网展示的积分消耗是前端按单价折算的，单价不在接口响应中）。展示序列以服务端下发的动态工具列表为权威（自带中英文名、只含有调用的工具，如「联网搜索 MCP」「网页读取 MCP」，字段 2026-09-04 实测确认）；固定三序列（联网搜索、网页阅读（MCP）、Zread（MCP））是同一批数据的旧形态别名，仅在动态列表为空时兜底。快照卡片不含它，仅在统计页展示。
+
+## 重置卡
+
+智谱赠送的额度恢复卡（官网「用量重置额度」），每张可立即恢复对应窗口的额度一次，独立有效期、过期自动失效；使用周卡会同步重置 5 小时额度且不额外消耗 5 小时卡。数据来自控制台私有接口（见 ADR-0014），按可用张数展示为卡片文本行（无可用卡时不显示）；统计抽屉可查看明细并直接使用（不可逆，二次确认）。读取与使用均为 Coding Plan API Key 鉴权，使用接口规约来自官网前端源码静态分析。
+_Avoid_：重置额度（与「配额窗口自动重置」易混，说「重置卡」指卡，说「窗口重置」指自动滚动恢复）
 
 ## 快速面板
 

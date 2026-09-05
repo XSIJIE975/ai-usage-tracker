@@ -1,0 +1,19 @@
+{
+  "code": 200,
+  "msg": "操作成功",
+  "data": {
+    "customerId": 42000000000000001,
+    "targetType": "PERSONAL",
+    "organizationId": null,
+    "projectId": null,
+    "lastFiveHourResetTime": "2026-09-01 21:12:47",
+    "lastWeekResetTime": "2026-09-03 16:55:44",
+    "fiveHourResets": [
+      { "recordId": 900001, "expireTime": "2026-09-02 01:35:13", "available": false },
+      { "recordId": 900002, "expireTime": "2026-09-02 20:42:15", "available": false },
+      { "recordId": 900003, "expireTime": "2026-09-03 20:02:06", "available": false }
+    ],
+    "weekResets": []
+  },
+  "success": true
+}

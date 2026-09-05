@@ -9,6 +9,8 @@ export interface ProviderInstance {
   autoRefresh: boolean;
   /** DeepSeek=元，其余=已用百分比；null=不告警 */
   threshold: number | null;
+  /** 余额告警阈值（元，低于触发）；仅 glm 使用，null=不告警 */
+  balanceThreshold: number | null;
   createdAt: number;
 }
 
