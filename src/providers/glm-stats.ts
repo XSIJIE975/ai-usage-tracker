@@ -10,7 +10,7 @@ import {
   type GlmResetCardRaw,
 } from "./glm";
 
-// 端点与响应结构以 2026-09-02 实测为准（GLM_PROVIDER_PLAN.md 第 0 节 Spike 回填）：
+// 端点与响应结构以 2026-09-02 实测为准（ADR-0009/0010， Spike 回填）：
 // - model-usage / tool-usage 均带 startTime/endTime（本地时区 "yyyy-MM-dd HH:mm:ss"，URL 编码），
 //   Coding Plan API Key 鉴权（Bearer），granularity 随跨度自动切换（短窗 hourly、长窗 daily）
 // - x_time 为桶起点（本地时间），各序列按 x_time 对齐（列式结构）
