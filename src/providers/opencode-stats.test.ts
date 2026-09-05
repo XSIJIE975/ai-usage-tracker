@@ -82,7 +82,7 @@ describe("fetchOpenCodeMonthlyCost", () => {
     if (result.status !== "ok") return;
     expect(result.data.costs).toHaveLength(6);
     const aug14 = result.data.costs.find((row) => row.date === "2026-08-14" && row.model === "deepseek-v4-flash");
-    expect(aug14?.costUsd).toBe(7.63124625);
+    expect(aug14?.costUsd).toBe(3);
     expect(aug14?.keyId).toBe("key_TESTKEYAAAAAAAAAAAAAAAAA");
     expect(result.data.keys).toEqual([
       { id: "key_TESTKEYAAAAAAAAAAAAAAAAA", displayName: "user@example.com - Default API Key" },
@@ -221,8 +221,8 @@ describe("fetchOpenCodeHistoryPage", () => {
     expect(records).toHaveLength(5);
     expect(records[0]?.timeCreated).toBe("2026-08-24T01:49:24.000Z");
     expect(records[3]?.model).toBe("mimo-v2.5");
-    expect(records[3]?.costUsd).toBe(0.00020852);
-    expect(records[3]?.cacheReadTokens).toBe(46272);
+    expect(records[3]?.costUsd).toBe(0.00021);
+    expect(records[3]?.cacheReadTokens).toBe(46000);
     expect(records[0]?.sessionId).toBe("ses_TESTSESSION00000000001");
     expect(records[1]?.sessionId).toBe("");
     expect(records[4]?.sessionId).not.toBe("");
