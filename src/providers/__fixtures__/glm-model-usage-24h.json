@@ -11,33 +11,33 @@
       "2026-09-02 11:00", "2026-09-02 12:00", "2026-09-02 13:00", "2026-09-02 14:00",
       "2026-09-02 15:00"
     ],
-    "modelCallCount": [0, 0, 43, 70, 96, 61, 119, 21, 30, 32, 0, 0, 0, 0, 0, 0, 0, 0, 68, 124, 45, 0, 0, 30, 0],
-    "tokensUsage": [0, 0, 9775789, 14787929, 25836827, 3616345, 16989755, 4138061, 6555614, 2734657, 0, 0, 0, 0, 0, 0, 0, 0, 5730627, 23872066, 12566056, 0, 0, 8506378, 0],
+    "modelCallCount": [0, 0, 12, 24, 30, 18, 40, 6, 9, 10, 0, 0, 0, 0, 0, 0, 0, 0, 20, 35, 15, 0, 0, 11, 0],
+    "tokensUsage": [0, 0, 120000, 240000, 300000, 180000, 400000, 60000, 90000, 100000, 0, 0, 0, 0, 0, 0, 0, 0, 200000, 350000, 150000, 0, 0, 110000, 0],
     "totalUsage": {
-      "totalModelCallCount": 739,
-      "totalTokensUsage": 135110104,
+      "totalModelCallCount": 230,
+      "totalTokensUsage": 2300000,
       "modelSummaryList": [
-        { "modelName": "GLM-5.3", "totalTokens": 52199966, "sortOrder": 1 },
-        { "modelName": "GLM-5.3-Flash", "totalTokens": 82910138, "sortOrder": 2 }
+        { "modelName": "GLM-5.3", "totalTokens": 908000, "sortOrder": 1 },
+        { "modelName": "GLM-5.3-Flash", "totalTokens": 1392000, "sortOrder": 2 }
       ]
     },
     "modelDataList": [
       {
         "modelName": "GLM-5.3",
         "sortOrder": 1,
-        "tokensUsage": [0, 0, 0, 0, 0, 2567365, 16989755, 4138061, 6551730, 1623936, 0, 0, 0, 0, 0, 0, 0, 0, 726333, 13412148, 6190638, 0, 0, 0, 0],
-        "totalTokens": 52199966
+        "tokensUsage": [0, 0, 0, 0, 0, 70000, 400000, 60000, 88000, 40000, 0, 0, 0, 0, 0, 0, 0, 0, 50000, 140000, 60000, 0, 0, 0, 0],
+        "totalTokens": 908000
       },
       {
         "modelName": "GLM-5.3-Flash",
         "sortOrder": 2,
-        "tokensUsage": [0, 0, 9775789, 14787929, 25836827, 1048980, 0, 0, 3884, 1110721, 0, 0, 0, 0, 0, 0, 0, 0, 5004294, 10459918, 6375418, 0, 0, 8506378, 0],
-        "totalTokens": 82910138
+        "tokensUsage": [0, 0, 120000, 240000, 300000, 110000, 0, 0, 2000, 60000, 0, 0, 0, 0, 0, 0, 0, 0, 150000, 210000, 90000, 0, 0, 110000, 0],
+        "totalTokens": 1392000
       }
     ],
     "modelSummaryList": [
-      { "modelName": "GLM-5.3", "totalTokens": 52199966, "sortOrder": 1 },
-      { "modelName": "GLM-5.3-Flash", "totalTokens": 82910138, "sortOrder": 2 }
+      { "modelName": "GLM-5.3", "totalTokens": 908000, "sortOrder": 1 },
+      { "modelName": "GLM-5.3-Flash", "totalTokens": 1392000, "sortOrder": 2 }
     ],
     "granularity": "hourly"
   },

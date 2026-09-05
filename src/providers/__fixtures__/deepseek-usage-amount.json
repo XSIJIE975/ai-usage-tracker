@@ -12,9 +12,9 @@
       "series": [
         {
           "api_key": {
-            "tracking_id": "194627f8-55fd-4f85-a57e-47fce0dcd32c",
-            "name": "HP-Book14 Pro",
-            "sensitive_id": "sk-bd22e***********************bff6",
+            "tracking_id": "00000000-0000-4000-8000-000000000001",
+            "name": "My Workstation",
+            "sensitive_id": "sk-ab12c***********************def6",
             "valid": true
           },
           "model": "deepseek-v4-flash",
@@ -22,19 +22,19 @@
             {
               "time": 1785686400,
               "usage": {
-                "RESPONSE_TOKEN": 55183,
-                "REQUEST": 58,
-                "PROMPT_CACHE_HIT_TOKEN": 14433280,
-                "PROMPT_CACHE_MISS_TOKEN": 262481
+                "RESPONSE_TOKEN": 512,
+                "REQUEST": 24,
+                "PROMPT_CACHE_HIT_TOKEN": 480000,
+                "PROMPT_CACHE_MISS_TOKEN": 32000
               }
             },
             {
               "time": 1785859200,
               "usage": {
-                "RESPONSE_TOKEN": 351,
+                "RESPONSE_TOKEN": 300,
                 "REQUEST": 2,
                 "PROMPT_CACHE_HIT_TOKEN": 0,
-                "PROMPT_CACHE_MISS_TOKEN": 42499
+                "PROMPT_CACHE_MISS_TOKEN": 42000
               }
             },
             {
@@ -50,9 +50,9 @@
         },
         {
           "api_key": {
-            "tracking_id": "194627f8-55fd-4f85-a57e-47fce0dcd32c",
-            "name": "HP-Book14 Pro",
-            "sensitive_id": "sk-bd22e***********************bff6",
+            "tracking_id": "00000000-0000-4000-8000-000000000001",
+            "name": "My Workstation",
+            "sensitive_id": "sk-ab12c***********************def6",
             "valid": true
           },
           "model": "deepseek-chat & deepseek-reasoner",

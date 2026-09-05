@@ -17,6 +17,7 @@ const instance: ProviderInstance = {
   pinned: false,
   autoRefresh: true,
   threshold: 80,
+  balanceThreshold: null,
   createdAt: 0,
 };
 
@@ -100,7 +101,7 @@ describe("opencodeGoProvider.fetch", () => {
   it("uses the real workspace id from vault credentials instead of credential status booleans", async () => {
     invokeMock
       .mockResolvedValueOnce({ workspaceId: true, cookie: true, apiKey: false })
-      .mockResolvedValueOnce({ workspaceId: "wrk_01KZ6DTXDDNHR9BWAFVR4QGNR5", cookie: "Fe26.2-test" })
+      .mockResolvedValueOnce({ workspaceId: "wrk_TESTWORKSPACE00000000000", cookie: "Fe26.2-test" })
       .mockResolvedValueOnce({
         status: 200,
         headers: {},
@@ -115,7 +116,7 @@ describe("opencodeGoProvider.fetch", () => {
       "provider_request",
       expect.objectContaining({
         instanceId: "opencode-go",
-        url: "https://opencode.ai/workspace/wrk_01KZ6DTXDDNHR9BWAFVR4QGNR5/go",
+        url: "https://opencode.ai/workspace/wrk_TESTWORKSPACE00000000000/go",
       }),
     );
   });

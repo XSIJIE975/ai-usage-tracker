@@ -97,6 +97,7 @@ pub fn migrate_to_instances(vault: &mut Vault, db: &Db) -> Result<(), String> {
                 pinned: false,
                 auto_refresh,
                 threshold,
+                balance_threshold: None,
                 created_at: now,
             },
             true,
@@ -341,6 +342,7 @@ mod tests {
                 pinned: false,
                 auto_refresh: true,
                 threshold: Some(50.0),
+                balance_threshold: Some(5.0),
                 created_at: now,
             },
             false,
@@ -356,6 +358,7 @@ mod tests {
                 pinned: true,
                 auto_refresh: false,
                 threshold: None,
+                balance_threshold: None,
                 created_at: now,
             },
             false,
@@ -367,13 +370,27 @@ mod tests {
         assert_eq!(instances[0].id, "uuid-2", "置顶实例排最前");
         assert!(instances[0].pinned);
 
-        // patch：note 改、threshold 清空、pinned 不动
-        db.update_instance("deepseek", Some("改名"), Some(false), None, Some(None))
-            .unwrap();
+        // patch：note 改、threshold 清空、balance_threshold 设置、pinned 不动
+        db.update_instance(
+            "deepseek",
+            Some("改名"),
+            Some(false),
+            None,
+            Some(None),
+            Some(Some(3.5)),
+        )
+        .unwrap();
         let updated = db.get_instance("deepseek").unwrap().unwrap();
         assert_eq!(updated.note, "改名");
         assert!(!updated.auto_refresh);
         assert!(updated.threshold.is_none());
+        assert_eq!(updated.balance_threshold, Some(3.5));
+
+        // balance_threshold 清除（三层语义的 Some(None)）
+        db.update_instance("deepseek", None, None, None, None, Some(None))
+            .unwrap();
+        let cleared = db.get_instance("deepseek").unwrap().unwrap();
+        assert!(cleared.balance_threshold.is_none());
 
         // reorder 后顺序翻转
         db.reorder_instances(&["deepseek".into(), "uuid-2".into()])
@@ -382,8 +399,46 @@ mod tests {
         assert_eq!(reordered[0].id, "uuid-2", "pinned 仍优先于 sort_order");
 
         // 不存在的 id
-        assert!(db.update_instance("missing", None, None, None, None).is_err());
+        assert!(db.update_instance("missing", None, None, None, None, None).is_err());
         assert!(db.reorder_instances(&["missing".into()]).is_err());
+    }
+
+    /// 存量库的 provider_instances 没有 balance_threshold 列：打开时补列，数据保留、可立即写入
+    #[test]
+    fn legacy_instance_table_gains_balance_threshold_column() {
+        let dir = temp_path("balance-col");
+        let db_path = dir.join("legacy.db");
+        {
+            let conn = rusqlite::Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                r#"
+                CREATE TABLE provider_instances (
+                    id           TEXT PRIMARY KEY,
+                    provider_id  TEXT NOT NULL,
+                    note         TEXT NOT NULL DEFAULT '',
+                    sort_order   INTEGER NOT NULL DEFAULT 0,
+                    pinned       INTEGER NOT NULL DEFAULT 0,
+                    auto_refresh INTEGER NOT NULL DEFAULT 1,
+                    threshold    REAL,
+                    created_at   INTEGER NOT NULL
+                );
+                INSERT INTO provider_instances(id, provider_id, threshold, created_at)
+                    VALUES('glm', 'glm', 80.0, 0);
+                "#,
+            )
+            .unwrap();
+        }
+        let db = Db::open(&db_path).unwrap();
+        let instance = db.get_instance("glm").unwrap().unwrap();
+        assert_eq!(instance.threshold, Some(80.0));
+        assert!(instance.balance_threshold.is_none());
+
+        db.update_instance("glm", None, None, None, None, Some(Some(5.0)))
+            .unwrap();
+        assert_eq!(
+            db.get_instance("glm").unwrap().unwrap().balance_threshold,
+            Some(5.0)
+        );
     }
 
     #[test]
@@ -400,6 +455,7 @@ mod tests {
                     pinned: false,
                     auto_refresh: true,
                     threshold: None,
+                    balance_threshold: None,
                     created_at: now,
                 },
                 false,

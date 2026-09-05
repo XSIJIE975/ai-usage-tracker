@@ -15,20 +15,20 @@
           "series": [
             {
               "api_key": {
-                "tracking_id": "194627f8-55fd-4f85-a57e-47fce0dcd32c",
-                "name": "HP-Book14 Pro",
-                "sensitive_id": "sk-bd22e***********************bff6",
+                "tracking_id": "00000000-0000-4000-8000-000000000001",
+                "name": "My Workstation",
+                "sensitive_id": "sk-ab12c***********************def6",
                 "valid": true
               },
               "model": "deepseek-v4-flash",
               "buckets": [
                 {
                   "time": 1785686400,
-                  "cost": "0.6615126000000000"
+                  "cost": "0.5120000000000000"
                 },
                 {
                   "time": 1785859200,
-                  "cost": "0.0432010000000000"
+                  "cost": "0.0300000000000000"
                 },
                 {
                   "time": 1785945600,
@@ -38,16 +38,16 @@
             },
             {
               "api_key": {
-                "tracking_id": "194627f8-55fd-4f85-a57e-47fce0dcd32c",
-                "name": "HP-Book14 Pro",
-                "sensitive_id": "sk-bd22e***********************bff6",
+                "tracking_id": "00000000-0000-4000-8000-000000000001",
+                "name": "My Workstation",
+                "sensitive_id": "sk-ab12c***********************def6",
                 "valid": true
               },
               "model": "deepseek-chat & deepseek-reasoner",
               "buckets": [
                 {
                   "time": 1785686400,
-                  "cost": "0.0021000000000000"
+                  "cost": "0.0047000000000000"
                 },
                 {
                   "time": 1785859200,

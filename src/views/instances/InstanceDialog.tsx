@@ -43,6 +43,8 @@ interface CredentialFieldSpec {
 interface KindConfig {
   fields: CredentialFieldSpec[];
   threshold: { label: string; hint: string; min: number; max: number };
+  /** 第二阈值（可选）：glm 的余额告警阈值（元），与配额百分比阈值并存 */
+  balanceThreshold?: { label: string; hint: string; min: number; max: number };
 }
 
 const KIND_CONFIGS: Record<ProviderKind, KindConfig> = {
@@ -94,6 +96,7 @@ const KIND_CONFIGS: Record<ProviderKind, KindConfig> = {
       },
     ],
     threshold: { label: "Coding Plan 配额告警阈值（%）", hint: "Coding Plan 配额已用达到该百分比时发送系统通知；留空不告警。", min: 1, max: 100 },
+    balanceThreshold: { label: "余额告警阈值（元）", hint: "账户余额低于该值时发送系统通知；留空不告警。", min: 0, max: 1_000_000 },
   },
 };
 
@@ -160,6 +163,7 @@ export function InstanceDialog({
   const [values, setValues] = useState<Record<string, string>>({});
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [threshold, setThreshold] = useState("");
+  const [balanceThreshold, setBalanceThreshold] = useState("");
   const [message, setMessage] = useState<SaveMessage>(null);
   const [saving, setSaving] = useState(false);
 
@@ -169,6 +173,7 @@ export function InstanceDialog({
     setNote(instance?.note ?? "");
     setAutoRefresh(instance?.autoRefresh ?? true);
     setThreshold(instance?.threshold != null ? String(instance.threshold) : "");
+    setBalanceThreshold(instance?.balanceThreshold != null ? String(instance.balanceThreshold) : "");
     setValues({});
     setMessage(null);
   }, [open, instance]);
@@ -197,10 +202,18 @@ export function InstanceDialog({
         : undefined;
 
   const thresholdConfig = config.threshold;
+  const balanceThresholdConfig = config.balanceThreshold;
   const thresholdValue = useMemo(() => {
     const parsed = Number(threshold);
     return Number.isFinite(parsed) ? Math.min(thresholdConfig.max, Math.max(thresholdConfig.min, Math.round(parsed))) : null;
   }, [threshold, thresholdConfig.min, thresholdConfig.max]);
+  const balanceThresholdValue = useMemo(() => {
+    if (!balanceThresholdConfig) return null;
+    const parsed = Number(balanceThreshold);
+    return Number.isFinite(parsed)
+      ? Math.min(balanceThresholdConfig.max, Math.max(balanceThresholdConfig.min, Math.round(parsed)))
+      : null;
+  }, [balanceThreshold, balanceThresholdConfig]);
 
   async function clearCredential(slot: string) {
     if (!instance) return;
@@ -231,6 +244,9 @@ export function InstanceDialog({
           note: note.trim(),
           autoRefresh,
           threshold: threshold.trim() === "" ? null : thresholdValue,
+          ...(config.balanceThreshold
+            ? { balanceThreshold: balanceThreshold.trim() === "" ? null : balanceThresholdValue }
+            : {}),
         });
         if (Object.keys(filledCredentials).length > 0) {
           await saveInstanceCredentials(instance.id, filledCredentials);
@@ -242,6 +258,8 @@ export function InstanceDialog({
         const created = await addInstance(kind, note.trim(), filledCredentials, {
           autoRefresh,
           threshold: threshold.trim() === "" ? null : thresholdValue,
+          balanceThreshold:
+            config.balanceThreshold && balanceThreshold.trim() !== "" ? balanceThresholdValue : null,
         });
         await refreshInstance(created.id);
       }
@@ -360,6 +378,26 @@ export function InstanceDialog({
                 className="tnum h-9 w-28 rounded-md border border-line bg-surface px-2 text-right text-[13px] text-fg shadow-sm focus-visible:border-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring disabled:opacity-40"
               />
             </div>
+
+            {balanceThresholdConfig && (
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <Label htmlFor="instance-balance-threshold">{t(balanceThresholdConfig.label)}</Label>
+                  <p className="mt-1 text-[13px] text-fg-muted">{t(balanceThresholdConfig.hint)}</p>
+                </div>
+                <input
+                  id="instance-balance-threshold"
+                  type="number"
+                  value={balanceThreshold}
+                  min={balanceThresholdConfig.min}
+                  max={balanceThresholdConfig.max}
+                  step={1}
+                  disabled={!settings.alertsEnabled}
+                  onChange={(event) => setBalanceThreshold(event.currentTarget.value)}
+                  className="tnum h-9 w-28 rounded-md border border-line bg-surface px-2 text-right text-[13px] text-fg shadow-sm focus-visible:border-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring disabled:opacity-40"
+                />
+              </div>
+            )}
           </div>
         </DialogBody>
 

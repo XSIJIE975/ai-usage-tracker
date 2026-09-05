@@ -236,6 +236,7 @@ pub fn create_instance(
     credentials: Option<Value>,
     auto_refresh: Option<bool>,
     threshold: Option<f64>,
+    balance_threshold: Option<f64>,
 ) -> Result<db::StoredInstance, String> {
     if !instances::PROVIDER_KINDS
         .iter()
@@ -253,6 +254,7 @@ pub fn create_instance(
             pinned: false,
             auto_refresh: auto_refresh.unwrap_or(true),
             threshold,
+            balance_threshold,
             created_at: chrono_utc_now(),
         }
     };
@@ -277,13 +279,16 @@ pub struct InstancePatch {
     /// 三层语义：缺省=不改、null=清除、数值=设置
     #[serde(deserialize_with = "deserialize_double_option")]
     pub threshold: Option<Option<f64>>,
+    #[serde(deserialize_with = "deserialize_double_option")]
+    pub balance_threshold: Option<Option<f64>>,
 }
 
 /// serde 对 Option<Option<T>> 的 null 缺省行为是外层 None；
 /// 显式 null 必须映射为 Some(None) 才能与「字段缺省」区分
-fn deserialize_double_option<'de, D>(deserializer: D) -> Result<Option<Option<f64>>, D::Error>
+fn deserialize_double_option<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
 where
     D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
 {
     Deserialize::deserialize(deserializer).map(Some)
 }
@@ -303,6 +308,7 @@ pub fn update_instance(
             patch.auto_refresh,
             patch.pinned,
             patch.threshold,
+            patch.balance_threshold,
         )?;
     }
     let _ = app.emit("instances-changed", ());
@@ -813,12 +819,21 @@ mod tests {
     fn instance_patch_deserializes_threshold_semantics() {
         let absent: InstancePatch = serde_json::from_str(r#"{"note":"x"}"#).unwrap();
         assert!(absent.threshold.is_none());
+        assert!(absent.balance_threshold.is_none());
 
         let cleared: InstancePatch = serde_json::from_str(r#"{"threshold":null}"#).unwrap();
         assert_eq!(cleared.threshold, Some(None));
 
         let set: InstancePatch = serde_json::from_str(r#"{"threshold":42}"#).unwrap();
         assert_eq!(set.threshold, Some(Some(42.0)));
+
+        let balance_cleared: InstancePatch =
+            serde_json::from_str(r#"{"balanceThreshold":null}"#).unwrap();
+        assert_eq!(balance_cleared.balance_threshold, Some(None));
+
+        let balance_set: InstancePatch =
+            serde_json::from_str(r#"{"balanceThreshold":5.5}"#).unwrap();
+        assert_eq!(balance_set.balance_threshold, Some(Some(5.5)));
     }
 
     #[test]

@@ -1,16 +1,37 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { HttpResult, InstanceCredentialStatus, ProviderInstance } from "../types/ipc";
 import type { StatsResult } from "./stats-result";
+import {
+  countAvailableResets,
+  parseGlmBalance,
+  toAmount,
+  type GlmBalanceData,
+  type GlmPackageResetData,
+  type GlmResetCardRaw,
+} from "./glm";
 
 // 端点与响应结构以 2026-09-02 实测为准（GLM_PROVIDER_PLAN.md 第 0 节 Spike 回填）：
 // - model-usage / tool-usage 均带 startTime/endTime（本地时区 "yyyy-MM-dd HH:mm:ss"，URL 编码），
 //   Coding Plan API Key 鉴权（Bearer），granularity 随跨度自动切换（短窗 hourly、长窗 daily）
 // - x_time 为桶起点（本地时间），各序列按 x_time 对齐（列式结构）
 // - 按模型仅提供 Token 序列（modelDataList）；请求次数只有全模型合计（modelCallCount）；无费用字段
-// - tool-usage 固定三序列（联网搜索/网页阅读 MCP/Zread MCP）+ 动态 toolDataList
-//   （实测账号无工具调用，toolDataList 为空，动态字段名按 modelDataList 同构容错）
+// - tool-usage 展示序列以动态 toolDataList 为权威（服务端只下发有调用的工具，自带双语名）；
+//   字段名 2026-09-04 实测确认（usageCount 次数序列 / totalUsageCount 合计），固定三序列
+//   （networkSearchCount 等）是同一批数据的旧形态别名，仅在动态列表为空时兜底。
+//   接口只提供调用次数：官网「积分消耗」为前端按单价折算，单价不在接口响应中。
 const MODEL_USAGE_URL = "https://open.bigmodel.cn/api/monitor/usage/model-usage";
 const TOOL_USAGE_URL = "https://open.bigmodel.cn/api/monitor/usage/tool-usage";
+// 账户余额 / 重置卡：与配额同一枚 Coding Plan Key 鉴权（ADR-0013/0014）
+const BALANCE_URL = "https://www.bigmodel.cn/api/biz/account/query-customer-account-report";
+const RESET_URL = "https://www.bigmodel.cn/api/biz/customer-package-reset/list?targetType=PERSONAL";
+// 使用重置卡（官网前端源码 claude-usage bundle，2026-09-05 静态分析固化）：
+// resetType 枚举 FIVE_HOUR/WEEK；requestId 由客户端生成的幂等 UUID，失败后官网会换 ID 重试
+const RESET_USE_URL = "https://www.bigmodel.cn/api/biz/customer-package-reset/use";
+/** 官网对该错误会自动刷新列表（卡已不可用：被用掉/过期） */
+export const RESET_CARD_UNAVAILABLE_MSG = "指定的重置次数不可用，请刷新后重试";
+
+/** resetType 取值与 list 响应字段/窗口的对应关系（官网 w 映射表） */
+export type GlmResetType = "FIVE_HOUR" | "WEEK";
 
 export interface GlmUsageQuery {
   startTime: string;
@@ -64,12 +85,15 @@ interface GlmModelUsageRaw {
 }
 
 interface GlmToolEntryRaw {
+  toolCode?: string;
+  /** 服务端中文名（如 "联网搜索 MCP"） */
   toolName?: string;
-  name?: string;
-  count?: number[];
-  usage?: number[];
-  totalCount?: number;
-  totalUsage?: number;
+  /** 服务端英文名（如 "Web Search MCP"） */
+  toolNameI18n?: string;
+  sortOrder?: number;
+  /** 按桶对齐的调用次数序列（2026-09-04 实测确认） */
+  usageCount?: number[];
+  totalUsageCount?: number;
 }
 
 interface GlmToolUsageRaw {
@@ -106,8 +130,10 @@ export interface GlmModelUsage {
 }
 
 export interface GlmToolSeries {
-  /** 固定序列为中文词条 key（渲染端 t() 翻译）；动态序列为服务端工具名 */
+  /** 动态序列为服务端中文名原样展示；固定序列为中文词条 key（渲染端 t() 翻译） */
   name: string;
+  /** 服务端英文名（仅动态序列下发），英文界面优先于 t(name) */
+  i18nName?: string;
   counts: number[];
   total: number;
 }
@@ -135,17 +161,6 @@ const align = (values: number[] | undefined, size: number): number[] => {
     const value = source[index];
     return typeof value === "number" ? value : 0;
   });
-};
-
-const toSeries = (
-  raw: { name?: string; counts?: number[]; total?: number } | undefined,
-  size: number,
-): GlmToolSeries | null => {
-  if (!raw) return null;
-  const name = raw.name?.trim();
-  if (!name) return null;
-  const counts = align(raw.counts, size);
-  return { name, counts, total: raw.total ?? sum(counts) };
 };
 
 /** 解析 model-usage 响应：模型按 Token 合计降序（与 DeepSeek 统计的展示顺序一致） */
@@ -176,18 +191,19 @@ export function parseModelUsage(data: GlmModelUsageRaw | undefined): GlmModelUsa
   };
 }
 
-/** 固定工具序列的中文词条 key（en.ts 提供对照） */
+/** 固定序列的中文词条 key（en.ts 提供对照）；动态列表为空时兜底展示 */
 const FIXED_TOOL_KEYS = ["联网搜索", "网页阅读（MCP）", "Zread（MCP）"] as const;
 
 /**
- * 解析 tool-usage 响应：固定三序列 + 动态 toolDataList（容错：字段名按 modelDataList 同构猜测，
- * 实测样本 toolDataList 为空，无法核验字段名，解析不出即忽略该条目）。
+ * 解析 tool-usage 响应：动态 toolDataList 为权威展示源（自带双语名、只含有调用的工具，
+ * 字段名 2026-09-04 实测确认），为空时回退固定三序列（旧形态/全零兼容）。
+ * 固定序列不再与动态列表拼接展示——它们是同一批数据的两份别名（实测序列值完全一致）。
  */
 export function parseToolUsage(data: GlmToolUsageRaw | undefined): GlmToolUsage {
   const buckets = data?.x_time ?? [];
   const size = buckets.length;
-  const rawCounts = [data?.networkSearchCount, data?.webReadMcpCount, data?.zreadMcpCount];
-  const fixed = rawCounts.map((counts, index) => {
+  const rawFixedCounts = [data?.networkSearchCount, data?.webReadMcpCount, data?.zreadMcpCount];
+  const fixed = rawFixedCounts.map((counts, index) => {
     const series = align(counts, size);
     return { name: FIXED_TOOL_KEYS[index], counts: series, total: sum(series) };
   });
@@ -196,21 +212,34 @@ export function parseToolUsage(data: GlmToolUsageRaw | undefined): GlmToolUsage 
     webReadMcp: data?.totalUsage?.totalWebReadMcpCount ?? fixed[1].total,
     zreadMcp: data?.totalUsage?.totalZreadMcpCount ?? fixed[2].total,
   };
-  const tools = (data?.toolDataList ?? [])
-    .map((entry) =>
-      toSeries(
-        {
-          name: entry.toolName ?? entry.name,
-          counts: entry.count ?? entry.usage,
-          total: entry.totalCount ?? entry.totalUsage,
-        },
-        size,
-      ),
-    )
-    .filter((entry): entry is GlmToolSeries => entry !== null)
-    .sort((a, b) => b.total - a.total);
-  const totalCalls =
-    totals.networkSearch + totals.webReadMcp + totals.zreadMcp + sum(tools.map((tool) => tool.total));
+
+  const dynamic = (data?.toolDataList ?? [])
+    .map((entry) => {
+      const name = (entry.toolName ?? entry.toolCode)?.trim();
+      if (!name) return null;
+      const counts = align(entry.usageCount, size);
+      const i18nName = entry.toolNameI18n?.trim();
+      return {
+        name,
+        ...(i18nName ? { i18nName } : {}),
+        counts,
+        total: entry.totalUsageCount ?? sum(counts),
+        order: entry.sortOrder ?? Number.MAX_SAFE_INTEGER,
+      };
+    })
+    .filter((entry): entry is (typeof entry) & {} => entry !== null)
+    .sort((a, b) => a.order - b.order || b.total - a.total);
+
+  const tools: GlmToolSeries[] =
+    dynamic.length > 0
+      ? dynamic.map(({ name, i18nName, counts, total }) => ({
+          name,
+          ...(i18nName ? { i18nName } : {}),
+          counts,
+          total,
+        }))
+      : fixed.filter((series) => series.total > 0);
+  const totalCalls = sum(tools.map((tool) => tool.total));
   return { buckets, granularity: data?.granularity ?? "", fixed, tools, totals, totalCalls };
 }
 
@@ -289,5 +318,233 @@ export const fetchGlmUsage = async (
     }
     const detail = error instanceof Error ? error.message : String(error);
     return { status: "error", message: "智谱用量查询失败：{detail}", params: { detail } };
+  }
+};
+
+/** 统计抽屉「账户」卡片区所需的余额明细（卡片快照只带当前余额，明细在抽屉展开） */
+export interface GlmAccountBalance {
+  /** 当前余额（元） */
+  balance: number;
+  /** 可用余额（元）；缺失回退当前余额 */
+  availableBalance: number;
+  rechargeAmount: number | null;
+  giveAmount: number | null;
+  totalSpendAmount: number | null;
+  frozenBalance: number | null;
+  /** 信用余额（元）；未开通为 null */
+  creditBalance: number | null;
+}
+
+/** 解析余额响应为明细（当前余额解析不出时返回 null：纯订阅账户可能无现金数据） */
+export function parseGlmAccountBalance(data: GlmBalanceData | undefined): GlmAccountBalance | null {
+  const balance = parseGlmBalance(data);
+  if (balance == null) return null;
+  return {
+    balance,
+    availableBalance: toAmount(data?.availableBalance) ?? balance,
+    rechargeAmount: toAmount(data?.rechargeAmount),
+    giveAmount: toAmount(data?.giveAmount),
+    totalSpendAmount: toAmount(data?.totalSpendAmount),
+    frozenBalance: toAmount(data?.frozenBalance),
+    creditBalance: toAmount(data?.creditBalance),
+  };
+}
+
+/** 拉取智谱账户余额明细（统计抽屉用；与卡片快照的余额行同源、独立请求） */
+export const fetchGlmAccountBalance = async (
+  instanceId: string,
+): Promise<StatsResult<GlmAccountBalance>> => {
+  try {
+    const status = await invoke<InstanceCredentialStatus>("vault_credential_status", {
+      instanceId,
+    });
+    if (!status.planKey) {
+      return { status: "needs_config", message: "请在设置中填写智谱 Coding Plan API Key" };
+    }
+    const http = await requestGlm(instanceId, BALANCE_URL);
+    if (http.status !== 200) {
+      return {
+        status: "error",
+        message: "智谱余额接口返回 HTTP {status}",
+        params: { status: http.status },
+      };
+    }
+    const json = JSON.parse(http.bodyText) as GlmStatsEnvelope<GlmBalanceData>;
+    if (json.success === false) {
+      return {
+        status: "error",
+        message: "智谱余额查询失败：{detail}",
+        params: {
+          detail: `code=${json.code ?? "unknown"}${json.msg ? ` msg=${json.msg}` : ""}`,
+        },
+      };
+    }
+    const balance = parseGlmAccountBalance(json.data);
+    if (!balance) {
+      return { status: "error", message: "智谱余额接口未返回可用数据" };
+    }
+    return { status: "ok", data: balance };
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      return { status: "error", message: "智谱余额响应无法解析" };
+    }
+    const detail = error instanceof Error ? error.message : String(error);
+    return { status: "error", message: "智谱余额查询失败：{detail}", params: { detail } };
+  }
+};
+
+/** 单张重置卡的展示态：available 即可用；不可用且已过期=已过期，不可用但未过期=已使用 */
+export interface GlmResetCardItem {
+  recordId: number | null;
+  expireTime: string;
+  status: "available" | "expired" | "used";
+}
+
+/** 统计抽屉「重置卡」卡片所需明细（官网「用量重置额度」，仅展示未使用或近 7 天已过期的记录） */
+export interface GlmResetCardList {
+  fiveHour: { available: number; items: GlmResetCardItem[] };
+  week: { available: number; items: GlmResetCardItem[] };
+}
+
+/** "YYYY-MM-DD HH:mm:ss"（服务端本地时间）→ Date；与 toLocalDateTime 互逆 */
+export function parseLocalDateTime(text: string | null | undefined): Date | null {
+  if (!text) return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/.exec(text);
+  if (!match) return null;
+  const [, year, month, day, hour, minute, second] = match;
+  return new Date(+year, +month - 1, +day, +hour, +minute, +second);
+}
+
+export function parseResetCardItem(card: GlmResetCardRaw, now: number): GlmResetCardItem {
+  const expireTime = card.expireTime ?? "";
+  if (card.available === true) return { recordId: card.recordId ?? null, expireTime, status: "available" };
+  const expire = parseLocalDateTime(expireTime);
+  return {
+    recordId: card.recordId ?? null,
+    expireTime,
+    status: expire !== null && expire.getTime() < now ? "expired" : "used",
+  };
+}
+
+/** 展示排序（官网同款）：可用卡置顶按到期时间升序（最先用完的排最前），已使用/已过期按到期时间降序（最近失效的在前） */
+const sortResetItems = (items: GlmResetCardItem[]): GlmResetCardItem[] => {
+  const expireAt = (item: GlmResetCardItem) =>
+    parseLocalDateTime(item.expireTime)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+  return [...items].sort((a, b) => {
+    if ((a.status === "available") !== (b.status === "available")) {
+      return a.status === "available" ? -1 : 1;
+    }
+    return a.status === "available" ? expireAt(a) - expireAt(b) : expireAt(b) - expireAt(a);
+  });
+};
+
+/** 解析重置额度响应为分组明细 */
+export function parseGlmResetCards(
+  data: GlmPackageResetData | undefined,
+  now = Date.now(),
+): GlmResetCardList {
+  const group = (cards: GlmResetCardRaw[] | undefined) => ({
+    available: countAvailableResets(cards),
+    items: sortResetItems((cards ?? []).map((card) => parseResetCardItem(card, now))),
+  });
+  return { fiveHour: group(data?.fiveHourResets), week: group(data?.weekResets) };
+}
+
+/** 拉取智谱重置卡明细（统计抽屉用；与卡片快照的重置卡行同源、独立请求） */
+export const fetchGlmResetCards = async (
+  instanceId: string,
+): Promise<StatsResult<GlmResetCardList>> => {
+  try {
+    const status = await invoke<InstanceCredentialStatus>("vault_credential_status", {
+      instanceId,
+    });
+    if (!status.planKey) {
+      return { status: "needs_config", message: "请在设置中填写智谱 Coding Plan API Key" };
+    }
+    const http = await requestGlm(instanceId, RESET_URL);
+    if (http.status !== 200) {
+      return {
+        status: "error",
+        message: "智谱重置卡接口返回 HTTP {status}",
+        params: { status: http.status },
+      };
+    }
+    const json = JSON.parse(http.bodyText) as GlmStatsEnvelope<GlmPackageResetData>;
+    if (json.success === false) {
+      return {
+        status: "error",
+        message: "智谱重置卡查询失败：{detail}",
+        params: {
+          detail: `code=${json.code ?? "unknown"}${json.msg ? ` msg=${json.msg}` : ""}`,
+        },
+      };
+    }
+    return { status: "ok", data: parseGlmResetCards(json.data) };
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      return { status: "error", message: "智谱重置卡响应无法解析" };
+    }
+    const detail = error instanceof Error ? error.message : String(error);
+    return { status: "error", message: "智谱重置卡查询失败：{detail}", params: { detail } };
+  }
+};
+
+/**
+ * 使用一张重置卡（不可逆，调用方需先经用户确认）。官网同款参数与幂等约定：
+ * requestId 由客户端生成，成功后卡被消耗；「指定的重置次数不可用」错误时调用方应刷新列表。
+ */
+export const useGlmResetCard = async (
+  instanceId: string,
+  resetType: GlmResetType,
+  recordId: number,
+  requestId: string,
+): Promise<StatsResult<true>> => {
+  try {
+    const status = await invoke<InstanceCredentialStatus>("vault_credential_status", {
+      instanceId,
+    });
+    if (!status.planKey) {
+      return { status: "needs_config", message: "请在设置中填写智谱 Coding Plan API Key" };
+    }
+    const http = await invoke<HttpResult>("provider_request", {
+      instanceId,
+      url: RESET_USE_URL,
+      method: "POST",
+      auth: "bearer",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      bodyText: JSON.stringify({ targetType: "PERSONAL", resetType, recordId, requestId }),
+    });
+    // 业务错误可能以非 200 的 HTTP 状态返回（2026-09-05 实测：过期卡 → HTTP 400 + code=400
+    // + msg「指定的重置次数不可用，请刷新后重试」），能解析出业务 msg 就优先透出
+    let json: GlmStatsEnvelope<unknown> | null = null;
+    try {
+      json = JSON.parse(http.bodyText) as GlmStatsEnvelope<unknown>;
+    } catch {
+      // 非 JSON 错误体（如网关错误页）：按 HTTP 状态处理
+    }
+    if (json && json.success === false) {
+      return {
+        status: "error",
+        message: "使用重置卡失败：{detail}",
+        params: { detail: json.msg ?? `code=${json.code ?? "unknown"}` },
+      };
+    }
+    if (json === null && http.status === 200) {
+      return { status: "error", message: "智谱重置卡响应无法解析" };
+    }
+    if (http.status !== 200 || json === null) {
+      return {
+        status: "error",
+        message: "智谱重置卡接口返回 HTTP {status}",
+        params: { status: http.status },
+      };
+    }
+    return { status: "ok", data: true };
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      return { status: "error", message: "智谱重置卡响应无法解析" };
+    }
+    const detail = error instanceof Error ? error.message : String(error);
+    return { status: "error", message: "使用重置卡失败：{detail}", params: { detail } };
   }
 };

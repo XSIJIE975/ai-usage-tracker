@@ -1,5 +1,5 @@
 import type { AlertFire } from "./evaluate";
-import { evaluateRule } from "./evaluate";
+import { evaluateRules } from "./evaluate";
 import type { ProviderInstance, ProviderSnapshot } from "../types/ipc";
 
 interface RuleState {
@@ -20,11 +20,14 @@ export interface AlertCoordinatorDeps {
 }
 
 /**
- * 告警协调器：维护每个实例规则的边沿触发与冷却状态。
- * 可注入 now/notify/onActiveChange 以便单元测试。
+ * 告警协调器：维护每条规则的边沿触发与冷却状态，状态键为规则键（`${instanceId}:${rule}`）。
+ * 同一实例可有多条规则（如 GLM 的配额 quota 与余额 balance），边沿与冷却互相独立；
+ * 实例级告警态 = 任一规则处于告警态。可注入 now/notify/onActiveChange 以便单元测试。
  */
 export class AlertCoordinator {
   private state = new Map<string, RuleState>();
+  /** 实例上一次的告警态，仅在变化时回调 onActiveChange，避免每轮刷新重复广播 */
+  private lastActive = new Map<string, boolean>();
   private deps: Required<Pick<AlertCoordinatorDeps, "now" | "cooldownMs">> &
     Pick<AlertCoordinatorDeps, "notify" | "onActiveChange">;
 
@@ -37,41 +40,47 @@ export class AlertCoordinator {
     };
   }
 
-  /** 每次刷新落快照后调用；每种类的规则每实例至多一条，状态键即实例 id */
+  /** 每次刷新落快照后调用 */
   observe(instance: ProviderInstance, snapshot: ProviderSnapshot, alertsEnabled: boolean): void {
-    const key = instance.id;
-    // lastNotifiedAt 用 -Infinity 表示"从未通知过"，保证首次触发必定通知
-    const state = this.state.get(key) ?? { triggered: false, lastNotifiedAt: Number.NEGATIVE_INFINITY };
     const now = this.deps.now();
+    const fires = alertsEnabled ? evaluateRules(instance, snapshot) : [];
+    const firedByKey = new Map(fires.map((fire) => [fire.ruleKey, fire]));
 
-    if (!alertsEnabled) {
-      if (state.triggered) {
-        state.triggered = false;
-        this.state.set(key, state);
-        this.deps.onActiveChange(instance.id, false);
-      }
-      return;
+    // 本实例关心的规则键 = 已有状态中属于本实例的 + 本次触发的
+    const instancePrefix = `${instance.id}:`;
+    const keys = new Set<string>();
+    for (const key of this.state.keys()) {
+      if (key.startsWith(instancePrefix)) keys.add(key);
     }
+    for (const key of firedByKey.keys()) keys.add(key);
 
-    const fire = evaluateRule(instance, snapshot);
-    if (fire) {
-      const cooledDown = now - state.lastNotifiedAt >= this.deps.cooldownMs;
-      if (!state.triggered && cooledDown) {
-        this.deps.notify(fire);
-        state.lastNotifiedAt = now;
-      }
-      if (!state.triggered) {
+    // lastNotifiedAt 用 -Infinity 表示"从未通知过"，保证首次触发必定通知
+    let anyActive = false;
+    for (const key of keys) {
+      const state = this.state.get(key) ?? {
+        triggered: false,
+        lastNotifiedAt: Number.NEGATIVE_INFINITY,
+      };
+      const fire = firedByKey.get(key);
+      if (fire) {
+        const cooledDown = now - state.lastNotifiedAt >= this.deps.cooldownMs;
+        if (!state.triggered && cooledDown) {
+          this.deps.notify(fire);
+          state.lastNotifiedAt = now;
+        }
         state.triggered = true;
-        this.state.set(key, state);
-        this.deps.onActiveChange(instance.id, true);
+        anyActive = true;
+      } else {
+        // 未触发（含总开关关闭）：只解除边沿态，冷却时间戳保留
+        state.triggered = false;
       }
-      return;
+      this.state.set(key, state);
     }
 
-    if (state.triggered) {
-      state.triggered = false;
-      this.state.set(key, state);
-      this.deps.onActiveChange(instance.id, false);
+    const previous = this.lastActive.get(instance.id) ?? false;
+    if (previous !== anyActive) {
+      this.lastActive.set(instance.id, anyActive);
+      this.deps.onActiveChange(instance.id, anyActive);
     }
   }
 }

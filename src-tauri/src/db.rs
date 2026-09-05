@@ -38,6 +38,8 @@ pub struct StoredInstance {
     pub pinned: bool,
     pub auto_refresh: bool,
     pub threshold: Option<f64>,
+    /// 余额告警阈值（元，仅 glm 使用）；None=不告警
+    pub balance_threshold: Option<f64>,
     pub created_at: i64,
 }
 
@@ -58,14 +60,15 @@ impl Db {
             );
 
             CREATE TABLE IF NOT EXISTS provider_instances (
-                id           TEXT PRIMARY KEY,
-                provider_id  TEXT NOT NULL,
-                note         TEXT NOT NULL DEFAULT '',
-                sort_order   INTEGER NOT NULL DEFAULT 0,
-                pinned       INTEGER NOT NULL DEFAULT 0,
-                auto_refresh INTEGER NOT NULL DEFAULT 1,
-                threshold    REAL,
-                created_at   INTEGER NOT NULL
+                id                TEXT PRIMARY KEY,
+                provider_id       TEXT NOT NULL,
+                note              TEXT NOT NULL DEFAULT '',
+                sort_order        INTEGER NOT NULL DEFAULT 0,
+                pinned            INTEGER NOT NULL DEFAULT 0,
+                auto_refresh      INTEGER NOT NULL DEFAULT 1,
+                threshold         REAL,
+                balance_threshold REAL,
+                created_at        INTEGER NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS snapshots (
@@ -88,6 +91,7 @@ impl Db {
         .map_err(|error| error.to_string())?;
         let db = Self { conn };
         db.rename_legacy_provider_columns()?;
+        db.ensure_instance_balance_threshold_column()?;
         // 索引依赖列名，必须在改名之后建
         db.conn
             .execute_batch(
@@ -132,6 +136,26 @@ impl Db {
                     ))
                     .map_err(|error| error.to_string())?;
             }
+        }
+        Ok(())
+    }
+
+    /// 余额告警阈值列（ADR-0013）晚于建表语句加入：存量库用 ALTER TABLE 补列，
+    /// 新库建表已含该列，此函数为幂等空操作
+    fn ensure_instance_balance_threshold_column(&self) -> Result<(), String> {
+        let mut statement = self
+            .conn
+            .prepare("PRAGMA table_info(provider_instances)")
+            .map_err(|error| error.to_string())?;
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<String>, _>>()
+            .map_err(|error| error.to_string())?;
+        if !columns.iter().any(|column| column == "balance_threshold") {
+            self.conn
+                .execute_batch("ALTER TABLE provider_instances ADD COLUMN balance_threshold REAL;")
+                .map_err(|error| error.to_string())?;
         }
         Ok(())
     }
@@ -181,7 +205,7 @@ impl Db {
             .conn
             .prepare(
                 r#"
-                SELECT id, provider_id, note, sort_order, pinned, auto_refresh, threshold, created_at
+                SELECT id, provider_id, note, sort_order, pinned, auto_refresh, threshold, balance_threshold, created_at
                 FROM provider_instances
                 ORDER BY pinned DESC, sort_order ASC, created_at ASC
                 "#,
@@ -197,7 +221,8 @@ impl Db {
                     pinned: row.get::<_, i64>(4)? != 0,
                     auto_refresh: row.get::<_, i64>(5)? != 0,
                     threshold: row.get(6)?,
-                    created_at: row.get(7)?,
+                    balance_threshold: row.get(7)?,
+                    created_at: row.get(8)?,
                 })
             })
             .map_err(|error| error.to_string())?;
@@ -213,7 +238,7 @@ impl Db {
             .conn
             .prepare(
                 r#"
-                SELECT id, provider_id, note, sort_order, pinned, auto_refresh, threshold, created_at
+                SELECT id, provider_id, note, sort_order, pinned, auto_refresh, threshold, balance_threshold, created_at
                 FROM provider_instances WHERE id = ?1
                 "#,
             )
@@ -228,7 +253,8 @@ impl Db {
                     pinned: row.get::<_, i64>(4)? != 0,
                     auto_refresh: row.get::<_, i64>(5)? != 0,
                     threshold: row.get(6)?,
-                    created_at: row.get(7)?,
+                    balance_threshold: row.get(7)?,
+                    created_at: row.get(8)?,
                 })
             })
             .map(|instance| Some(instance))
@@ -251,8 +277,8 @@ impl Db {
                 &format!(
                     r#"
                     INSERT {conflict} INTO provider_instances
-                        (id, provider_id, note, sort_order, pinned, auto_refresh, threshold, created_at)
-                    VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                        (id, provider_id, note, sort_order, pinned, auto_refresh, threshold, balance_threshold, created_at)
+                    VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
                     "#
                 ),
                 rusqlite::params![
@@ -263,6 +289,7 @@ impl Db {
                     instance.pinned as i64,
                     instance.auto_refresh as i64,
                     instance.threshold,
+                    instance.balance_threshold,
                     instance.created_at,
                 ],
             )
@@ -288,6 +315,7 @@ impl Db {
         auto_refresh: Option<bool>,
         pinned: Option<bool>,
         threshold: Option<Option<f64>>,
+        balance_threshold: Option<Option<f64>>,
     ) -> Result<(), String> {
         let current = self
             .get_instance(id)?
@@ -297,7 +325,7 @@ impl Db {
             .execute(
                 r#"
                 UPDATE provider_instances
-                SET note = ?2, auto_refresh = ?3, pinned = ?4, threshold = ?5
+                SET note = ?2, auto_refresh = ?3, pinned = ?4, threshold = ?5, balance_threshold = ?6
                 WHERE id = ?1
                 "#,
                 rusqlite::params![
@@ -306,6 +334,7 @@ impl Db {
                     auto_refresh.unwrap_or(current.auto_refresh) as i64,
                     pinned.unwrap_or(current.pinned) as i64,
                     threshold.unwrap_or(current.threshold),
+                    balance_threshold.unwrap_or(current.balance_threshold),
                 ],
             )
             .map_err(|error| error.to_string())?;

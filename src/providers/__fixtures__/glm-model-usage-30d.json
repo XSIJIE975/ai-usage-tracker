@@ -10,41 +10,41 @@
       "2026-08-27", "2026-08-28", "2026-08-29", "2026-08-30", "2026-08-31", "2026-09-01",
       "2026-09-02"
     ],
-    "modelCallCount": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 371, 0, 0, 0, 12, 440, 299],
-    "tokensUsage": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 56072306, 0, 0, 0, 616588, 81700320, 53409784],
+    "modelCallCount": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 80, 0, 0, 0, 6, 110, 90],
+    "tokensUsage": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1200006, 0, 0, 0, 430000, 1700000, 700000],
     "totalUsage": {
-      "totalModelCallCount": 1122,
-      "totalTokensUsage": 191798998,
+      "totalModelCallCount": 286,
+      "totalTokensUsage": 3360006,
       "modelSummaryList": [
-        { "modelName": "GLM-5.3", "totalTokens": 52200243, "sortOrder": 1 },
-        { "modelName": "GLM-5-Turbo", "totalTokens": 16, "sortOrder": 2 },
-        { "modelName": "GLM-5.3-Flash", "totalTokens": 139598739, "sortOrder": 3 }
+        { "modelName": "GLM-5.3", "totalTokens": 1100000, "sortOrder": 1 },
+        { "modelName": "GLM-5-Turbo", "totalTokens": 6, "sortOrder": 2 },
+        { "modelName": "GLM-5.3-Flash", "totalTokens": 2930000, "sortOrder": 3 }
       ]
     },
     "modelDataList": [
       {
         "modelName": "GLM-5.3",
         "sortOrder": 1,
-        "tokensUsage": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 277, 30246911, 21953055],
-        "totalTokens": 52200243
+        "tokensUsage": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 400000, 0, 700000],
+        "totalTokens": 1100000
       },
       {
         "modelName": "GLM-5-Turbo",
         "sortOrder": 2,
-        "tokensUsage": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16, 0, 0],
-        "totalTokens": 16
+        "tokensUsage": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0],
+        "totalTokens": 6
       },
       {
         "modelName": "GLM-5.3-Flash",
         "sortOrder": 3,
-        "tokensUsage": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 56072306, 0, 0, 0, 616295, 51453409, 31456729],
-        "totalTokens": 139598739
+        "tokensUsage": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1200000, 0, 0, 0, 30000, 1700000, 0],
+        "totalTokens": 2930000
       }
     ],
     "modelSummaryList": [
-      { "modelName": "GLM-5.3", "totalTokens": 52200243, "sortOrder": 1 },
-      { "modelName": "GLM-5-Turbo", "totalTokens": 16, "sortOrder": 2 },
-      { "modelName": "GLM-5.3-Flash", "totalTokens": 139598739, "sortOrder": 3 }
+      { "modelName": "GLM-5.3", "totalTokens": 1100000, "sortOrder": 1 },
+      { "modelName": "GLM-5-Turbo", "totalTokens": 6, "sortOrder": 2 },
+      { "modelName": "GLM-5.3-Flash", "totalTokens": 2930000, "sortOrder": 3 }
     ],
     "granularity": "daily"
   },

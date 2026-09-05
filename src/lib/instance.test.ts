@@ -10,6 +10,7 @@ const instance = (note: string): ProviderInstance => ({
   pinned: false,
   autoRefresh: true,
   threshold: null,
+  balanceThreshold: null,
   createdAt: 0,
 });
 
