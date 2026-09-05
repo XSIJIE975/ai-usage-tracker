@@ -21,6 +21,7 @@ import {
 //   接口只提供调用次数：官网「积分消耗」为前端按单价折算，单价不在接口响应中。
 const MODEL_USAGE_URL = "https://open.bigmodel.cn/api/monitor/usage/model-usage";
 const TOOL_USAGE_URL = "https://open.bigmodel.cn/api/monitor/usage/tool-usage";
+const PERFORMANCE_URL = "https://open.bigmodel.cn/api/monitor/usage/model-performance-day";
 // 账户余额 / 重置卡：与配额同一枚 Coding Plan Key 鉴权（ADR-0013/0014）
 const BALANCE_URL = "https://www.bigmodel.cn/api/biz/account/query-customer-account-report";
 const RESET_URL = "https://www.bigmodel.cn/api/biz/customer-package-reset/list?targetType=PERSONAL";
@@ -151,6 +152,78 @@ export interface GlmUsageBundle {
   models: GlmModelUsage;
   tools: GlmToolUsage;
 }
+
+/** model-performance-day 响应 data（控制台「系统健康度」，2026-09-05 实测固化） */
+interface GlmPerformanceRaw {
+  x_time?: string[];
+  /** 高峰期平均 Decode 速度（tokens/s） */
+  liteDecodeSpeed?: number[];
+  proMaxDecodeSpeed?: number[];
+  /** 请求成功率（0-1 小数） */
+  liteSuccessRate?: number[];
+  proMaxSuccessRate?: number[];
+}
+
+export interface GlmPerformance {
+  buckets: string[];
+  /** Max&Pro 高峰期平均 Decode 速度（tokens/s） */
+  proMaxDecodeSpeed: number[];
+  /** Lite 高峰期平均 Decode 速度（tokens/s） */
+  liteDecodeSpeed: number[];
+}
+
+/** 解析系统健康度响应：序列按桶数对齐（缺失位补 0），空桶过滤后返回 */
+export function parseGlmPerformance(data: GlmPerformanceRaw | undefined): GlmPerformance {
+  const buckets = data?.x_time ?? [];
+  const size = buckets.length;
+  return {
+    buckets,
+    proMaxDecodeSpeed: align(data?.proMaxDecodeSpeed, size),
+    liteDecodeSpeed: align(data?.liteDecodeSpeed, size),
+  };
+}
+
+/** 拉取系统健康度（Decode 速度，按日粒度；与用量统计同一枚 Coding Plan Key） */
+export const fetchGlmPerformance = async (
+  instanceId: string,
+  startMs: number,
+  endMs: number,
+): Promise<StatsResult<GlmPerformance>> => {
+  try {
+    const status = await invoke<InstanceCredentialStatus>("vault_credential_status", {
+      instanceId,
+    });
+    if (!status.planKey) {
+      return { status: "needs_config", message: "请在设置中填写智谱 Coding Plan API Key" };
+    }
+    const query = buildGlmUsageQuery(startMs, endMs);
+    const http = await requestGlm(instanceId, queryUrl(PERFORMANCE_URL, query));
+    if (http.status !== 200) {
+      return {
+        status: "error",
+        message: "智谱系统健康度接口返回 HTTP {status}",
+        params: { status: http.status },
+      };
+    }
+    const json = JSON.parse(http.bodyText) as GlmStatsEnvelope<GlmPerformanceRaw>;
+    if (json.success === false) {
+      return {
+        status: "error",
+        message: "智谱系统健康度查询失败：{detail}",
+        params: {
+          detail: `code=${json.code ?? "unknown"}${json.msg ? ` msg=${json.msg}` : ""}`,
+        },
+      };
+    }
+    return { status: "ok", data: parseGlmPerformance(json.data) };
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      return { status: "error", message: "智谱系统健康度响应无法解析" };
+    }
+    const detail = error instanceof Error ? error.message : String(error);
+    return { status: "error", message: "智谱系统健康度查询失败：{detail}", params: { detail } };
+  }
+};
 
 const sum = (values: number[]): number => values.reduce((total, value) => total + value, 0);
 

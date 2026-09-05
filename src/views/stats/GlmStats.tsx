@@ -33,6 +33,7 @@ import { useGlobalRefresh } from "./use-global-refresh";
 import { GlmOverviewCards } from "./glm/OverviewCards";
 import { GlmBalanceCards } from "./glm/BalanceCards";
 import { GlmResetCards } from "./glm/ResetCards";
+import { GlmPerformanceCard } from "./glm/PerformanceCard";
 import { GlmModelUsageTable } from "./glm/ModelUsageTable";
 import { GlmToolUsageTable } from "./glm/ToolUsageTable";
 import {
@@ -381,6 +382,16 @@ export function GlmStats({ instance }: { instance: ProviderInstance }) {
           <GlmToolUsageTable tools={bundle.tools} />
         </CardContent>
       </Card>
+
+      {/* 系统健康度（跟随时间范围；取不到时整块隐藏） */}
+      {rangeMs !== null && (
+        <GlmPerformanceCard
+          instanceId={instance.id}
+          startMs={rangeMs.startMs}
+          endMs={rangeMs.endMs}
+          refreshTick={refreshTick}
+        />
+      )}
     </div>
   );
 }

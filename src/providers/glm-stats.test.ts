@@ -13,10 +13,12 @@ import {
   fetchGlmResetCards,
   fetchGlmUsage,
   parseGlmAccountBalance,
+  parseGlmPerformance,
   parseGlmResetCards,
   parseLocalDateTime,
   parseModelUsage,
   parseToolUsage,
+  fetchGlmPerformance,
   useGlmResetCard,
 } from "./glm-stats";
 
@@ -457,5 +459,62 @@ describe("useGlmResetCard", () => {
       .mockResolvedValueOnce(httpResult("boom", 500));
     const failed = await useGlmResetCard("glm", "WEEK", 1, "req-4");
     expect(failed).toMatchObject({ status: "error", params: { status: 500 } });
+  });
+});
+
+describe("parseGlmPerformance / fetchGlmPerformance", () => {
+  beforeEach(() => {
+    mockInvoke.mockReset();
+  });
+
+  it("parses the 7d fixture into aligned decode-speed series", () => {
+    const json = JSON.parse(readFixture("glm-performance-7d.json"));
+    const perf = parseGlmPerformance(json.data);
+    expect(perf.buckets).toHaveLength(7);
+    expect(perf.proMaxDecodeSpeed).toHaveLength(7);
+    expect(perf.liteDecodeSpeed[0]).toBeCloseTo(95.2, 6);
+    expect(perf.proMaxDecodeSpeed[6]).toBeCloseTo(111.7, 6);
+  });
+
+  it("aligns missing series positions with zeros", () => {
+    const perf = parseGlmPerformance({ x_time: ["2026-09-01", "2026-09-02"], liteDecodeSpeed: [80] });
+    expect(perf.proMaxDecodeSpeed).toEqual([0, 0]);
+    expect(perf.liteDecodeSpeed).toEqual([80, 0]);
+    expect(parseGlmPerformance(undefined).buckets).toEqual([]);
+  });
+
+  it("fetches performance with the encoded time window", async () => {
+    mockInvoke
+      .mockResolvedValueOnce(credentialStatus(true))
+      .mockImplementationOnce((_, args) => {
+        const options = args as Record<string, unknown>;
+        expect(options).toMatchObject({ instanceId: "glm", method: "GET", auth: "bearer" });
+        expect(String(options.url)).toContain(
+          "startTime=2026-09-01%2000%3A00%3A00&endTime=2026-09-02%2023%3A59%3A59",
+        );
+        return Promise.resolve(httpResult(JSON.parse(readFixture("glm-performance-7d.json"))));
+      });
+
+    const startMs = new Date(2026, 8, 1).getTime();
+    const endMs = new Date(2026, 8, 3).getTime();
+    const result = await fetchGlmPerformance("glm", startMs, endMs);
+    expect(result).toMatchObject({ status: "ok" });
+    if (result.status === "ok") {
+      expect(result.data.buckets).toHaveLength(7);
+      expect(result.data.liteDecodeSpeed).toHaveLength(7);
+    }
+  });
+
+  it("returns needs_config / error states distinctly", async () => {
+    mockInvoke.mockResolvedValueOnce(credentialStatus(false));
+    expect((await fetchGlmPerformance("glm", 0, 1)).status).toBe("needs_config");
+
+    mockInvoke
+      .mockReset()
+      .mockResolvedValueOnce(credentialStatus(true))
+      .mockResolvedValueOnce(httpResult({ code: 401, msg: "令牌已过期或验证不正确", success: false }));
+    const failed = await fetchGlmPerformance("glm", 0, 1);
+    expect(failed).toMatchObject({ status: "error" });
+    expect(failed.status === "error" && failed.params?.detail).toContain("令牌已过期");
   });
 });
