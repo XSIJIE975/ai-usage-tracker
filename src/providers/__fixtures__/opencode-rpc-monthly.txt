@@ -4,31 +4,31 @@
     usage: $R[1] = [$R[2] = {
         date: "2026-08-05",
         model: "deepseek-v4-flash",
-        totalCost: 224370975,
+        totalCost: 120000000,
         keyId: "key_TESTKEYAAAAAAAAAAAAAAAAA",
         plan: "lite"
     }, $R[3] = {
         date: "2026-08-05",
         model: "glm-5.2",
-        totalCost: 17054764,
+        totalCost: 9000000,
         keyId: "key_TESTKEYAAAAAAAAAAAAAAAAA",
         plan: "lite"
     }, $R[4] = {
         date: "2026-08-06",
         model: "deepseek-v4-flash",
-        totalCost: 188255069,
+        totalCost: 100000000,
         keyId: "key_TESTKEYAAAAAAAAAAAAAAAAA",
         plan: "lite"
     }, $R[5] = {
         date: "2026-08-14",
         model: "deepseek-v4-flash",
-        totalCost: 763124625,
+        totalCost: 300000000,
         keyId: "key_TESTKEYAAAAAAAAAAAAAAAAA",
         plan: "lite"
     }, $R[6] = {
         date: "2026-08-24",
         model: "mimo-v2.5",
-        totalCost: 1905700,
+        totalCost: 800000,
         keyId: "key_TESTKEYAAAAAAAAAAAAAAAAA",
         plan: "lite"
     }, $R[7] = {

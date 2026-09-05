@@ -37,7 +37,7 @@ export interface OpenCodeUsageRecord {
 
 type UnknownRecord = Record<string, unknown>;
 
-/** cost 原始单位为 1e-8 美元（实测 763124625 → $7.63）。 */
+/** cost 原始单位为 1e-8 美元（如 300000000 → $3.00）。 */
 const COST_UNIT_SCALE = 1e8;
 
 const asRecord = (value: unknown): UnknownRecord =>
