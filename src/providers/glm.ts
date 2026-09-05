@@ -9,7 +9,7 @@ import type {
 } from "../types/ipc";
 import type { ProviderModule } from "./types";
 
-// 端点与响应结构以 GLM_PROVIDER_PLAN.md 3.2/3.3/3.4 的实测结论为准（2026-09-01，ADR-0009）：
+// 端点与响应结构以实测结论为准（2026-09-01 配额 / 2026-09-04 余额，见 ADR-0009/0013/0014）：
 // - 配额：open.bigmodel.cn/api/monitor/usage/quota/limit（Coding Plan API Key 鉴权，
 //   与智谱官方 glm-plan-usage 插件同款用法，Bearer/裸值均可用）
 // - 余额：www.bigmodel.cn/api/biz/account/query-customer-account-report。
