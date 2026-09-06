@@ -395,4 +395,10 @@ export const en: Record<string, string> = {
   "未配置": "Not set",
   "快捷键可能与其他程序冲突，请更换": "Shortcut registration failed — it may conflict with another app. Please pick another.",
   "个月": "month",
+  "启动": "Startup",
+  "登录时自动运行与启动窗口行为。": "Automatic launch and startup window behavior.",
+  "开机自启": "Launch at login",
+  "登录系统后自动运行程序，驻留系统托盘。": "Run the app automatically after signing in and keep it in the system tray.",
+  "静默启动": "Silent start",
+  "开机自启启动时不显示主窗口，仅在系统托盘运行。": "When launched at login, start without showing the main window and stay in the system tray only.",
 };

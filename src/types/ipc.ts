@@ -87,6 +87,10 @@ export interface AppSettings {
   resetTimeDisplay: "relative" | "absolute";
   /** 界面语言：auto 按系统语言检测（中文→中文，否则英文） */
   interfaceLanguage: "auto" | "zh" | "en";
+  /** 开机自启：随系统登录自动运行程序 */
+  autoStart: boolean;
+  /** 静默启动：仅自启路径生效（ADR-0015），关闭自启时复位为关 */
+  silentStart: boolean;
 }
 
 export interface StoredNotification {

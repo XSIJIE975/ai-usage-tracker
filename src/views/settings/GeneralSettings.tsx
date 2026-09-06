@@ -10,6 +10,7 @@ import { AppearanceCard } from "./AppearanceCard";
 import { AboutCard } from "./AboutCard";
 import { UpdateCard } from "./UpdateCard";
 import { QuickPanelShortcutSetting } from "./QuickPanelShortcutSetting";
+import { StartupSettings } from "./StartupSettings";
 import { useT } from "../../i18n";
 import { SavedHint, useSaveFlash } from "./save-flash";
 
@@ -77,6 +78,18 @@ export function GeneralSettings() {
               aria-label="刷新间隔"
             />
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex-row items-start justify-between space-y-0 pb-3">
+          <div className="space-y-1.5">
+            <CardTitle>{t("启动")}</CardTitle>
+            <CardDescription>{t("登录时自动运行与启动窗口行为。")}</CardDescription>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <StartupSettings />
         </CardContent>
       </Card>
 

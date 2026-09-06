@@ -5,6 +5,7 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager};
 
+mod autostart;
 mod commands;
 mod db;
 mod instances;
@@ -22,6 +23,8 @@ pub struct AppState {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 自启静默启动标记（ADR-0015）：仅自启路径携带，手动启动与更新后重启一律显示主窗口
+    let silent_launch = autostart::launched_silently();
     tauri::Builder::default()
         // 单实例插件必须最先注册：第二实例启动时立即退出，并由回调唤起已有主窗口
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -36,7 +39,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .setup(|app| {
+        .setup(move |app| {
             let app_data = app.path().app_data_dir()?;
             std::fs::create_dir_all(&app_data)?;
             let db = Db::open(&app_data.join("ai-usage-tracker.db"))?;
@@ -64,6 +67,21 @@ pub fn run() {
                             eprintln!("注册快速面板快捷键失败：{error}");
                         }
                     }
+                }
+                // 已开启自启时幂等重放一次注册：顺带修正安装路径变化；失败不阻断启动
+                if settings.get("autoStart").and_then(Value::as_bool).unwrap_or(false) {
+                    let silent_start = settings.get("silentStart").and_then(Value::as_bool).unwrap_or(false);
+                    if let Err(error) = autostart::apply(app.handle(), true, silent_start) {
+                        eprintln!("刷新开机自启注册失败：{error}");
+                    }
+                }
+            }
+
+            // 主窗口默认 visible: false，由启动方式决定是否显示（自启静默启动保持隐藏）
+            if !silent_launch {
+                if let Some(main) = app.get_webview_window("main") {
+                    let _ = main.show();
+                    let _ = main.set_focus();
                 }
             }
 
@@ -110,6 +128,7 @@ pub fn run() {
             commands::toggle_quick_window,
             commands::register_quick_shortcut,
             commands::refresh_tray_menu,
+            autostart::set_autostart,
             commands::diagnose_request,
             commands::quit_app,
         ])

@@ -20,6 +20,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   quickAutoHide: true,
   resetTimeDisplay: "relative",
   interfaceLanguage: "auto",
+  autoStart: false,
+  silentStart: false,
 };
 
 function normalizeSettings(settings: Partial<AppSettings>): AppSettings {
