@@ -368,9 +368,48 @@ input {
   background: transparent;
 }
 
+/* 面板内容区：不渲染滚动条但保留滚动能力。可见滚动条会在高度自适应时挤占宽度，
+   引发「出现→回流→消失」的抖动，且细窄面板里滚动条本身很突兀 */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 /* 数字等宽（指标数值统一使用） */
 .tnum {
   font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 面板内容进场（速览面板实例块，形态切换/范围变化时级联上浮淡入） ---------- */
+@keyframes panel-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* both：延迟期间保持首帧不可见，级联延迟时不闪现。
+   刻意不响应 prefers-reduced-motion：系统关闭「显示动画」时 WebView2 恒定上报 reduce，
+   若在此让步，面板将永远没有进场动画（已实际发生）；这些 200ms 级微反馈不是大幅运动 */
+.panel-enter {
+  animation: panel-enter 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* 用量数值变化的平滑过渡（进度条宽度 / 用量环弧长与颜色） */
+.panel-meter-bar {
+  transition: width var(--transition-duration-slow) ease;
+}
+
+.panel-meter-ring {
+  transition:
+    stroke-dashoffset var(--transition-duration-slow) ease,
+    stroke var(--transition-duration-normal) ease;
 }
 
 /* ---------- 卡片 3D 翻面（百分比 ↔ 数值切换，见 DESIGN.md 6.10） ---------- */

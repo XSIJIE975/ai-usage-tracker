@@ -18,13 +18,25 @@
         "height": 760,
         "minWidth": 720,
         "minHeight": 520,
-        "center": true
+        "center": true,
+        "visible": false
       },
       {
         "label": "quick",
         "title": "AI 用量助手",
         "width": 380,
         "height": 320,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "resizable": false,
+        "skipTaskbar": true,
+        "visible": false
+      },
+      {
+        "label": "glance",
+        "title": "AI 用量助手",
+        "width": 320,
+        "height": 420,
         "decorations": false,
         "alwaysOnTop": true,
         "resizable": false,
@@ -50,7 +62,12 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "installerHooks": "./nsis-hooks/installer.nsh"
+      }
+    }
   },
   "plugins": {
     "updater": {

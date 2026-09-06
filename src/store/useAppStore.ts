@@ -20,6 +20,19 @@ const DEFAULT_SETTINGS: AppSettings = {
   quickAutoHide: true,
   resetTimeDisplay: "relative",
   interfaceLanguage: "auto",
+  autoStart: false,
+  silentStart: false,
+  trayIconScheme: "default",
+  trayPinnedInstanceId: "",
+  glanceLayout: "list",
+  glanceInstanceScope: "all",
+  glanceInstanceIds: [],
+  glanceShowBalance: true,
+  glanceShowReset: true,
+  glanceShowWindows: false,
+  glanceShowAlerts: true,
+  glanceShowFooter: true,
+  glanceAutoHide: true,
 };
 
 function normalizeSettings(settings: Partial<AppSettings>): AppSettings {
@@ -83,12 +96,13 @@ async function invokeWithRetry<T>(command: string, timeoutMs = 4_000, attempts =
   throw lastError;
 }
 
-/** 实例 patch：字段缺省=不改，threshold null=清除 */
+/** 实例 patch：字段缺省=不改，threshold/balanceThreshold null=清除 */
 export interface InstancePatch {
   note?: string;
   autoRefresh?: boolean;
   pinned?: boolean;
   threshold?: number | null;
+  balanceThreshold?: number | null;
 }
 
 interface AppStore {
@@ -112,7 +126,7 @@ interface AppStore {
     providerId: ProviderKind,
     note: string,
     credentials?: Record<string, string>,
-    options?: { autoRefresh?: boolean; threshold?: number | null },
+    options?: { autoRefresh?: boolean; threshold?: number | null; balanceThreshold?: number | null },
   ) => Promise<ProviderInstance>;
   updateInstance: (id: string, patch: InstancePatch) => Promise<void>;
   removeInstance: (id: string) => Promise<void>;
@@ -318,6 +332,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       credentials: credentials ?? undefined,
       autoRefresh: options?.autoRefresh ?? true,
       threshold: options?.threshold ?? null,
+      balanceThreshold: options?.balanceThreshold ?? null,
     });
     await get().reloadInstances();
     return instance;
@@ -334,6 +349,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
           autoRefresh: patch.autoRefresh !== undefined ? patch.autoRefresh : instance.autoRefresh,
           pinned: patch.pinned !== undefined ? patch.pinned : instance.pinned,
           threshold: patch.threshold !== undefined ? patch.threshold : instance.threshold,
+          balanceThreshold:
+            patch.balanceThreshold !== undefined ? patch.balanceThreshold : instance.balanceThreshold,
         };
       }),
     }));

@@ -38,6 +38,8 @@ pub struct StoredInstance {
     pub pinned: bool,
     pub auto_refresh: bool,
     pub threshold: Option<f64>,
+    /// 余额告警阈值（元，仅 glm 使用）；None=不告警
+    pub balance_threshold: Option<f64>,
     pub created_at: i64,
 }
 
@@ -58,14 +60,15 @@ impl Db {
             );
 
             CREATE TABLE IF NOT EXISTS provider_instances (
-                id           TEXT PRIMARY KEY,
-                provider_id  TEXT NOT NULL,
-                note         TEXT NOT NULL DEFAULT '',
-                sort_order   INTEGER NOT NULL DEFAULT 0,
-                pinned       INTEGER NOT NULL DEFAULT 0,
-                auto_refresh INTEGER NOT NULL DEFAULT 1,
-                threshold    REAL,
-                created_at   INTEGER NOT NULL
+                id                TEXT PRIMARY KEY,
+                provider_id       TEXT NOT NULL,
+                note              TEXT NOT NULL DEFAULT '',
+                sort_order        INTEGER NOT NULL DEFAULT 0,
+                pinned            INTEGER NOT NULL DEFAULT 0,
+                auto_refresh      INTEGER NOT NULL DEFAULT 1,
+                threshold         REAL,
+                balance_threshold REAL,
+                created_at        INTEGER NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS snapshots (
@@ -88,6 +91,7 @@ impl Db {
         .map_err(|error| error.to_string())?;
         let db = Self { conn };
         db.rename_legacy_provider_columns()?;
+        db.ensure_instance_balance_threshold_column()?;
         // 索引依赖列名，必须在改名之后建
         db.conn
             .execute_batch(
@@ -136,6 +140,26 @@ impl Db {
         Ok(())
     }
 
+    /// 余额告警阈值列（ADR-0013）晚于建表语句加入：存量库用 ALTER TABLE 补列，
+    /// 新库建表已含该列，此函数为幂等空操作
+    fn ensure_instance_balance_threshold_column(&self) -> Result<(), String> {
+        let mut statement = self
+            .conn
+            .prepare("PRAGMA table_info(provider_instances)")
+            .map_err(|error| error.to_string())?;
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<String>, _>>()
+            .map_err(|error| error.to_string())?;
+        if !columns.iter().any(|column| column == "balance_threshold") {
+            self.conn
+                .execute_batch("ALTER TABLE provider_instances ADD COLUMN balance_threshold REAL;")
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
     pub fn get_settings(&self) -> Result<Value, String> {
         let default = serde_json::json!({
             "refreshEnabled": true,
@@ -144,7 +168,9 @@ impl Db {
             "quickPanelShortcut": "Alt+KeyU",
             "quickAutoHide": true,
             "resetTimeDisplay": "relative",
-            "interfaceLanguage": "auto"
+            "interfaceLanguage": "auto",
+            "autoStart": false,
+            "silentStart": false
         });
         let row = self
             .conn
@@ -155,7 +181,17 @@ impl Db {
             )
             .ok();
         match row {
-            Some(value) => serde_json::from_str(&value).map_err(|error| error.to_string()),
+            Some(value) => {
+                let mut stored: Value = serde_json::from_str(&value).map_err(|error| error.to_string())?;
+                // 逐键补默认值：旧版本写入的行缺新版本引入的键（如 quickPanelShortcut），
+                // 不补会导致启动注册等后端消费方取不到键而静默失效（前端 UI 因自身合并默认值而看不到差异）
+                if let (Some(stored_obj), Some(default_obj)) = (stored.as_object_mut(), default.as_object()) {
+                    for (key, value) in default_obj {
+                        stored_obj.entry(key.clone()).or_insert(value.clone());
+                    }
+                }
+                Ok(stored)
+            }
             None => Ok(default),
         }
     }
@@ -181,7 +217,7 @@ impl Db {
             .conn
             .prepare(
                 r#"
-                SELECT id, provider_id, note, sort_order, pinned, auto_refresh, threshold, created_at
+                SELECT id, provider_id, note, sort_order, pinned, auto_refresh, threshold, balance_threshold, created_at
                 FROM provider_instances
                 ORDER BY pinned DESC, sort_order ASC, created_at ASC
                 "#,
@@ -197,7 +233,8 @@ impl Db {
                     pinned: row.get::<_, i64>(4)? != 0,
                     auto_refresh: row.get::<_, i64>(5)? != 0,
                     threshold: row.get(6)?,
-                    created_at: row.get(7)?,
+                    balance_threshold: row.get(7)?,
+                    created_at: row.get(8)?,
                 })
             })
             .map_err(|error| error.to_string())?;
@@ -213,7 +250,7 @@ impl Db {
             .conn
             .prepare(
                 r#"
-                SELECT id, provider_id, note, sort_order, pinned, auto_refresh, threshold, created_at
+                SELECT id, provider_id, note, sort_order, pinned, auto_refresh, threshold, balance_threshold, created_at
                 FROM provider_instances WHERE id = ?1
                 "#,
             )
@@ -228,7 +265,8 @@ impl Db {
                     pinned: row.get::<_, i64>(4)? != 0,
                     auto_refresh: row.get::<_, i64>(5)? != 0,
                     threshold: row.get(6)?,
-                    created_at: row.get(7)?,
+                    balance_threshold: row.get(7)?,
+                    created_at: row.get(8)?,
                 })
             })
             .map(|instance| Some(instance))
@@ -251,8 +289,8 @@ impl Db {
                 &format!(
                     r#"
                     INSERT {conflict} INTO provider_instances
-                        (id, provider_id, note, sort_order, pinned, auto_refresh, threshold, created_at)
-                    VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                        (id, provider_id, note, sort_order, pinned, auto_refresh, threshold, balance_threshold, created_at)
+                    VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
                     "#
                 ),
                 rusqlite::params![
@@ -263,6 +301,7 @@ impl Db {
                     instance.pinned as i64,
                     instance.auto_refresh as i64,
                     instance.threshold,
+                    instance.balance_threshold,
                     instance.created_at,
                 ],
             )
@@ -288,6 +327,7 @@ impl Db {
         auto_refresh: Option<bool>,
         pinned: Option<bool>,
         threshold: Option<Option<f64>>,
+        balance_threshold: Option<Option<f64>>,
     ) -> Result<(), String> {
         let current = self
             .get_instance(id)?
@@ -297,7 +337,7 @@ impl Db {
             .execute(
                 r#"
                 UPDATE provider_instances
-                SET note = ?2, auto_refresh = ?3, pinned = ?4, threshold = ?5
+                SET note = ?2, auto_refresh = ?3, pinned = ?4, threshold = ?5, balance_threshold = ?6
                 WHERE id = ?1
                 "#,
                 rusqlite::params![
@@ -306,6 +346,7 @@ impl Db {
                     auto_refresh.unwrap_or(current.auto_refresh) as i64,
                     pinned.unwrap_or(current.pinned) as i64,
                     threshold.unwrap_or(current.threshold),
+                    balance_threshold.unwrap_or(current.balance_threshold),
                 ],
             )
             .map_err(|error| error.to_string())?;
@@ -514,4 +555,73 @@ pub(crate) fn chrono_utc_now() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis() as i64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Db;
+    use serde_json::{json, Value};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_db() -> Db {
+        let dir = std::env::temp_dir().join(format!(
+            "ai-usage-db-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        Db::open(&dir.join("test.db")).unwrap()
+    }
+
+    #[test]
+    fn missing_row_returns_full_defaults() {
+        let db = temp_db();
+        let settings = db.get_settings().unwrap();
+        assert_eq!(settings.get("quickPanelShortcut").and_then(Value::as_str), Some("Alt+KeyU"));
+        assert_eq!(settings.get("autoStart").and_then(Value::as_bool), Some(false));
+        assert_eq!(settings.get("silentStart").and_then(Value::as_bool), Some(false));
+    }
+
+    #[test]
+    fn old_row_missing_new_keys_gets_backfilled() {
+        let db = temp_db();
+        // 0.1.x 时代的行：只有旧键，没有 quickPanelShortcut 及之后引入的键
+        db.save_settings(&json!({
+            "refreshEnabled": true,
+            "refreshIntervalMinutes": 30,
+            "alertsEnabled": true
+        }))
+        .unwrap();
+        let settings = db.get_settings().unwrap();
+        // 缺失键补默认值 → 启动注册等后端消费方能取到默认快捷键
+        assert_eq!(settings.get("quickPanelShortcut").and_then(Value::as_str), Some("Alt+KeyU"));
+        assert_eq!(settings.get("autoStart").and_then(Value::as_bool), Some(false));
+        // 已有键保留用户值，不被默认值覆盖
+        assert_eq!(settings.get("refreshIntervalMinutes").and_then(Value::as_i64), Some(30));
+    }
+
+    #[test]
+    fn explicit_values_are_never_overridden() {
+        let db = temp_db();
+        // 显式空串=用户禁用快捷键；显式 false=用户关闭自启——补默认值不得触碰它们
+        db.save_settings(&json!({
+            "refreshEnabled": false,
+            "refreshIntervalMinutes": 15,
+            "alertsEnabled": false,
+            "quickPanelShortcut": "",
+            "quickAutoHide": false,
+            "resetTimeDisplay": "absolute",
+            "interfaceLanguage": "en",
+            "autoStart": true,
+            "silentStart": true
+        }))
+        .unwrap();
+        let settings = db.get_settings().unwrap();
+        assert_eq!(settings.get("quickPanelShortcut").and_then(Value::as_str), Some(""));
+        assert_eq!(settings.get("autoStart").and_then(Value::as_bool), Some(true));
+        assert_eq!(settings.get("silentStart").and_then(Value::as_bool), Some(true));
+        assert_eq!(settings.get("interfaceLanguage").and_then(Value::as_str), Some("en"));
+    }
 }

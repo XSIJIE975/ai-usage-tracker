@@ -99,7 +99,7 @@ export function NotificationCenterPanel({
         </div>
       </div>
 
-      <div className={cn("overflow-y-auto", inline ? "min-h-0 flex-1" : "max-h-[380px]")}>
+      <div className={cn("no-scrollbar overflow-y-auto", inline ? "min-h-0 flex-1" : "max-h-[380px]")}>
         {!loaded ? (
           <p className="px-4 py-8 text-center text-xs text-fg-muted">{t("加载中…")}</p>
         ) : items.length === 0 ? (

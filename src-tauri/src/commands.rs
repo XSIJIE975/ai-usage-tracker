@@ -236,6 +236,7 @@ pub fn create_instance(
     credentials: Option<Value>,
     auto_refresh: Option<bool>,
     threshold: Option<f64>,
+    balance_threshold: Option<f64>,
 ) -> Result<db::StoredInstance, String> {
     if !instances::PROVIDER_KINDS
         .iter()
@@ -253,6 +254,7 @@ pub fn create_instance(
             pinned: false,
             auto_refresh: auto_refresh.unwrap_or(true),
             threshold,
+            balance_threshold,
             created_at: chrono_utc_now(),
         }
     };
@@ -277,13 +279,16 @@ pub struct InstancePatch {
     /// 三层语义：缺省=不改、null=清除、数值=设置
     #[serde(deserialize_with = "deserialize_double_option")]
     pub threshold: Option<Option<f64>>,
+    #[serde(deserialize_with = "deserialize_double_option")]
+    pub balance_threshold: Option<Option<f64>>,
 }
 
 /// serde 对 Option<Option<T>> 的 null 缺省行为是外层 None；
 /// 显式 null 必须映射为 Some(None) 才能与「字段缺省」区分
-fn deserialize_double_option<'de, D>(deserializer: D) -> Result<Option<Option<f64>>, D::Error>
+fn deserialize_double_option<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
 where
     D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
 {
     Deserialize::deserialize(deserializer).map(Some)
 }
@@ -303,6 +308,7 @@ pub fn update_instance(
             patch.auto_refresh,
             patch.pinned,
             patch.threshold,
+            patch.balance_threshold,
         )?;
     }
     let _ = app.emit("instances-changed", ());
@@ -356,35 +362,6 @@ pub fn delete_instance(app: AppHandle, state: State<'_, AppState>, id: String) -
 }
 
 /// 在默认托盘图标的右下角合成红点徽章，生成告警态托盘图标（无需额外图标资产）
-fn alert_tray_icon(default_icon: &tauri::image::Image<'_>) -> tauri::image::Image<'static> {
-    let mut rgba = default_icon.rgba().to_vec();
-    let width = default_icon.width() as i32;
-    let height = default_icon.height() as i32;
-    let center_x = width - 10;
-    let center_y = height - 10;
-    let radius = 8;
-    for y in (center_y - radius - 1).max(0)..=(center_y + radius + 1).min(height - 1) {
-        for x in (center_x - radius - 1).max(0)..=(center_x + radius + 1).min(width - 1) {
-            let dx = x - center_x;
-            let dy = y - center_y;
-            let dist2 = dx * dx + dy * dy;
-            let index = ((y as usize) * (width as usize) + (x as usize)) * 4;
-            if dist2 <= (radius - 2) * (radius - 2) {
-                rgba[index] = 220;
-                rgba[index + 1] = 38;
-                rgba[index + 2] = 38;
-                rgba[index + 3] = 255;
-            } else if dist2 <= radius * radius {
-                rgba[index] = 255;
-                rgba[index + 1] = 255;
-                rgba[index + 2] = 255;
-                rgba[index + 3] = 255;
-            }
-        }
-    }
-    tauri::image::Image::new_owned(rgba, width as u32, height as u32)
-}
-
 /// 托盘悬停提示文案（zh/en × 常态/告警态）
 pub fn tray_tooltip(language: &str, alert: bool) -> &'static str {
     match (language == "en", alert) {
@@ -402,29 +379,6 @@ pub fn app_title(language: &str) -> &'static str {
     } else {
         "AI 用量助手"
     }
-}
-
-#[tauri::command]
-pub fn set_tray_alert(
-    app: AppHandle,
-    active: bool,
-    language: Option<String>,
-) -> Result<(), String> {
-    let tray = app
-        .tray_by_id("main-tray")
-        .ok_or_else(|| "托盘未初始化".to_string())?;
-    if active {
-        let default_icon = app
-            .default_window_icon()
-            .ok_or_else(|| "缺少默认图标".to_string())?;
-        tray.set_icon(Some(alert_tray_icon(default_icon)))
-            .map_err(|error| error.to_string())?;
-    } else if let Some(icon) = app.default_window_icon().cloned() {
-        tray.set_icon(Some(icon)).map_err(|error| error.to_string())?;
-    }
-    tray.set_tooltip(Some(tray_tooltip(language.as_deref().unwrap_or("zh"), active)))
-        .map_err(|error| error.to_string())?;
-    Ok(())
 }
 
 // ─── 全局快捷键 ───
@@ -564,7 +518,7 @@ pub async fn diagnose_request(
 }
 
 /// 按界面语言重建托盘右键菜单（zh/en）；菜单事件处理在托盘创建时已注册，重建菜单不影响。
-/// 同时刷新托盘悬停提示与两个窗口的标题，使它们跟随界面语言。
+/// 同时记录语言并重放托盘呈现（图标方案 + 动态提示 + macOS 标题），刷新三个窗口的标题。
 #[tauri::command]
 pub fn refresh_tray_menu(app: AppHandle, language: String) -> Result<(), String> {
     let tray = app
@@ -572,10 +526,13 @@ pub fn refresh_tray_menu(app: AppHandle, language: String) -> Result<(), String>
         .ok_or_else(|| "托盘未初始化".to_string())?;
     let menu = crate::build_tray_menu(&app, &language).map_err(|error| error.to_string())?;
     tray.set_menu(Some(menu)).map_err(|error| error.to_string())?;
-    tray.set_tooltip(Some(tray_tooltip(&language, false)))
-        .map_err(|error| error.to_string())?;
+    {
+        let state = app.state::<crate::tray_scheme::TrayState>();
+        *state.language.lock().expect("tray language lock poisoned") = language.clone();
+    }
+    crate::tray_scheme::apply(&app);
     let title = app_title(&language);
-    for label in ["main", "quick"] {
+    for label in ["main", "quick", "glance"] {
         if let Some(window) = app.get_webview_window(label) {
             let _ = window.set_title(title);
         }
@@ -753,6 +710,20 @@ pub fn hide_quick_window(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn hide_glance_window(app: AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("glance") {
+        window.hide().map_err(|error| error.to_string())?;
+        // 记录隐藏时刻：随后到达的托盘单击视为 blur 自动隐藏的同一交互（ADR-0016）
+        let state = app.state::<crate::tray_scheme::TrayState>();
+        *state
+            .glance_hidden_at
+            .lock()
+            .expect("glance hidden lock poisoned") = Some(std::time::Instant::now());
+    }
+    Ok(())
+}
+
+#[tauri::command]
 pub fn toggle_quick_window(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("quick") {
         if window.is_visible().map_err(|error| error.to_string())? {
@@ -813,12 +784,21 @@ mod tests {
     fn instance_patch_deserializes_threshold_semantics() {
         let absent: InstancePatch = serde_json::from_str(r#"{"note":"x"}"#).unwrap();
         assert!(absent.threshold.is_none());
+        assert!(absent.balance_threshold.is_none());
 
         let cleared: InstancePatch = serde_json::from_str(r#"{"threshold":null}"#).unwrap();
         assert_eq!(cleared.threshold, Some(None));
 
         let set: InstancePatch = serde_json::from_str(r#"{"threshold":42}"#).unwrap();
         assert_eq!(set.threshold, Some(Some(42.0)));
+
+        let balance_cleared: InstancePatch =
+            serde_json::from_str(r#"{"balanceThreshold":null}"#).unwrap();
+        assert_eq!(balance_cleared.balance_threshold, Some(None));
+
+        let balance_set: InstancePatch =
+            serde_json::from_str(r#"{"balanceThreshold":5.5}"#).unwrap();
+        assert_eq!(balance_set.balance_threshold, Some(Some(5.5)));
     }
 
     #[test]

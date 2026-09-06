@@ -9,6 +9,8 @@ export interface ProviderInstance {
   autoRefresh: boolean;
   /** DeepSeek=元，其余=已用百分比；null=不告警 */
   threshold: number | null;
+  /** 余额告警阈值（元，低于触发）；仅 glm 使用，null=不告警 */
+  balanceThreshold: number | null;
   createdAt: number;
 }
 
@@ -85,6 +87,32 @@ export interface AppSettings {
   resetTimeDisplay: "relative" | "absolute";
   /** 界面语言：auto 按系统语言检测（中文→中文，否则英文） */
   interfaceLanguage: "auto" | "zh" | "en";
+  /** 开机自启：随系统登录自动运行程序 */
+  autoStart: boolean;
+  /** 静默启动：仅自启路径生效（ADR-0015），关闭自启时复位为关 */
+  silentStart: boolean;
+  /** 托盘图标呈现方案（ADR-0016）：default 默认图标 / usage-ring 环形计量 / usage-bars 条形计量 */
+  trayIconScheme: "default" | "usage-ring" | "usage-bars";
+  /** 计量方案（环/柱）展示的实例；空 = 自动展示最紧实例 */
+  trayPinnedInstanceId: string;
+  /** 速览面板展示形态：list 紧凑行列表 / cards 迷你卡片 */
+  glanceLayout: "list" | "cards";
+  /** 速览面板实例范围：all 全部 / custom 自选（配合 glanceInstanceIds） */
+  glanceInstanceScope: "all" | "custom";
+  /** 自选实例列表（scope 为 custom 时生效） */
+  glanceInstanceIds: string[];
+  /** 速览面板字段：账户余额 */
+  glanceShowBalance: boolean;
+  /** 速览面板字段：重置倒计时 */
+  glanceShowReset: boolean;
+  /** 速览面板字段：多窗口明细（5 小时窗口 + 周配额等） */
+  glanceShowWindows: boolean;
+  /** 速览面板字段：告警标记 */
+  glanceShowAlerts: boolean;
+  /** 速览面板底部操作条（未读通知 + 打开主窗口） */
+  glanceShowFooter: boolean;
+  /** 速览面板失焦自动隐藏 */
+  glanceAutoHide: boolean;
 }
 
 export interface StoredNotification {
