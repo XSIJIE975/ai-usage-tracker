@@ -51,8 +51,9 @@ import { StatsSheet } from "./stats/StatsSheet";
 import { formatClock } from "../lib/utils";
 import { cn } from "../lib/utils";
 import { selectOrderedInstances } from "../lib/instance";
-import type { ProviderInstance, ProviderKind } from "../types/ipc";
+import type { AppSettings, ProviderInstance, ProviderKind } from "../types/ipc";
 import { updateSupported, useUpdateStore } from "../store/useUpdateStore";
+import { useTraySync } from "../hooks/use-tray-sync";
 import { useLanguage, useT } from "../i18n";
 
 type ViewKey = "overview" | "settings";
@@ -327,21 +328,32 @@ export function Dashboard() {
     };
   }, []);
 
+  // 面板窗口也会写设置（如速览面板头部切换展示形态）。主窗口若不订阅此广播，
+  // 自身 settings 过期，下一次保存时会连同旧值一起写回——面板展示形态曾被这样意外改掉
+  useEffect(() => {
+    let disposed = false;
+    let stop: UnlistenFn | undefined;
+    void listen<AppSettings>("settings-changed", (event) => {
+      if (!disposed) useAppStore.setState({ settings: event.payload });
+    })
+      .then((unlisten) => {
+        if (disposed) unlisten();
+        else stop = unlisten;
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+      stop?.();
+    };
+  }, []);
+
   // 界面语言变化 → 重建托盘右键菜单（挂载时执行一次，与启动检测语言对齐）
   useEffect(() => {
     void invoke("refresh_tray_menu", { language }).catch(() => undefined);
   }, [language]);
 
-  // 托盘图标随告警状态切换；语言变化时同步提示文案（去重，避免重复 set）
-  const alertActiveMap = useAlertStore((state) => state.active);
-  const anyAlertActive = Object.values(alertActiveMap).some(Boolean);
-  const trayStateRef = useRef("");
-  useEffect(() => {
-    const key = `${anyAlertActive}|${language}`;
-    if (trayStateRef.current === key) return;
-    trayStateRef.current = key;
-    void invoke("set_tray_alert", { active: anyAlertActive, language }).catch(() => undefined);
-  }, [anyAlertActive, language]);
+  // 托盘呈现同步：图标方案 + 用量环数据 + 动态提示（ADR-0016，替代原 set_tray_alert）
+  useTraySync(instances, snapshots, settings, language);
 
   const draggingInstance = draggingId
     ? ordered.find((instance) => instance.id === draggingId) ?? null

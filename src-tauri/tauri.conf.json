@@ -31,6 +31,17 @@
         "resizable": false,
         "skipTaskbar": true,
         "visible": false
+      },
+      {
+        "label": "glance",
+        "title": "AI 用量助手",
+        "width": 320,
+        "height": 420,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "resizable": false,
+        "skipTaskbar": true,
+        "visible": false
       }
     ],
     "security": {

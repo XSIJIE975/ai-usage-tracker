@@ -1,4 +1,5 @@
 use std::sync::Mutex;
+use std::time::Instant;
 
 use serde_json::Value;
 use tauri::menu::{Menu, MenuItem};
@@ -9,6 +10,7 @@ mod autostart;
 mod commands;
 mod db;
 mod instances;
+mod tray_scheme;
 mod vault;
 
 use db::Db;
@@ -57,6 +59,8 @@ pub fn run() {
                 db: Mutex::new(db),
                 quick_shortcut: Mutex::new(None),
             });
+            // 托盘呈现状态（图标方案/计量快照/语言）独立于 AppState，由 tray_scheme 模块消费
+            app.manage(tray_scheme::TrayState::default());
 
             // 注册设置中配置的快速面板全局快捷键；失败不阻断启动
             let app_state = app.state::<AppState>();
@@ -88,16 +92,26 @@ pub fn run() {
             if let Some(quick) = app.get_webview_window("quick") {
                 quick.hide()?;
             }
+            if let Some(glance) = app.get_webview_window("glance") {
+                glance.hide()?;
+            }
 
             setup_tray(app.handle())?;
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                if window.label() == "main" {
-                    api.prevent_close();
-                    let _ = window.hide();
+            match event {
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    if window.label() == "main" {
+                        api.prevent_close();
+                        let _ = window.hide();
+                    }
                 }
+                // DPI 变化后用量环需按新档位重绘（ADR-0016）
+                tauri::WindowEvent::ScaleFactorChanged { .. } => {
+                    tray_scheme::apply(window.app_handle());
+                }
+                _ => {}
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -115,7 +129,8 @@ pub fn run() {
             commands::delete_instance,
             commands::save_snapshot,
             commands::get_latest_snapshots,
-            commands::set_tray_alert,
+            tray_scheme::set_tray_icon_scheme,
+            tray_scheme::update_tray_meter,
             commands::add_notification,
             commands::list_notifications,
             commands::unread_notification_count,
@@ -126,6 +141,7 @@ pub fn run() {
             commands::open_main_window,
             commands::hide_quick_window,
             commands::toggle_quick_window,
+            commands::hide_glance_window,
             commands::register_quick_shortcut,
             commands::refresh_tray_menu,
             autostart::set_autostart,
@@ -160,13 +176,27 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
+            // 左键单击弹出速览面板（ADR-0016）；快速面板收敛为快捷键与右键菜单唤起
             if let TrayIconEvent::Click {
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,
+                position,
+                rect,
                 ..
             } = event
             {
-                toggle_quick(tray.app_handle());
+                let app = tray.app_handle();
+                let scale = app
+                    .get_webview_window("main")
+                    .and_then(|window| window.scale_factor().ok())
+                    .unwrap_or(1.0);
+                // 光标位置本就是物理像素；图标矩形是 tauri::Position/Size 枚举，需转物理值
+                let icon = rect.position.to_physical(scale);
+                let icon_size = rect.size.to_physical(scale);
+                toggle_glance(
+                    app,
+                    Some((position.x, position.y, icon.x, icon.y, icon_size.width, icon_size.height)),
+                );
             }
         });
 
@@ -197,4 +227,39 @@ pub fn toggle_quick(app: &AppHandle) {
             let _ = window.set_focus();
         }
     }
+}
+
+/// 托盘左键单击：弹出速览面板并锚定到托盘图标旁（ADR-0016）。
+/// 再点一次收起；刚被失焦自动隐藏（300ms 内）时视为同一交互，不重新弹出——
+/// 面板失焦（光标在托盘上）与本次托盘单击是先后到达的两个事件，不挡会表现为「点了收不起来」。
+pub fn toggle_glance(app: &AppHandle, anchor: Option<(f64, f64, f64, f64, f64, f64)>) {
+    let Some(window) = app.get_webview_window("glance") else {
+        return;
+    };
+    let state = app.state::<tray_scheme::TrayState>();
+    if window.is_visible().unwrap_or(false) {
+        let _ = window.hide();
+        record_glance_hidden(app);
+        return;
+    }
+    if let Some(hidden_at) = *state.glance_hidden_at.lock().expect("glance hidden lock poisoned") {
+        if hidden_at.elapsed() < tray_scheme::GLANCE_RESHOW_GUARD {
+            return;
+        }
+    }
+    if let Some((cursor_x, cursor_y, icon_x, icon_y, icon_w, icon_h)) = anchor {
+        if let Some(position) =
+            tray_scheme::anchor_position(&window, (cursor_x, cursor_y), (icon_x, icon_y, icon_w, icon_h))
+        {
+            let _ = window.set_position(position);
+        }
+    }
+    let _ = window.show();
+    let _ = window.emit("glance-shown", ());
+    let _ = window.set_focus();
+}
+
+fn record_glance_hidden(app: &AppHandle) {
+    let state = app.state::<tray_scheme::TrayState>();
+    *state.glance_hidden_at.lock().expect("glance hidden lock poisoned") = Some(Instant::now());
 }

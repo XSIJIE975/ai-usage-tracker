@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useFitWindowHeight } from "../hooks/use-fit-window-height";
+import { usePanelAutoRefresh, usePanelWindow } from "../hooks/use-panel-window";
 import { Bell, Gauge, LoaderCircle, Lock, RefreshCw, Timer, TriangleAlert, X } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import { useAlertStore } from "../store/useAlertStore";
@@ -15,8 +15,6 @@ import { NotificationCenterPanel } from "./NotificationCenterPanel";
 import { cn, formatClock } from "../lib/utils";
 import { selectOrderedInstances } from "../lib/instance";
 import { useT } from "../i18n";
-import { applyTheme } from "../lib/theme";
-import type { AppSettings } from "../types/ipc";
 
 /** 下次自动刷新倒计时（mm:ss）；自动刷新关闭或尚无基准时间时返回 null */
 function useNextRefreshCountdown(): string | null {
@@ -42,10 +40,6 @@ export function QuickWindow() {
     vaultStatus,
     instances,
     snapshots,
-    settings,
-    initialLoaded,
-    lastRefreshedAt,
-    loadInitial,
     refreshAll,
     refreshInstance,
     refreshingInstances,
@@ -54,172 +48,36 @@ export function QuickWindow() {
   const unread = useNotificationStore(selectUnreadCount);
   const alertActiveMap = useAlertStore((state) => state.active);
   const countdown = useNextRefreshCountdown();
-  const [ready, setReady] = useState(false);
   const [noticeOpen, setNoticeOpen] = useState(false);
-  // quick 窗口启动即隐藏（tauri.conf.json visible=false），由 quick-shown 唤醒。
-  // 自动刷新定时器只在面板可见时调度，避免与主窗口对同一批实例双倍抓取
-  const [panelVisible, setPanelVisible] = useState(false);
   // 标题栏自管拖动：记录拖动起手时刻。拖动循环会先失焦再回焦，
   // 回焦若无条件刷新，表现为「每次拖完面板自动刷新倒计时就被重置」
   const dragStartedAtRef = useRef(0);
   const t = useT();
 
-  const syncFromBackend = useCallback(async () => {
-    await loadInitial();
-    void useNotificationStore.getState().load();
-    if (useAppStore.getState().vaultStatus?.unlocked) {
-      await refreshAll();
-    }
-  }, [loadInitial, refreshAll]);
-
-  useEffect(() => {
-    let disposed = false;
-    const unlisteners: UnlistenFn[] = [];
-
-    void (async () => {
-      await syncFromBackend();
-      if (disposed) return;
-      setReady(true);
-
-      const window = getCurrentWindow();
-      const unlistenFocus = await window.onFocusChanged(({ payload: focused }) => {
-        if (focused) {
-          // 拖动结束的回焦不算「用户回来看数据」：起手后 10 秒内的回焦直接跳过
-          if (dragStartedAtRef.current > 0 && Date.now() - dragStartedAtRef.current < 10_000) {
-            return;
-          }
-          dragStartedAtRef.current = 0;
-          void syncFromBackend();
-          return;
-        }
-        // 失焦自动隐藏：仅当鼠标光标确实在窗口外时才收起。
-        // 点击标题栏拖动窗口时 Windows 会触发失焦（进入系统拖动循环），
-        // 此时光标仍在窗口内，不能隐藏——否则表现为"一点标题栏窗口就消失、无法拖动"。
-        if (!useAppStore.getState().settings.quickAutoHide) return;
-        void (async () => {
-          try {
-            const [cursor, position, size] = await Promise.all([
-              cursorPosition(),
-              window.outerPosition(),
-              window.outerSize(),
-            ]);
-            const inside =
-              cursor.x >= position.x &&
-              cursor.x <= position.x + size.width &&
-              cursor.y >= position.y &&
-              cursor.y <= position.y + size.height;
-            if (!inside) {
-              setPanelVisible(false);
-              await invoke("hide_quick_window");
-            }
-          } catch {
-            // 查询失败时保守处理：不隐藏
-          }
-        })();
-      });
-      const unlistenVault = await listen("vault-status-changed", () => void syncFromBackend());
-      const unlistenCredentials = await listen("credentials-changed", () => void syncFromBackend());
-      const unlistenQuickShown = await listen("quick-shown", () => {
-        // 兜底：每次显示前重读主题，防止错过广播事件
-        applyTheme();
-        setPanelVisible(true);
-        void syncFromBackend();
-      });
-      // 主窗口（或本窗口）刷新完成时同步倒计时基准，两边窗口的自动刷新节奏保持一致
-      const unlistenRefreshed = await listen<{ refreshedAt: number }>("refresh-completed", (event) => {
-        useAppStore.setState((state) => ({
-          lastRefreshedAt: Math.max(state.lastRefreshedAt, event.payload.refreshedAt),
-        }));
-      });
-      // 主窗口保存设置（界面语言、自动刷新等）时实时同步到本窗口，无需等聚焦重载
-      const unlistenSettings = await listen<AppSettings>("settings-changed", (event) => {
-        useAppStore.setState({ settings: event.payload });
-      });
-      // 主窗口增删/排序实例时重载（高度随后自然跟随）
-      const unlistenInstances = await listen("instances-changed", () => {
-        if (!disposed) void syncFromBackend();
-      });
-      // 主窗口上下文刷新产生的告警态变化同步到本窗口
-      const unlistenAlert = await listen<{ instanceId: string; active: boolean }>(
-        "alert-state-changed",
-        (event) => {
-          useAlertStore.setState((state) => ({
-            active: { ...state.active, [event.payload.instanceId]: event.payload.active },
-          }));
-        },
-      );
-
-      if (disposed) {
-        unlistenFocus();
-        unlistenVault();
-        unlistenCredentials();
-        unlistenQuickShown();
-        unlistenAlert();
-        unlistenSettings();
-        unlistenInstances();
-        unlistenRefreshed();
-        return;
+  // 公共面板基建：数据同步、quick-shown 唤起、失焦自动隐藏、跨窗口事件、Esc
+  const { ready, panelVisible, hideWindow } = usePanelWindow({
+    shownEvent: "quick-shown",
+    hideCommand: "hide_quick_window",
+    autoHideKey: "quickAutoHide",
+    // 拖动结束的回焦不算「用户回来看数据」：起手后 10 秒内的回焦直接跳过
+    onFocusGained: () => {
+      if (dragStartedAtRef.current > 0 && Date.now() - dragStartedAtRef.current < 10_000) {
+        return false;
       }
-
-      unlisteners.push(unlistenFocus, unlistenVault, unlistenCredentials, unlistenQuickShown, unlistenAlert, unlistenSettings, unlistenInstances, unlistenRefreshed);
-    })();
-
-    return () => {
-      disposed = true;
-      for (const unlisten of unlisteners) unlisten();
-    };
-  }, [syncFromBackend]);
-
-  // 自动刷新调度：与主窗口 Dashboard 同款——以 lastRefreshedAt 为基准排单次定时器，
-  // 刷新完成后 lastRefreshedAt 更新，effect 随之重排下一轮。仅面板可见时调度，
-  // 隐藏期间不抓取（再次呼出时 quick-shown → syncFromBackend 兜底刷新）
-  useEffect(() => {
-    if (!panelVisible) return;
-    if (!vaultStatus?.unlocked) return;
-    if (!initialLoaded) return;
-    // 首轮数据由 quick-shown 的 syncFromBackend 拉取，这里只负责后续周期
-    if (lastRefreshedAt === 0) return;
-    if (!settings.refreshEnabled || settings.refreshIntervalMinutes <= 0) return;
-    if (!instances.some((instance) => instance.autoRefresh)) return;
-
-    const elapsed = Date.now() - lastRefreshedAt;
-    const delay = Math.max(0, settings.refreshIntervalMinutes * 60_000 - elapsed);
-    const timer = window.setTimeout(() => {
-      void refreshAll({ auto: true });
-    }, delay);
-    return () => window.clearTimeout(timer);
-  }, [
-    panelVisible,
-    vaultStatus?.unlocked,
-    initialLoaded,
-    lastRefreshedAt,
-    settings.refreshEnabled,
-    settings.refreshIntervalMinutes,
-    instances,
-    refreshAll,
-  ]);
-
-  // Esc：通知面板打开时先关面板，否则收起整个窗口
-  useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      if (noticeOpen) setNoticeOpen(false);
-      else {
-        setPanelVisible(false);
-        void invoke("hide_quick_window").catch(() => undefined);
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [noticeOpen]);
+      dragStartedAtRef.current = 0;
+      return true;
+    },
+    // 通知面板打开时先关面板
+    onEscape: () => {
+      if (!noticeOpen) return false;
+      setNoticeOpen(false);
+      return true;
+    },
+  });
+  usePanelAutoRefresh(panelVisible);
 
   async function openMain() {
     await invoke("open_main_window");
-  }
-
-  async function hideQuick() {
-    setPanelVisible(false);
-    await invoke("hide_quick_window");
   }
 
   const anyProviderRefreshing = Object.values(refreshingInstances).some(Boolean);
@@ -244,7 +102,7 @@ export function QuickWindow() {
   function handleHeaderDoubleClick(event: React.MouseEvent<HTMLElement>) {
     if ((event.target as HTMLElement).closest("button")) return;
     // 双击即「去主窗口操作」：主窗口起来后收起面板（光标在面板内，失焦自动隐藏不会触发）
-    void openMain().then(() => hideQuick());
+    void openMain().then(() => hideWindow());
   }
 
   return (
@@ -289,7 +147,7 @@ export function QuickWindow() {
           <IconButton onClick={openMain} title={t("打开主窗口")} aria-label={t("打开主窗口")}>
             <Gauge className="h-3.5 w-3.5" />
           </IconButton>
-          <IconButton onClick={hideQuick} title={t("隐藏")} aria-label={t("隐藏")}>
+          <IconButton onClick={() => void hideWindow()} title={t("隐藏")} aria-label={t("隐藏")}>
             <X className="h-3.5 w-3.5" />
           </IconButton>
         </div>
@@ -315,7 +173,7 @@ export function QuickWindow() {
         </span>
       </div>
 
-      <main className="flex-1 overflow-y-auto bg-canvas p-3">
+      <main className="no-scrollbar min-h-0 flex-1 overflow-y-auto bg-canvas p-3">
         {/* 高度测量的参照物：包裹层的自然高度不受视口钳制，内容超出上限时 main 内部滚动 */}
         <div ref={contentRef}>
           {!ready ? (

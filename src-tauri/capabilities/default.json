@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capability for all application windows",
-  "windows": ["main", "quick"],
+  "description": "Default capability for all application windows. Glob on purpose: 新增窗口自动获得事件与窗口 API 权限，不要回退成逐个列举（漏列的窗口会静默失去全部事件监听，速览面板配置不同步即此因）",
+  "windows": ["*"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
@@ -10,6 +10,7 @@
     "core:window:allow-hide",
     "core:window:allow-set-focus",
     "core:window:allow-set-size",
+    "core:window:allow-set-position",
     "core:window:allow-unminimize",
     "opener:default",
     "notification:default",
