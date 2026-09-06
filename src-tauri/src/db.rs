@@ -168,7 +168,9 @@ impl Db {
             "quickPanelShortcut": "Alt+KeyU",
             "quickAutoHide": true,
             "resetTimeDisplay": "relative",
-            "interfaceLanguage": "auto"
+            "interfaceLanguage": "auto",
+            "autoStart": false,
+            "silentStart": false
         });
         let row = self
             .conn
@@ -179,7 +181,17 @@ impl Db {
             )
             .ok();
         match row {
-            Some(value) => serde_json::from_str(&value).map_err(|error| error.to_string()),
+            Some(value) => {
+                let mut stored: Value = serde_json::from_str(&value).map_err(|error| error.to_string())?;
+                // 逐键补默认值：旧版本写入的行缺新版本引入的键（如 quickPanelShortcut），
+                // 不补会导致启动注册等后端消费方取不到键而静默失效（前端 UI 因自身合并默认值而看不到差异）
+                if let (Some(stored_obj), Some(default_obj)) = (stored.as_object_mut(), default.as_object()) {
+                    for (key, value) in default_obj {
+                        stored_obj.entry(key.clone()).or_insert(value.clone());
+                    }
+                }
+                Ok(stored)
+            }
             None => Ok(default),
         }
     }
@@ -543,4 +555,73 @@ pub(crate) fn chrono_utc_now() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis() as i64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Db;
+    use serde_json::{json, Value};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_db() -> Db {
+        let dir = std::env::temp_dir().join(format!(
+            "ai-usage-db-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        Db::open(&dir.join("test.db")).unwrap()
+    }
+
+    #[test]
+    fn missing_row_returns_full_defaults() {
+        let db = temp_db();
+        let settings = db.get_settings().unwrap();
+        assert_eq!(settings.get("quickPanelShortcut").and_then(Value::as_str), Some("Alt+KeyU"));
+        assert_eq!(settings.get("autoStart").and_then(Value::as_bool), Some(false));
+        assert_eq!(settings.get("silentStart").and_then(Value::as_bool), Some(false));
+    }
+
+    #[test]
+    fn old_row_missing_new_keys_gets_backfilled() {
+        let db = temp_db();
+        // 0.1.x 时代的行：只有旧键，没有 quickPanelShortcut 及之后引入的键
+        db.save_settings(&json!({
+            "refreshEnabled": true,
+            "refreshIntervalMinutes": 30,
+            "alertsEnabled": true
+        }))
+        .unwrap();
+        let settings = db.get_settings().unwrap();
+        // 缺失键补默认值 → 启动注册等后端消费方能取到默认快捷键
+        assert_eq!(settings.get("quickPanelShortcut").and_then(Value::as_str), Some("Alt+KeyU"));
+        assert_eq!(settings.get("autoStart").and_then(Value::as_bool), Some(false));
+        // 已有键保留用户值，不被默认值覆盖
+        assert_eq!(settings.get("refreshIntervalMinutes").and_then(Value::as_i64), Some(30));
+    }
+
+    #[test]
+    fn explicit_values_are_never_overridden() {
+        let db = temp_db();
+        // 显式空串=用户禁用快捷键；显式 false=用户关闭自启——补默认值不得触碰它们
+        db.save_settings(&json!({
+            "refreshEnabled": false,
+            "refreshIntervalMinutes": 15,
+            "alertsEnabled": false,
+            "quickPanelShortcut": "",
+            "quickAutoHide": false,
+            "resetTimeDisplay": "absolute",
+            "interfaceLanguage": "en",
+            "autoStart": true,
+            "silentStart": true
+        }))
+        .unwrap();
+        let settings = db.get_settings().unwrap();
+        assert_eq!(settings.get("quickPanelShortcut").and_then(Value::as_str), Some(""));
+        assert_eq!(settings.get("autoStart").and_then(Value::as_bool), Some(true));
+        assert_eq!(settings.get("silentStart").and_then(Value::as_bool), Some(true));
+        assert_eq!(settings.get("interfaceLanguage").and_then(Value::as_str), Some("en"));
+    }
 }
