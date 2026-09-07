@@ -21,7 +21,7 @@ export interface TrayMeterWindow {
 export interface TrayMeterCandidate {
   instance: ProviderInstance;
   providerName: string;
-  /** 全部配额窗口，按重置时间近→远排序（柱的上→下渲染顺序） */
+  /** 全部配额窗口，按重置时间近→远排序（柱的上→下渲染顺序）；缺失 resetsAt 的排在后段、保持快照相对顺序 */
   windows: TrayMeterWindow[];
   /** 最紧窗口已用百分比（全部窗口的最大值）：环/macOS 数字展示它，也是自动排序主键 */
   percent: number;
@@ -37,6 +37,22 @@ function resetTimestamp(resetsAt: string | null): number {
   if (!resetsAt) return Number.POSITIVE_INFINITY;
   const timestamp = Date.parse(resetsAt);
   return Number.isNaN(timestamp) ? Number.POSITIVE_INFINITY : timestamp;
+}
+
+/**
+ * 窗口显示顺序（ADR-0016）：带 resetsAt 的窗口按重置近→远排前；
+ * 缺失 resetsAt 的窗口（GLM 动态滚动窗 nextResetTime 常缺）保底排在其后，
+ * 彼此依赖稳定排序保持快照相对顺序——不沿用「无重置时刻 = 最紧急」的猜测。
+ */
+function compareWindowReset(a: TrayMeterWindow, b: TrayMeterWindow): number {
+  const ta = resetTimestamp(a.resetsAt);
+  const tb = resetTimestamp(b.resetsAt);
+  const knownA = Number.isFinite(ta);
+  const knownB = Number.isFinite(tb);
+  if (knownA && knownB) return ta - tb;
+  if (knownA) return -1;
+  if (knownB) return 1;
+  return 0;
 }
 
 /** 参与托盘计量的候选：刷新成功且至少一条有效配额窗口行。
@@ -61,7 +77,7 @@ export function buildTrayCandidates(
           label: applyParams(translate(line.label), line.params),
           resetsAt: line.resetsAt ?? null,
         }))
-        .sort((a, b) => resetTimestamp(a.resetsAt) - resetTimestamp(b.resetsAt));
+        .sort(compareWindowReset);
       if (windows.length === 0) return null;
       const percent = Math.max(...windows.map((window) => window.percent));
       const tightestWindow = windows.find((window) => window.percent === percent) ?? windows[0];

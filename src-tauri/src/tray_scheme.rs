@@ -8,7 +8,9 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use tauri::Manager;
-use tiny_skia::{Color, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Shader, Stroke, Transform};
+use tiny_skia::{
+    Color, FillRule, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Shader, Stroke, Transform,
+};
 
 use crate::commands::tray_tooltip;
 
@@ -264,17 +266,24 @@ fn draw_usage_bars(
         if fraction > f64::EPSILON {
             let core = (bar_length - bar_height) * fraction as f32;
             let (r, g, b) = meter_color(alert);
-            let path = if core < 1.0 {
-                PathBuilder::from_circle(left + cap_radius, center_y, cap_radius)?
+            let paint = color(r, g, b, 1.0)?;
+            // 退化圆点必须「填充」而不是「描边」：对半径为 cap_radius 的圆路径施以
+            // width=bar_height 的描边，外半径会变成 cap_radius + bar_height/2 = bar_height，
+            // 即直径 2×条厚的胖圆点（比轨道高一倍，还会把上下两条连成一坨）。此处按条厚填充。
+            if core < 1.0 {
+                fill_path(
+                    &mut pixmap,
+                    &PathBuilder::from_circle(left + cap_radius, center_y, cap_radius)?,
+                    paint,
+                );
             } else {
-                line_path(
-                    left + cap_radius,
-                    center_y,
-                    left + cap_radius + core,
-                    center_y,
-                )?
-            };
-            stroke_path(&mut pixmap, &path, color(r, g, b, 1.0)?, bar_height);
+                stroke_path(
+                    &mut pixmap,
+                    &line_path(left + cap_radius, center_y, left + cap_radius + core, center_y)?,
+                    paint,
+                    bar_height,
+                );
+            }
         }
         center_y += bar_height + gap;
     }
@@ -296,6 +305,19 @@ fn color(r: u8, g: u8, b: u8, a: f32) -> Option<Color> {
         b as f32 / 255.0,
         a,
     )
+}
+
+fn fill_path(pixmap: &mut Pixmap, path: &tiny_skia::Path, paint_color: Color) {
+    let mut paint = Paint::default();
+    paint.anti_alias = true;
+    paint.shader = Shader::SolidColor(paint_color);
+    pixmap.fill_path(
+        path,
+        &paint,
+        FillRule::Winding,
+        Transform::identity(),
+        None,
+    );
 }
 
 fn stroke_path(pixmap: &mut Pixmap, path: &tiny_skia::Path, paint_color: Color, width: f32) {
@@ -430,4 +452,254 @@ pub fn update_tray_meter(
     }
     apply(&app);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 复算 draw_usage_bars 的几何参数，避免测试里重复写魔数
+    fn bar_metrics(size: u32) -> (f32, f32) {
+        let s = size as f32;
+        ((s * 0.20).max(2.0), s * 0.68)
+    }
+
+    /// 不透明计量色像素所在的连续行区段（闭区间），自左向右扫描时按行聚合
+    fn fill_row_bands(image: &tauri::image::Image<'static>) -> Vec<(u32, u32)> {
+        let (w, h) = (image.width(), image.height());
+        let rgba = image.rgba();
+        let (r, g, b) = meter_color(false);
+        let mut bands = Vec::new();
+        let mut start: Option<u32> = None;
+        for y in 0..h {
+            let mut hit = false;
+            for x in 0..w {
+                let i = ((y * w + x) * 4) as usize;
+                if rgba[i + 3] < 250 {
+                    continue;
+                }
+                if rgba[i].abs_diff(r) <= 8 && rgba[i + 1].abs_diff(g) <= 8 && rgba[i + 2].abs_diff(b) <= 8 {
+                    hit = true;
+                    break;
+                }
+            }
+            match (start, hit) {
+                (None, true) => start = Some(y),
+                (Some(from), false) => {
+                    bands.push((from, y - 1));
+                    start = None;
+                }
+                _ => {}
+            }
+        }
+        if let Some(from) = start {
+            bands.push((from, h - 1));
+        }
+        bands
+    }
+
+    /// 不透明计量色像素的横向跨度（None = 没有填充）
+    fn fill_column_span(image: &tauri::image::Image<'static>) -> Option<(u32, u32)> {
+        let (w, h) = (image.width(), image.height());
+        let rgba = image.rgba();
+        let (r, g, b) = meter_color(false);
+        let mut min = None::<u32>;
+        let mut max = None::<u32>;
+        for y in 0..h {
+            for x in 0..w {
+                let i = ((y * w + x) * 4) as usize;
+                if rgba[i + 3] < 250 {
+                    continue;
+                }
+                if rgba[i].abs_diff(r) <= 8 && rgba[i + 1].abs_diff(g) <= 8 && rgba[i + 2].abs_diff(b) <= 8 {
+                    min = Some(min.map_or(x, |v: u32| v.min(x)));
+                    max = Some(max.map_or(x, |v: u32| v.max(x)));
+                }
+            }
+        }
+        match (min, max) {
+            (Some(lo), Some(hi)) => Some((lo, hi)),
+            _ => None,
+        }
+    }
+
+    /// 回归用例：core < 1px 的退化分支曾经用「描边圆」画左端点，得到直径 2×条厚的胖圆点。
+    /// 各尺寸档 × 低百分比下，填充的竖向厚度都不得超过条厚（抗锯齿留 2px 余量）。
+    #[test]
+    fn low_percent_fill_keeps_bar_thickness() {
+        for size in [16u32, 20, 24, 32] {
+            let (bar_height, _) = bar_metrics(size);
+            for percent in [0.5f64, 1.0, 2.0, 4.0, 8.0, 9.0, 20.0, 60.0, 100.0] {
+                let image = draw_usage_bars(size, percent, None, false)
+                    .unwrap_or_else(|| panic!("size={size} percent={percent} 渲染失败"));
+                let bands = fill_row_bands(&image);
+                assert_eq!(bands.len(), 1, "size={size} percent={percent} 应只有一条填充");
+                let thickness = (bands[0].1 - bands[0].0 + 1) as f32;
+                assert!(
+                    thickness <= bar_height + 2.0,
+                    "size={size} percent={percent}：填充厚度 {thickness} 超过条厚 {bar_height}",
+                );
+            }
+        }
+    }
+
+    /// 双条同粗：上条（低进度）与下条（满格）的厚度必须一致
+    #[test]
+    fn two_bars_share_same_thickness() {
+        for size in [16u32, 20, 24, 32] {
+            let image = draw_usage_bars(size, 3.0, Some(100.0), false)
+                .unwrap_or_else(|| panic!("size={size} 渲染失败"));
+            let bands = fill_row_bands(&image);
+            assert_eq!(bands.len(), 2, "size={size} 应有上下两条填充，实际 {bands:?}");
+            let top = bands[0].1 - bands[0].0 + 1;
+            let bottom = bands[1].1 - bands[1].0 + 1;
+            assert!(
+                top.abs_diff(bottom) <= 2,
+                "size={size}：上条厚度 {top} 与下条厚度 {bottom} 不一致",
+            );
+        }
+    }
+
+    /// 满格时填充横向铺满整条胶囊（含两端圆头）
+    #[test]
+    fn full_bar_spans_bar_length() {
+        for size in [16u32, 20, 24, 32] {
+            let (_, bar_length) = bar_metrics(size);
+            let image = draw_usage_bars(size, 100.0, None, false)
+                .unwrap_or_else(|| panic!("size={size} 渲染失败"));
+            let (lo, hi) = fill_column_span(&image).expect("满格应有填充");
+            let span = (hi - lo + 1) as f32;
+            assert!(
+                (span - bar_length).abs() <= 2.0,
+                "size={size}：填充跨度 {span} 与条长 {bar_length} 不符",
+            );
+        }
+    }
+
+    /// 0% 不画填充，只留轨道
+    #[test]
+    fn zero_percent_draws_no_fill() {
+        let image = draw_usage_bars(24, 0.0, None, false).expect("渲染失败");
+        assert!(fill_row_bands(&image).is_empty(), "0% 不应有填充像素");
+    }
+
+    /// 复刻修复前的退化分支（core < 1px 时对圆路径做 width=bar_height 的描边），
+    /// 仅用于人工对比预览，几何与 draw_usage_bars 保持一致；改几何时需同步。
+    fn draw_usage_bars_old_bug(size: u32, top: f64, bottom: Option<f64>, alert: bool) -> Option<Pixmap> {
+        let mut pixmap = Pixmap::new(size, size)?;
+        let s = size as f32;
+        let bar_height = (s * 0.20).max(2.0);
+        let bar_length = s * 0.68;
+        let gap = s * 0.14;
+        let left = (s - bar_length) / 2.0;
+        let right = left + bar_length;
+        let cap_radius = bar_height / 2.0;
+
+        let percents: Vec<f64> = match bottom {
+            Some(value) => vec![top, value],
+            None => vec![top],
+        };
+        let total_height = bar_height * percents.len() as f32 + gap * (percents.len() as f32 - 1.0);
+        let mut center_y = (s - total_height) / 2.0 + cap_radius;
+
+        for percent in percents {
+            let track = line_path(left + cap_radius, center_y, right - cap_radius, center_y)?;
+            stroke_path(
+                &mut pixmap,
+                &track,
+                color(
+                    RING_COLOR_TRACK.0,
+                    RING_COLOR_TRACK.1,
+                    RING_COLOR_TRACK.2,
+                    RING_COLOR_TRACK.3,
+                )?,
+                bar_height,
+            );
+
+            let fraction = (percent / 100.0).clamp(0.0, 1.0);
+            if fraction > f64::EPSILON {
+                let core = (bar_length - bar_height) * fraction as f32;
+                let (r, g, b) = meter_color(alert);
+                let paint = color(r, g, b, 1.0)?;
+                if core < 1.0 {
+                    // 修复前：描边圆 → 外半径 cap_radius + bar_height/2 = bar_height，胖圆点
+                    stroke_path(
+                        &mut pixmap,
+                        &PathBuilder::from_circle(left + cap_radius, center_y, cap_radius)?,
+                        paint,
+                        bar_height,
+                    );
+                } else {
+                    stroke_path(
+                        &mut pixmap,
+                        &line_path(left + cap_radius, center_y, left + cap_radius + core, center_y)?,
+                        paint,
+                        bar_height,
+                    );
+                }
+            }
+            center_y += bar_height + gap;
+        }
+        Some(pixmap)
+    }
+
+    /// 最近邻放大（托盘原图只有 16~32px，直接看不清）
+    fn upscale_png(pixmap: &Pixmap, factor: u32) -> Pixmap {
+        let mut out =
+            Pixmap::new(pixmap.width() * factor, pixmap.height() * factor).expect("放大画布创建失败");
+        let out_width = out.width();
+        for y in 0..pixmap.height() {
+            for x in 0..pixmap.width() {
+                let Some(px) = pixmap.pixel(x, y) else { continue };
+                for dy in 0..factor {
+                    for dx in 0..factor {
+                        out.pixels_mut()
+                            [((y * factor + dy) * out_width + x * factor + dx) as usize] = px;
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// 手工预览工具：把「修复前 vs 修复后」的用量柱渲染成放大 PNG。
+    /// 运行：cargo test dump_tray_preview_pngs -- --ignored --nocapture
+    /// 输出：<仓库根>/.workbuddy/tmp/tray-preview/
+    #[test]
+    #[ignore = "人工预览用：cargo test dump_tray_preview_pngs -- --ignored"]
+    fn dump_tray_preview_pngs() {
+        use std::path::Path;
+        use tiny_skia::IntSize;
+
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("无父目录")
+            .join(".workbuddy/tmp/tray-preview");
+        std::fs::create_dir_all(&root).expect("创建输出目录失败");
+
+        // 模拟数据场景：top=上条（重置较近窗），bottom=下条（主指标）
+        let cases: &[(&str, u32, f64, Option<f64>)] = &[
+            ("24px_top4_bottom100", 24, 4.0, Some(100.0)), // 截图同款：5h≈4% + 周窗满
+            ("24px_top9_bottom100", 24, 9.0, Some(100.0)), // 用户实测 9% 自愈档
+            ("24px_top05_bottom60", 24, 0.5, Some(60.0)),  // 极低进度
+            ("16px_top4_bottom100", 16, 4.0, Some(100.0)), // 最小尺寸档（旧版上下连体）
+            ("32px_top4_bottom100", 32, 4.0, Some(100.0)), // 200% DPI 档
+        ];
+        for (name, size, top, bottom) in cases {
+            let after = draw_usage_bars(*size, *top, *bottom, false).expect("渲染失败");
+            let after_pixmap = Pixmap::from_vec(
+                after.rgba().to_vec(),
+                IntSize::from_wh(after.width(), after.height()).expect("尺寸非法"),
+            )
+            .expect("转 Pixmap 失败");
+            upscale_png(&after_pixmap, 8)
+                .save_png(root.join(format!("{name}_after.png")))
+                .expect("保存 after PNG 失败");
+            if let Some(old) = draw_usage_bars_old_bug(*size, *top, *bottom, false) {
+                upscale_png(&old, 8)
+                    .save_png(root.join(format!("{name}_before.png")))
+                    .expect("保存 before PNG 失败");
+            }
+        }
+    }
 }
