@@ -9,10 +9,12 @@ import type {
 } from "../types/ipc";
 import type { ProviderModule } from "./types";
 
-const WINDOWS: Record<string, { label: string }> = {
-  rolling: { label: "5 小时额度" },
-  weekly: { label: "本周额度" },
-  monthly: { label: "本月额度" },
+// 窗口周期（ADR-0017 层序键）：rolling=5 小时、weekly=7 天、monthly=30 天。
+// 月取 30 天为约定近似——层序只需量级序（小时 ≪ 周 ≪ 月），不影响排序结果
+const WINDOWS: Record<string, { label: string; periodMs: number }> = {
+  rolling: { label: "5 小时额度", periodMs: 5 * 3_600_000 },
+  weekly: { label: "本周额度", periodMs: 7 * 86_400_000 },
+  monthly: { label: "本月额度", periodMs: 30 * 86_400_000 },
 };
 
 interface ScrapedWindow {
@@ -102,6 +104,7 @@ function buildLines(windows: Partial<Record<string, ScrapedWindow>>, updatedAt: 
       type: "progress",
       label: config.label,
       percentUsed: usedPercent,
+      windowPeriodMs: config.periodMs,
       resetsAt: new Date(updatedAt + window.resetInSec * 1000).toISOString(),
     });
   }

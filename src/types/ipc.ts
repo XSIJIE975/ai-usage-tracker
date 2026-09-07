@@ -52,6 +52,9 @@ export interface MetricLine {
   suffix?: string;
   percentUsed?: number;
   resetsAt?: string;
+  /** 结构化窗口周期时长（毫秒，如 5h/周/月）；解析时已知，供环层序按周期短→长排位（ADR-0017）。
+      与 resetsAt（下一重置时刻）是两个口径；缺失 = 周期未知，层序回退快照顺序 */
+  windowPeriodMs?: number;
   color?: string;
 }
 

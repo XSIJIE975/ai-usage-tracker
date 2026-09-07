@@ -26,12 +26,18 @@ function instance(id = "glm"): ProviderInstance {
   };
 }
 
-function progress(label: string, percentUsed: number, resetsAt?: string) {
+function progress(
+  label: string,
+  percentUsed: number,
+  resetsAt?: string,
+  windowPeriodMs?: number,
+) {
   return {
     type: "progress" as const,
     label,
     percentUsed,
     ...(resetsAt ? { resetsAt } : {}),
+    ...(windowPeriodMs != null ? { windowPeriodMs } : {}),
   };
 }
 
@@ -82,5 +88,62 @@ describe("buildTrayCandidates 窗口排序（ADR-0016）", () => {
     const candidate = build([first, second]);
     expect(candidate.windows.map((w) => w.label)).toEqual(["第一窗", "第二窗"]);
     expect(candidate.barWindows.map((w) => w.label)).toEqual(["第一窗", "第二窗"]);
+  });
+});
+
+describe("ringWindows 环层序（ADR-0017：周期短→长，取最紧三扇）", () => {
+  const HOUR_MS = 3_600_000;
+  const DAY_MS = 86_400_000;
+
+  it("三窗按周期短→长排层位（外=5h 短窗、内=月长窗），resetsAt 缺失与快照顺序均不影响层序", () => {
+    // GLM 5h 滚动窗：无 nextResetTime（resetsAt 缺失），快照中排第一
+    const fiveHour = progress("{hours} 小时请求配额", 10, undefined, 5 * HOUR_MS);
+    const weekly = progress("每周请求配额", 60, "2026-09-13T00:00:00.000Z", 7 * DAY_MS);
+    const monthly = progress("MCP 月度用量", 30, "2026-10-01T00:00:00.000Z", 30 * DAY_MS);
+    const candidate = build([fiveHour, weekly, monthly]);
+    // windows（tooltip/柱序）仍是 resetsAt 近→远：周 → 月 → 5h（缺失排后）
+    expect(candidate.windows.map((w) => w.label)).toEqual([
+      "每周请求配额",
+      "MCP 月度用量",
+      "{hours} 小时请求配额",
+    ]);
+    // 环层序独立于 resetsAt 口径：外环 5h → 中环周 → 内环月
+    expect(candidate.ringWindows.map((w) => w.label)).toEqual([
+      "{hours} 小时请求配额",
+      "每周请求配额",
+      "MCP 月度用量",
+    ]);
+  });
+
+  it("超三层取最紧三扇（已用%降序），层内仍按周期短→长排位", () => {
+    const loose5h = progress("5h 窗", 1, undefined, 5 * HOUR_MS); // 不在最紧三扇内
+    const tightWeekly = progress("周窗", 90, "2026-09-13T00:00:00.000Z", 7 * DAY_MS);
+    const tightMonthly = progress("月窗", 80, "2026-10-01T00:00:00.000Z", 30 * DAY_MS);
+    const tight5h = progress("5h 窗2", 70, undefined, 5 * HOUR_MS);
+    const candidate = build([loose5h, tightWeekly, tightMonthly, tight5h]);
+    expect(candidate.ringWindows.map((w) => w.label)).toEqual([
+      "5h 窗2", // 70%，周期最短 → 外环
+      "周窗", // 90%，周期居中
+      "月窗", // 80%，周期最长 → 内环
+    ]);
+  });
+
+  it("全无周期字段时层内保持快照相对顺序（稳定排序兜底）", () => {
+    const first = progress("第一窗", 40, "2026-09-10T00:00:00.000Z");
+    const second = progress("第二窗", 20, "2026-09-20T00:00:00.000Z");
+    const candidate = build([first, second]);
+    expect(candidate.ringWindows.map((w) => w.label)).toEqual(["第一窗", "第二窗"]);
+  });
+
+  it("周期缺失的扇排在已知周期扇之后，已知扇之间按周期短→长", () => {
+    const unknown = progress("未知周期窗", 10);
+    const weekly = progress("周窗", 20, "2026-09-13T00:00:00.000Z", 7 * DAY_MS);
+    const fiveHour = progress("5h 窗", 30, undefined, 5 * HOUR_MS);
+    const candidate = build([unknown, weekly, fiveHour]);
+    expect(candidate.ringWindows.map((w) => w.label)).toEqual([
+      "5h 窗",
+      "周窗",
+      "未知周期窗",
+    ]);
   });
 });

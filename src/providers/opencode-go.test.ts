@@ -120,4 +120,31 @@ describe("opencodeGoProvider.fetch", () => {
       }),
     );
   });
+
+  it("tags each window line with its structured period (ADR-0017 ring layer order)", async () => {
+    invokeMock
+      .mockResolvedValueOnce({ workspaceId: true, cookie: true, apiKey: true })
+      .mockResolvedValueOnce({ workspaceId: "wrk_TESTWORKSPACE00000000000", cookie: "Fe26.2-test" })
+      .mockResolvedValueOnce({
+        status: 200,
+        headers: {},
+        bodyText: JSON.stringify({
+          plan: "go",
+          windows: [
+            { name: "5-hour", usagePercent: 10, resetInSec: 100 },
+            { name: "weekly", usagePercent: 20, resetInSec: 200 },
+            { name: "monthly", usagePercent: 30, resetInSec: 300 },
+          ],
+        }),
+      });
+
+    const snapshot = await opencodeGoProvider.fetch(instance);
+
+    expect(snapshot.status).toBe("ok");
+    expect(snapshot.lines).toMatchObject([
+      { label: "5 小时额度", windowPeriodMs: 5 * 3_600_000 },
+      { label: "本周额度", windowPeriodMs: 7 * 86_400_000 },
+      { label: "本月额度", windowPeriodMs: 30 * 86_400_000 },
+    ]);
+  });
 });

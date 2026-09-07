@@ -109,7 +109,12 @@ function windowDetail(item: GlanceInstance, fields: GlanceFieldFlags): string {
   return windows.map((window) => `${window.label} ${Math.round(window.percent)}%`).join(" · ");
 }
 
-/** 主指标环：细轨道 + 进度弧（顶部起点顺时针），环心大数字 */
+/**
+ * 主指标环：细轨道 + 进度弧（顶部起点顺时针），环心大数字。
+ * 刻意维持单环（ADR-0017 实现修正）：速览卡片右侧明细行已逐窗列读数，嵌套环在此是
+ * 纯重复；且环心数字住在内环孔里，双层孔径 ~14px 连三位数字都放不下（实测 "100" 被裁成
+ * "0"），数字与各层档位色还会互相打架。多层环只属于没有文字兜底的托盘图标与设置页方案预览卡。
+ */
 function UsageRing({ percent, alert, size = 44 }: { percent: number; alert: boolean; size?: number }) {
   const stroke = 4;
   const radius = (size - stroke) / 2;

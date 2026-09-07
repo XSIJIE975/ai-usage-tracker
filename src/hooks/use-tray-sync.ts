@@ -3,6 +3,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { AppSettings, MetricLine, ProviderInstance, ProviderSnapshot } from "../types/ipc";
 import { useAlertStore } from "../store/useAlertStore";
 import { displayName, selectOrderedInstances } from "../lib/instance";
+import { ringLayers } from "../lib/ring-layers";
 import { applyParams, useT } from "../i18n";
 import type { Language } from "../i18n";
 
@@ -16,12 +17,15 @@ export interface TrayMeterWindow {
   label: string;
   /** 重置时刻（ISO）；null = 未知（GLM 滚动窗口的 nextResetTime 常缺失） */
   resetsAt: string | null;
+  /** 结构化窗口周期（毫秒，ADR-0017 层序键）；null = 周期未知 */
+  periodMs: number | null;
 }
 
 export interface TrayMeterCandidate {
   instance: ProviderInstance;
   providerName: string;
-  /** 全部配额窗口，按重置时间近→远排序（柱的上→下渲染顺序）；缺失 resetsAt 的排在后段、保持快照相对顺序 */
+  /** 全部配额窗口，按重置时间近→远排序（柱的上→下、tooltip 行序，ADR-0016 口径）；
+      缺失 resetsAt 的排在后段、保持快照相对顺序 */
   windows: TrayMeterWindow[];
   /** 最紧窗口已用百分比（全部窗口的最大值）：环/macOS 数字展示它，也是自动排序主键 */
   percent: number;
@@ -31,6 +35,9 @@ export interface TrayMeterCandidate {
   totalPercent: number;
   /** 柱渲染对：已用%最高的两个窗口，按重置近→远排（[上条, 下条]）；单窗实例只有一个 */
   barWindows: TrayMeterWindow[];
+  /** 环层序（ADR-0017）：取最紧三扇、按窗口周期短→长排位（[外环, …, 内环]）；
+      与 windows 的 resetsAt 近→远是两个口径，互不影响 */
+  ringWindows: TrayMeterWindow[];
 }
 
 function resetTimestamp(resetsAt: string | null): number {
@@ -76,6 +83,7 @@ export function buildTrayCandidates(
           percent: line.percentUsed,
           label: applyParams(translate(line.label), line.params),
           resetsAt: line.resetsAt ?? null,
+          periodMs: line.windowPeriodMs ?? null,
         }))
         .sort(compareWindowReset);
       if (windows.length === 0) return null;
@@ -92,6 +100,7 @@ export function buildTrayCandidates(
         tightestWindow,
         totalPercent: windows.reduce((sum, window) => sum + window.percent, 0),
         barWindows,
+        ringWindows: ringLayers(windows),
       };
     })
     .filter((item): item is TrayMeterCandidate => item !== null);
@@ -152,6 +161,8 @@ export function useTraySync(
       alertActiveMap,
     );
     const ringPercent = chosen?.percent ?? null;
+    // 环层序百分比（ADR-0017）：外→内 = 周期短→长，前端取最紧三扇；ring_percent 保留兼容
+    const ringWindowPercents = chosen?.ringWindows.map((window) => window.percent) ?? [];
     const barTop = chosen?.barWindows[0]?.percent ?? null;
     const barBottom = chosen?.barWindows[1]?.percent ?? null;
     // tooltip 多行摘要：首行实例名，其后每个配额窗口一行（顺序与柱的上→下一致）
@@ -163,11 +174,12 @@ export function useTraySync(
           ...chosen.windows.map(windowText),
         ].join("\n")
       : null;
-    const key = `${ringPercent}|${barTop}|${barBottom}|${alert}|${summary}|${language}`;
+    const key = `${ringPercent}|${ringWindowPercents.join(",")}|${barTop}|${barBottom}|${alert}|${summary}|${language}`;
     if (key === lastPushRef.current) return;
     lastPushRef.current = key;
     void invoke("update_tray_meter", {
       ringPercent,
+      ringWindows: ringWindowPercents,
       barTop,
       barBottom,
       alert,

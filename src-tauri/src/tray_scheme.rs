@@ -20,6 +20,15 @@ const RING_COLOR_NORMAL: (u8, u8, u8) = (0x6A, 0x63, 0xF0);
 const RING_COLOR_DANGER: (u8, u8, u8) = (0xDC, 0x26, 0x26);
 const RING_COLOR_TRACK: (u8, u8, u8, f32) = (0x88, 0x88, 0x95, 0.42);
 
+/// 多层环几何（ADR-0017）：16px 基准的 (半径, 描边)，外→内排列，实现按 s/16 缩放。
+/// 内环加粗是刻意的可辨性补偿：半径越小弧长越短，加粗补回视觉重量。
+/// 已知妥协：16px + 三层 + 内环低百分比时内环弧约 1.6px，只能辨「有无」不能读精确值。
+const RING_LAYERS_TWO: [(f32, f32); 2] = [(6.67, 2.0), (3.67, 2.2)];
+const RING_LAYERS_THREE: [(f32, f32); 3] = [(6.67, 1.5), (4.43, 1.8), (2.2, 2.0)];
+
+/// 层序数组上限：环最多表达三扇配额窗，超出部分由前端截断（此处防御性再截一次）
+pub const RING_LAYERS_MAX: usize = 3;
+
 /// 托盘图标呈现方案
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TrayScheme {
@@ -43,8 +52,12 @@ impl TrayScheme {
 /// 前端在刷新完成/告警态变化时推送的计量快照
 #[derive(Debug, Clone, Default)]
 pub struct TrayMeter {
-    /// 环/macOS 数字展示的已用百分比（选中实例的最紧窗口，全部窗口的最大值）；None = 无可绘数据
+    /// 环/macOS 数字展示的已用百分比（选中实例的最紧窗口，全部窗口的最大值）；None = 无可绘数据。
+    /// 多层化后保留作单层回退与兼容（ADR-0017）
     pub ring_percent: Option<f64>,
+    /// 环层序百分比（ADR-0017）：外→内按窗口周期短→长排位、取最紧三扇，由前端排序截断后推送；
+    /// 空 = 无层数据（回退 ring_percent 单层）
+    pub ring_windows: Vec<f64>,
     /// 柱的上条（已用%最高两窗中重置较近的）；None = 无柱可绘
     pub bar_top: Option<f64>,
     /// 柱的下条（重置较远的）；None = 上条单条居中
@@ -106,9 +119,13 @@ pub fn apply(app: &tauri::AppHandle) {
     let language = state.language();
 
     let alert = meter.as_ref().is_some_and(|meter| meter.alert);
-    let ring_percent = meter.as_ref().and_then(|meter| meter.ring_percent);
     let bar_top = meter.as_ref().and_then(|meter| meter.bar_top);
     let bar_bottom = meter.as_ref().and_then(|meter| meter.bar_bottom);
+    // 环层数据（ADR-0017）：优先层序数组，缺失回退单值 ring_percent（单层兼容，亦为旧前端快照兜底）
+    let ring_percents = meter
+        .as_ref()
+        .map(|meter| ring_layer_percents(&meter.ring_windows, meter.ring_percent))
+        .unwrap_or_default();
 
     // 图标按主窗口 DPI 档位绘制（100%→16px、125%→20px、150%→24px、200%→32px）
     let scale = app
@@ -117,9 +134,9 @@ pub fn apply(app: &tauri::AppHandle) {
         .unwrap_or(1.0);
     let size = ((16.0 * scale).round() as u32).clamp(16, 32);
 
-    let icon = match (scheme, ring_percent, bar_top) {
-        (TrayScheme::UsageRing, Some(percent), _) => {
-            draw_usage_ring(size, percent, alert).unwrap_or_else(|| fallback_icon(app, alert))
+    let icon = match (scheme, ring_percents.first(), bar_top) {
+        (TrayScheme::UsageRing, Some(_), _) => {
+            draw_usage_ring(size, &ring_percents, alert).unwrap_or_else(|| fallback_icon(app, alert))
         }
         (TrayScheme::UsageBars, _, Some(top)) => {
             draw_usage_bars(size, top, bar_bottom, alert)
@@ -129,12 +146,23 @@ pub fn apply(app: &tauri::AppHandle) {
     };
     let _ = tray.set_icon(Some(icon));
     let _ = tray.set_tooltip(Some(tooltip_text(&language, meter.as_ref())));
-    // macOS 在图标旁显示最紧窗口的百分比文本；Windows/Linux 为空实现（ADR-0016）
-    let badge = match (scheme, ring_percent) {
-        (TrayScheme::UsageRing, Some(percent)) => Some(format!("{}", percent.round())),
+    // macOS 在图标旁显示外环（最短周期窗）的百分比文本（ADR-0017：与图标最外那根环一一对应，
+    // 单层时即唯一环、与旧「最紧窗」行为一致）；Windows/Linux 为空实现（ADR-0016）
+    let badge = match scheme {
+        TrayScheme::UsageRing => ring_percents.first().map(|percent| format!("{}", percent.round())),
         _ => None,
     };
     let _ = tray.set_title(badge.as_deref());
+}
+
+/// 环层数据解析（ADR-0017）：优先层序数组 ring_windows（外→内），缺失回退单值
+/// ring_percent（单层兼容）；两者皆缺 = 无可绘数据。
+fn ring_layer_percents(ring_windows: &[f64], ring_percent: Option<f64>) -> Vec<f64> {
+    if !ring_windows.is_empty() {
+        ring_windows.to_vec()
+    } else {
+        ring_percent.map(|percent| vec![percent]).unwrap_or_default()
+    }
 }
 
 /// 默认方案图标：告警时叠加红点（原 set_tray_alert 行为，ADR-0016 收编为默认方案）
@@ -171,43 +199,94 @@ fn fallback_icon(app: &tauri::AppHandle, alert: bool) -> tauri::image::Image<'st
     tauri::image::Image::new_owned(rgba, width, height)
 }
 
-/// 绘制用量环：灰色轨道 + 按百分比的进度弧（顶部起点、圆角端点），告警时整环红色
-fn draw_usage_ring(size: u32, percent: f64, alert: bool) -> Option<tauri::image::Image<'static>> {
+/// 绘制用量环（ADR-0017 多层化）：每层独立画「灰色轨道全环 + 品牌色进度弧」，
+/// 层序外→内（外环 = 最短周期窗），顶部起点顺时针、圆头端点；告警时整环红色。
+/// 单层沿用旧单环几何（与历史版本像素级一致）；2/3 层按 16px 基准缩放的嵌套几何。
+fn draw_usage_ring(size: u32, percents: &[f64], alert: bool) -> Option<tauri::image::Image<'static>> {
     let mut pixmap = Pixmap::new(size, size)?;
     let s = size as f32;
-    let stroke_width = (s * 0.15).max(2.0);
-    let radius = (s - stroke_width) / 2.0 - s * 0.02;
     let (cx, cy) = (s / 2.0, s / 2.0);
+    let layers = percents.len().clamp(1, RING_LAYERS_MAX);
+    let specs = ring_layer_specs(size, layers);
+    for ((radius, stroke_width), percent) in specs.iter().zip(percents.iter().take(layers)) {
+        draw_ring_layer(&mut pixmap, cx, cy, *radius, *stroke_width, *percent, alert);
+    }
+    Some(pixmap_to_image(&pixmap))
+}
 
-    stroke_path(
-        &mut pixmap,
-        &PathBuilder::from_circle(cx, cy, radius)?,
-        color(RING_COLOR_TRACK.0, RING_COLOR_TRACK.1, RING_COLOR_TRACK.2, RING_COLOR_TRACK.3)?,
-        stroke_width,
-    );
+/// 环层几何（ADR-0017）：按层数给出 (半径, 描边)，外→内。
+/// 单层 = 旧单环公式（stroke=max(0.15s, 2)、外缘留 2% 边距）；多层 = 16px 基准常量 × s/16。
+fn ring_layer_specs(size: u32, layers: usize) -> Vec<(f32, f32)> {
+    let s = size as f32;
+    let scale = s / 16.0;
+    match layers {
+        0 | 1 => {
+            let stroke_width = (s * 0.15).max(2.0);
+            let radius = (s - stroke_width) / 2.0 - s * 0.02;
+            vec![(radius, stroke_width)]
+        }
+        2 => RING_LAYERS_TWO
+            .iter()
+            .map(|(radius, stroke)| (radius * scale, stroke * scale))
+            .collect(),
+        _ => RING_LAYERS_THREE
+            .iter()
+            .map(|(radius, stroke)| (radius * scale, stroke * scale))
+            .collect(),
+    }
+}
 
-    let fraction = (percent / 100.0).clamp(0.0, 1.0);
-    if fraction > f64::EPSILON {
-        // 顶部起点顺时针；接近满圈时留极小缝，避免起终点重合的绘制异常
-        let sweep = (fraction * 360.0).min(359.6) as f32;
-        let steps = ((sweep / 5.0).ceil() as usize).max(2);
-        let mut builder = PathBuilder::new();
-        for i in 0..=steps {
-            let angle = (-90.0_f32 + sweep * (i as f32 / steps as f32)).to_radians();
-            let (x, y) = (cx + radius * angle.cos(), cy + radius * angle.sin());
-            if i == 0 {
-                builder.move_to(x, y);
-            } else {
-                builder.line_to(x, y);
-            }
-        }
-        if let Some(path) = builder.finish() {
-            let (r, g, b) = meter_color(alert);
-            stroke_path(&mut pixmap, &path, color(r, g, b, 1.0)?, stroke_width);
-        }
+/// 画单层环：灰色轨道全环 + 按百分比的进度弧（顶部起点顺时针，接近满圈留极小缝）
+fn draw_ring_layer(
+    pixmap: &mut Pixmap,
+    cx: f32,
+    cy: f32,
+    radius: f32,
+    stroke_width: f32,
+    percent: f64,
+    alert: bool,
+) {
+    if let Some(track) = PathBuilder::from_circle(cx, cy, radius) {
+        stroke_path(
+            pixmap,
+            &track,
+            color(
+                RING_COLOR_TRACK.0,
+                RING_COLOR_TRACK.1,
+                RING_COLOR_TRACK.2,
+                RING_COLOR_TRACK.3,
+            )
+            .expect("轨道色固定合法"),
+            stroke_width,
+        );
     }
 
-    Some(pixmap_to_image(&pixmap))
+    let fraction = (percent / 100.0).clamp(0.0, 1.0);
+    if fraction <= f64::EPSILON {
+        return;
+    }
+    // 顶部起点顺时针；接近满圈时留极小缝，避免起终点重合的绘制异常
+    let sweep = (fraction * 360.0).min(359.6) as f32;
+    let steps = ((sweep / 5.0).ceil() as usize).max(2);
+    let mut builder = PathBuilder::new();
+    for i in 0..=steps {
+        let angle = (-90.0_f32 + sweep * (i as f32 / steps as f32)).to_radians();
+        let (x, y) = (cx + radius * angle.cos(), cy + radius * angle.sin());
+        if i == 0 {
+            builder.move_to(x, y);
+        } else {
+            builder.line_to(x, y);
+        }
+    }
+    if let Some(path) = builder.finish() {
+        let (r, g, b) = meter_color(alert);
+        stroke_path(
+            pixmap,
+            &path,
+            color(r, g, b, 1.0).expect("计量色固定合法"),
+            stroke_width,
+        );
+    }
 }
 
 /// 计量元素颜色：静态品牌色、不随用量档位变化，仅活跃告警强制红
@@ -424,11 +503,14 @@ pub fn set_tray_icon_scheme(app: tauri::AppHandle, scheme: String) -> Result<(),
     Ok(())
 }
 
-/// 推送计量快照（主窗口在刷新完成/告警态变化时调用，是托盘呈现的唯一数据写入方）
+/// 推送计量快照（主窗口在刷新完成/告警态变化时调用，是托盘呈现的唯一数据写入方）。
+/// ring_windows（ADR-0017）：环层序百分比（外→内 = 周期短→长，前端取最紧三扇），
+/// 缺省时回退 ring_percent 单层。
 #[tauri::command]
 pub fn update_tray_meter(
     app: tauri::AppHandle,
     ring_percent: Option<f64>,
+    ring_windows: Option<Vec<f64>>,
     bar_top: Option<f64>,
     bar_bottom: Option<f64>,
     alert: bool,
@@ -440,6 +522,13 @@ pub fn update_tray_meter(
         let mut meter = state.meter.lock().expect("tray meter lock poisoned");
         *meter = Some(TrayMeter {
             ring_percent,
+            // 防御性规整：只取前三层、丢弃非有限值（正常路径前端已保证）
+            ring_windows: ring_windows
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|value| value.is_finite())
+                .take(RING_LAYERS_MAX)
+                .collect(),
             bar_top,
             bar_bottom,
             alert,
@@ -662,7 +751,278 @@ mod tests {
         out
     }
 
-    /// 手工预览工具：把「修复前 vs 修复后」的用量柱渲染成放大 PNG。
+    /// 复刻多层化之前的单环实现（ADR-0016 几何：stroke=max(0.15s,2)、外缘留 2% 边距），
+    /// 用于锁定 ADR-0017 的「单层与旧版像素级一致」承诺；仅测试可见。
+    fn draw_usage_ring_legacy(size: u32, percent: f64, alert: bool) -> Option<tauri::image::Image<'static>> {
+        let mut pixmap = Pixmap::new(size, size)?;
+        let s = size as f32;
+        let stroke_width = (s * 0.15).max(2.0);
+        let radius = (s - stroke_width) / 2.0 - s * 0.02;
+        let (cx, cy) = (s / 2.0, s / 2.0);
+
+        stroke_path(
+            &mut pixmap,
+            &PathBuilder::from_circle(cx, cy, radius)?,
+            color(RING_COLOR_TRACK.0, RING_COLOR_TRACK.1, RING_COLOR_TRACK.2, RING_COLOR_TRACK.3)?,
+            stroke_width,
+        );
+
+        let fraction = (percent / 100.0).clamp(0.0, 1.0);
+        if fraction > f64::EPSILON {
+            let sweep = (fraction * 360.0).min(359.6) as f32;
+            let steps = ((sweep / 5.0).ceil() as usize).max(2);
+            let mut builder = PathBuilder::new();
+            for i in 0..=steps {
+                let angle = (-90.0_f32 + sweep * (i as f32 / steps as f32)).to_radians();
+                let (x, y) = (cx + radius * angle.cos(), cy + radius * angle.sin());
+                if i == 0 {
+                    builder.move_to(x, y);
+                } else {
+                    builder.line_to(x, y);
+                }
+            }
+            if let Some(path) = builder.finish() {
+                let (r, g, b) = meter_color(alert);
+                stroke_path(&mut pixmap, &path, color(r, g, b, 1.0)?, stroke_width);
+            }
+        }
+
+        Some(pixmap_to_image(&pixmap))
+    }
+
+    /// 像素是否为不透明计量色（品牌色；±8 容差抗 AA 混色，alpha≥250 排除半透明轨道/边缘）
+    fn is_meter_pixel(image: &tauri::image::Image<'static>, x: u32, y: u32) -> bool {
+        let w = image.width();
+        let rgba = image.rgba();
+        let i = ((y * w + x) * 4) as usize;
+        if rgba[i + 3] < 250 {
+            return false;
+        }
+        let (r, g, b) = meter_color(false);
+        rgba[i].abs_diff(r) <= 8 && rgba[i + 1].abs_diff(g) <= 8 && rgba[i + 2].abs_diff(b) <= 8
+    }
+
+    /// 行 y 在 [x_from, x_to] 内的计量色连续列段（闭区间列表）
+    fn meter_bands_in_row(
+        image: &tauri::image::Image<'static>,
+        y: u32,
+        x_from: u32,
+        x_to: u32,
+    ) -> Vec<(u32, u32)> {
+        let mut bands = Vec::new();
+        let mut start: Option<u32> = None;
+        for x in x_from..=x_to {
+            let hit = is_meter_pixel(image, x, y);
+            match (start, hit) {
+                (None, true) => start = Some(x),
+                (Some(from), false) => {
+                    bands.push((from, x - 1));
+                    start = None;
+                }
+                _ => {}
+            }
+        }
+        if let Some(from) = start {
+            bands.push((from, x_to));
+        }
+        bands
+    }
+
+    /// 列 x 在 [y_from, y_to] 内的计量色连续行段（闭区间列表）
+    fn meter_bands_in_column(
+        image: &tauri::image::Image<'static>,
+        x: u32,
+        y_from: u32,
+        y_to: u32,
+    ) -> Vec<(u32, u32)> {
+        let mut bands = Vec::new();
+        let mut start: Option<u32> = None;
+        for y in y_from..=y_to {
+            let hit = is_meter_pixel(image, x, y);
+            match (start, hit) {
+                (None, true) => start = Some(y),
+                (Some(from), false) => {
+                    bands.push((from, y - 1));
+                    start = None;
+                }
+                _ => {}
+            }
+        }
+        if let Some(from) = start {
+            bands.push((from, y_to));
+        }
+        bands
+    }
+
+    fn has_meter_pixel(image: &tauri::image::Image<'static>) -> bool {
+        let (w, h) = (image.width(), image.height());
+        (0..h).any(|y| (0..w).any(|x| is_meter_pixel(image, x, y)))
+    }
+
+    /// 计量色像素外接框 (min_x, min_y, max_x, max_y)
+    fn meter_pixel_bounds(image: &tauri::image::Image<'static>) -> Option<(u32, u32, u32, u32)> {
+        let (w, h) = (image.width(), image.height());
+        let mut bounds = None::<(u32, u32, u32, u32)>;
+        for y in 0..h {
+            for x in 0..w {
+                if is_meter_pixel(image, x, y) {
+                    bounds = Some(match bounds {
+                        None => (x, y, x, y),
+                        Some((min_x, min_y, max_x, max_y)) => {
+                            (min_x.min(x), min_y.min(y), max_x.max(x), max_y.max(y))
+                        }
+                    });
+                }
+            }
+        }
+        bounds
+    }
+
+    /// 单层环必须与多层化前的旧实现逐像素一致（ADR-0017 承诺：旧形态即新环的单窗形态）
+    #[test]
+    fn single_layer_ring_matches_legacy_pixels() {
+        for size in [16u32, 20, 24, 32] {
+            for percent in [0.0f64, 4.0, 33.3, 50.0, 87.5, 100.0] {
+                for alert in [false, true] {
+                    let new_image = draw_usage_ring(size, &[percent], alert)
+                        .unwrap_or_else(|| panic!("size={size} percent={percent} 渲染失败"));
+                    let legacy = draw_usage_ring_legacy(size, percent, alert)
+                        .unwrap_or_else(|| panic!("legacy size={size} 渲染失败"));
+                    assert_eq!(
+                        new_image.rgba(),
+                        legacy.rgba(),
+                        "size={size} percent={percent} alert={alert} 单层像素与旧实现不一致",
+                    );
+                }
+            }
+        }
+    }
+
+    /// 环层几何与 ADR-0017 定案一致：单层 = 旧公式；多层 = 16px 基准常量 × s/16
+    #[test]
+    fn ring_layer_specs_match_adr() {
+        let single = ring_layer_specs(24, 1);
+        assert_eq!(single.len(), 1);
+        let s = 24.0f32;
+        let stroke = (s * 0.15).max(2.0);
+        assert!((single[0].1 - stroke).abs() < 1e-4);
+        assert!((single[0].0 - ((s - stroke) / 2.0 - s * 0.02)).abs() < 1e-4);
+
+        for (layers, table) in [
+            (2usize, &RING_LAYERS_TWO[..]),
+            (3, &RING_LAYERS_THREE[..]),
+        ] {
+            for size in [16u32, 20, 24, 32] {
+                let specs = ring_layer_specs(size, layers);
+                assert_eq!(specs.len(), layers, "size={size} layers={layers}");
+                let scale = size as f32 / 16.0;
+                for ((radius, stroke), (expect_r, expect_w)) in specs.iter().zip(table) {
+                    assert!(
+                        (radius - expect_r * scale).abs() < 1e-4
+                            && (stroke - expect_w * scale).abs() < 1e-4,
+                        "size={size} layers={layers}：几何 ({radius}, {stroke}) 偏离 ADR 基准",
+                    );
+                }
+            }
+        }
+    }
+
+    /// 多层带结构：50% 时沿 3 点方向（y=cy 行右半）扫描，各层各成一段
+    /// （段数 = 层数，段间即层间间隙）、段厚 ≤ 层描边（防胖点回归）、段中心落在对应层半径上
+    #[test]
+    fn ring_layers_band_structure_at_half() {
+        for size in [16u32, 20, 24, 32] {
+            for layers in [1usize, 2, 3] {
+                let percents: Vec<f64> = vec![50.0; layers];
+                let image = draw_usage_ring(size, &percents, false)
+                    .unwrap_or_else(|| panic!("size={size} layers={layers} 渲染失败"));
+                let cy = size / 2;
+                let cx = size as f32 / 2.0;
+                let bands = meter_bands_in_row(&image, cy, cx as u32, size - 1);
+                assert_eq!(
+                    bands.len(),
+                    layers,
+                    "size={size} layers={layers}：3 点方向应有 {layers} 段，实际 {bands:?}",
+                );
+                let specs = ring_layer_specs(size, layers);
+                // 行扫描自 x=cx 起向右 = 半径从小到大 = 内层→外层；specs 是外→内，反转配对
+                for (band, (radius, stroke)) in bands.iter().rev().zip(&specs) {
+                    let thickness = (band.1 - band.0 + 1) as f32;
+                    assert!(
+                        thickness <= stroke + 1.5,
+                        "size={size} layers={layers}：段厚 {thickness} 超过描边 {stroke}",
+                    );
+                    let center = (band.0 as f32 + band.1 as f32) / 2.0 - cx;
+                    assert!(
+                        (center - radius).abs() <= 1.3,
+                        "size={size} layers={layers}：段中心 {center} 偏离层半径 {radius}",
+                    );
+                }
+            }
+        }
+    }
+
+    /// 弧长-百分比映射（顶部起点顺时针）：0% 无填充；25% 仅 12→3 点（3 点方向有、9 点无、
+    /// 6 点方向列下半无）；50% 仅右半圆；100% 铺满外环外缘
+    #[test]
+    fn ring_arc_percent_mapping() {
+        for size in [16u32, 20, 24, 32] {
+            let cx = size / 2;
+            let cy = size / 2;
+
+            let zero = draw_usage_ring(size, &[0.0], false).expect("渲染失败");
+            assert!(!has_meter_pixel(&zero), "size={size}：0% 不应有计量色像素");
+
+            let quarter = draw_usage_ring(size, &[25.0], false).expect("渲染失败");
+            let left_empty = (0..cx).all(|x| !is_meter_pixel(&quarter, x, cy));
+            assert!(left_empty, "size={size}：25% 时 y=cy 行左半不应有计量色");
+            let right_filled = !meter_bands_in_row(&quarter, cy, cx, size - 1).is_empty();
+            assert!(right_filled, "size={size}：25% 时 3 点方向应有计量色");
+            // 25% 弧从 12 点顺时针到 3 点：x=cx 列上半有起点圆头、下半无弧
+            let top_bands = meter_bands_in_column(&quarter, cx, 0, cy - 1);
+            assert!(
+                !top_bands.is_empty(),
+                "size={size}：25% 时 12 点起点（x=cx 列上半）应有计量色",
+            );
+            let bottom_bands = meter_bands_in_column(&quarter, cx, cy + 1, size - 1);
+            assert!(
+                bottom_bands.is_empty(),
+                "size={size}：25% 时 x=cx 列下半不应有计量色",
+            );
+
+            let half = draw_usage_ring(size, &[50.0], false).expect("渲染失败");
+            let left_empty = (0..cx).all(|x| !is_meter_pixel(&half, x, cy));
+            let right_filled = !meter_bands_in_row(&half, cy, cx, size - 1).is_empty();
+            assert!(left_empty && right_filled, "size={size}：50% 应只覆盖右半圆");
+
+            let full = draw_usage_ring(size, &[100.0], false).expect("渲染失败");
+            let (radius, stroke) = ring_layer_specs(size, 1)[0];
+            let expect_half_span = radius + stroke / 2.0;
+            let (min_x, min_y, max_x, max_y) =
+                meter_pixel_bounds(&full).expect("100% 应有计量色像素");
+            let span_x = (max_x - min_x + 1) as f32;
+            let span_y = (max_y - min_y + 1) as f32;
+            assert!(
+                (span_x - 2.0 * expect_half_span).abs() <= 2.5
+                    && (span_y - 2.0 * expect_half_span).abs() <= 2.5,
+                "size={size}：100% 外接框 {span_x}×{span_y} 偏离外环外缘 {}",
+                2.0 * expect_half_span,
+            );
+        }
+    }
+
+    /// 环层数据解析：层数组优先，缺失回退单值，全缺为空（ADR-0017）
+    #[test]
+    fn ring_layer_percents_fallbacks() {
+        assert_eq!(
+            ring_layer_percents(&[10.0, 60.0, 30.0], Some(60.0)),
+            vec![10.0, 60.0, 30.0],
+        );
+        assert_eq!(ring_layer_percents(&[], Some(42.0)), vec![42.0]);
+        assert!(ring_layer_percents(&[], None).is_empty());
+    }
+
+    /// 手工预览工具：把「修复前 vs 修复后」的用量柱渲染成放大 PNG（ADR-0016 修复留档）。
     /// 运行：cargo test dump_tray_preview_pngs -- --ignored --nocapture
     /// 输出：<仓库根>/.workbuddy/tmp/tray-preview/
     #[test]
@@ -699,6 +1059,44 @@ mod tests {
                 upscale_png(&old, 8)
                     .save_png(root.join(format!("{name}_before.png")))
                     .expect("保存 before PNG 失败");
+            }
+        }
+    }
+
+    /// 手工预览工具：把多层环（1/2/3 层 × 低/中/满百分比）渲染成放大 PNG。
+    /// 运行：cargo test dump_tray_ring_preview_pngs -- --ignored --nocapture
+    /// 输出：<仓库根>/.workbuddy/tmp/tray-preview/
+    #[test]
+    #[ignore = "人工预览用：cargo test dump_tray_ring_preview_pngs -- --ignored"]
+    fn dump_tray_ring_preview_pngs() {
+        use std::path::Path;
+        use tiny_skia::IntSize;
+
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("无父目录")
+            .join(".workbuddy/tmp/tray-preview");
+        std::fs::create_dir_all(&root).expect("创建输出目录失败");
+
+        for size in [16u32, 24, 32] {
+            for (layers, percents) in [
+                (1usize, vec![4.0f64]),
+                (1, vec![62.0]),
+                (2, vec![4.0, 100.0]),
+                (2, vec![62.0, 28.0]),
+                (3, vec![4.0, 100.0, 12.0]),
+                (3, vec![62.0, 28.0, 90.0]),
+            ] {
+                let image = draw_usage_ring(size, &percents, false).expect("渲染失败");
+                let pixmap = Pixmap::from_vec(
+                    image.rgba().to_vec(),
+                    IntSize::from_wh(image.width(), image.height()).expect("尺寸非法"),
+                )
+                .expect("转 Pixmap 失败");
+                let name = format!("{size}px_{}l_{}", layers, percents.iter().map(|p| p.to_string()).collect::<Vec<_>>().join("-"));
+                upscale_png(&pixmap, 8)
+                    .save_png(root.join(format!("ring_{name}.png")))
+                    .expect("保存 PNG 失败");
             }
         }
     }

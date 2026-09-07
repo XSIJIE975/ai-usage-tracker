@@ -138,7 +138,14 @@ function toErrorText(error: unknown): string {
 interface WindowSpec {
   label: string;
   params?: Record<string, number>;
+  /** 窗口周期时长毫秒（ADR-0017 层序键）；解析时已知，禁止从 label 文本推断 */
+  periodMs: number;
 }
+
+const HOUR_MS = 3_600_000;
+const DAY_MS = 86_400_000;
+/** 月窗约定近似 30 天：层序只需量级序（小时 ≪ 周 ≪ 月），不影响排序结果 */
+const MONTH_MS = 30 * DAY_MS;
 
 /**
  * 窗口语义按实测与官方 glm-plan-usage 插件的处理约定：
@@ -150,16 +157,16 @@ function windowSpec(limit: QuotaLimit): WindowSpec | null {
   if (limit.type === "CREDIT_LIMIT") {
     if (limit.unit === 3) {
       const hours = typeof limit.number === "number" && limit.number > 0 ? limit.number : 5;
-      return { label: "{hours} 小时请求配额", params: { hours } };
+      return { label: "{hours} 小时请求配额", params: { hours }, periodMs: hours * HOUR_MS };
     }
-    if (limit.unit === 6) return { label: "每周请求配额" };
+    if (limit.unit === 6) return { label: "每周请求配额", periodMs: 7 * DAY_MS };
     return null;
   }
   if (limit.type === "TOKENS_LIMIT") {
     const hours = typeof limit.number === "number" && limit.number > 0 ? limit.number : 5;
-    return { label: "{hours} 小时 Token 配额", params: { hours } };
+    return { label: "{hours} 小时 Token 配额", params: { hours }, periodMs: hours * HOUR_MS };
   }
-  if (limit.type === "TIME_LIMIT") return { label: "MCP 月度用量" };
+  if (limit.type === "TIME_LIMIT") return { label: "MCP 月度用量", periodMs: MONTH_MS };
   return null;
 }
 
@@ -191,6 +198,7 @@ export function parseQuotaLimits(data: GlmQuotaData | undefined): MetricLine[] {
       type: "progress",
       label: spec.label,
       ...(spec.params ? { params: spec.params } : {}),
+      windowPeriodMs: spec.periodMs,
       ...(used != null && limitValue != null ? { used, limit: limitValue } : {}),
       ...(limit.percentage != null ? { percentUsed: limit.percentage } : {}),
       ...(limit.nextResetTime != null && limit.nextResetTime > 0

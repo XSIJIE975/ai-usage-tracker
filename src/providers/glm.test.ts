@@ -294,12 +294,14 @@ describe("parseQuotaLimits", () => {
       used: 0,
       limit: 1200,
       percentUsed: 0,
+      windowPeriodMs: 5 * 3_600_000,
     });
     expect(lines[2]).toMatchObject({
       label: "每周请求配额",
       used: 1080,
       limit: 1200,
       percentUsed: 90,
+      windowPeriodMs: 7 * 86_400_000,
       resetsAt: new Date(1788362308998).toISOString(),
     });
   });
@@ -333,9 +335,16 @@ describe("parseQuotaLimits", () => {
       label: "{hours} 小时 Token 配额",
       params: { hours: 5 },
       percentUsed: 12,
+      windowPeriodMs: 5 * 3_600_000,
       resetsAt: new Date(1788362308998).toISOString(),
     });
-    expect(lines[2]).toMatchObject({ label: "MCP 月度用量", used: 6, limit: 100, percentUsed: 6 });
+    expect(lines[2]).toMatchObject({
+      label: "MCP 月度用量",
+      used: 6,
+      limit: 100,
+      percentUsed: 6,
+      windowPeriodMs: 30 * 86_400_000,
+    });
   });
 
   it("defaults the hour window to 5 when number is missing", () => {
