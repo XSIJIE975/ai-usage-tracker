@@ -31,11 +31,18 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
   return <LanguageContext.Provider value={language}>{children}</LanguageContext.Provider>;
 }
 
-/** 翻译函数：返回当前语言的文案；en 缺失键回退中文源文案 */
+/** 翻译函数：返回当前语言的文案；en 缺失键回退中文源文案。
+ *  开发实例的应用名统一在此追加 (dev) 后缀（ADR-0018）：所有 t("AI 用量助手") 出口
+ *  （主窗口标题栏、速览/快速面板头部、关于页、托盘预览）一处加缀全局生效，
+ *  与 Rust 侧 app_title/tray_tooltip 的后缀约定保持一致。 */
 export function useT() {
   const language = useContext(LanguageContext);
   const dict = dictionaries[language];
-  return (text: string): string => (dict ? (dict[text] ?? text) : text);
+  return (text: string): string => {
+    const translated = dict ? (dict[text] ?? text) : text;
+    if (import.meta.env.DEV && text === "AI 用量助手") return `${translated} (dev)`;
+    return translated;
+  };
 }
 
 /** 替换模板文案中的 {name} 占位符（与诊断文案的 {detail} 约定一致，中文模板同样适用） */

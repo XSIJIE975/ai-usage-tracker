@@ -362,22 +362,34 @@ pub fn delete_instance(app: AppHandle, state: State<'_, AppState>, id: String) -
 }
 
 /// 在默认托盘图标的右下角合成红点徽章，生成告警态托盘图标（无需额外图标资产）
+/// 开发实例标识后缀（ADR-0018）：窗口标题、托盘提示、应用名统一追加，
+/// 与安装版并存运行时可即时分辨。后缀必须内聚在本模块的命名函数里——
+/// 不要在调用侧自行拼接（refresh_tray_menu 重设窗口标题会把外部拼的后缀冲掉）。
+pub fn dev_suffix() -> &'static str {
+    if cfg!(debug_assertions) {
+        " (dev)"
+    } else {
+        ""
+    }
+}
+
 /// 托盘悬停提示文案（zh/en × 常态/告警态）
-pub fn tray_tooltip(language: &str, alert: bool) -> &'static str {
-    match (language == "en", alert) {
+pub fn tray_tooltip(language: &str, alert: bool) -> String {
+    let base = match (language == "en", alert) {
         (false, false) => "AI 用量助手",
         (false, true) => "AI 用量助手 — 有额度告警",
         (true, false) => "AI Usage Tracker",
         (true, true) => "AI Usage Tracker — quota alert",
-    }
+    };
+    format!("{base}{}", dev_suffix())
 }
 
 /// 应用名（窗口标题与托盘提示共用，随界面语言）
-pub fn app_title(language: &str) -> &'static str {
+pub fn app_title(language: &str) -> String {
     if language == "en" {
-        "AI Usage Tracker"
+        format!("AI Usage Tracker{}", dev_suffix())
     } else {
-        "AI 用量助手"
+        format!("AI 用量助手{}", dev_suffix())
     }
 }
 
@@ -406,7 +418,7 @@ pub fn apply_quick_shortcut(app: &AppHandle, shortcut: String) -> Result<(), Str
                     crate::toggle_quick(app);
                 }
             })
-            .map_err(|error| format!("快捷键注册失败，可能与其他程序冲突：{error}"))?;
+            .map_err(|error| format!("快捷键注册失败，可能已被其他程序占用，请更换组合键（{error}）"))?;
         *current = Some(shortcut);
     }
     Ok(())
@@ -415,6 +427,28 @@ pub fn apply_quick_shortcut(app: &AppHandle, shortcut: String) -> Result<(), Str
 #[tauri::command]
 pub fn register_quick_shortcut(app: AppHandle, shortcut: String) -> Result<(), String> {
     apply_quick_shortcut(&app, shortcut)
+}
+
+/// 快捷键注册失败时的系统通知（zh/en 随界面语言）。Windows 无法查询占用者身份，
+/// 只能提示用户更换；开发实例（未打包、无应用身份）上系统通知可能不弹，仅保留日志。
+pub fn notify_quick_shortcut_failure(app: &AppHandle, language: &str, shortcut: &str) {
+    use tauri_plugin_notification::NotificationExt;
+    let body = if language == "en" {
+        format!(
+            "Failed to register shortcut {shortcut}. It may be taken by another app — pick another one in Settings."
+        )
+    } else {
+        format!("快捷键 {shortcut} 注册失败，可能已被其他程序占用，可在设置中更换。")
+    };
+    if let Err(error) = app
+        .notification()
+        .builder()
+        .title(app_title(language))
+        .body(body)
+        .show()
+    {
+        eprintln!("快捷键注册失败通知发送失败：{error}");
+    }
 }
 
 // ─── 连通性诊断 ───
@@ -531,12 +565,12 @@ pub fn refresh_tray_menu(app: AppHandle, language: String) -> Result<(), String>
         *state.language.lock().expect("tray language lock poisoned") = language.clone();
     }
     crate::tray_scheme::apply(&app);
-    let title = app_title(&language);
-    for label in ["main", "quick", "glance"] {
-        if let Some(window) = app.get_webview_window(label) {
-            let _ = window.set_title(title);
-        }
-    }
+            let title = app_title(&language);
+            for label in ["main", "quick", "glance"] {
+                if let Some(window) = app.get_webview_window(label) {
+                    let _ = window.set_title(&title);
+                }
+            }
     Ok(())
 }
 
@@ -763,12 +797,14 @@ mod tests {
 
     #[test]
     fn tray_tooltip_and_title_follow_language_and_alert_state() {
-        assert_eq!(tray_tooltip("zh", false), "AI 用量助手");
-        assert_eq!(tray_tooltip("zh", true), "AI 用量助手 — 有额度告警");
-        assert_eq!(tray_tooltip("en", false), "AI Usage Tracker");
-        assert_eq!(tray_tooltip("en", true), "AI Usage Tracker — quota alert");
-        assert_eq!(app_title("zh"), "AI 用量助手");
-        assert_eq!(app_title("en"), "AI Usage Tracker");
+        // 展示名在 debug 构建（开发实例）携带 (dev) 后缀，随构建分流断言（ADR-0018）
+        let suffix = dev_suffix();
+        assert_eq!(tray_tooltip("zh", false), format!("AI 用量助手{suffix}"));
+        assert_eq!(tray_tooltip("zh", true), format!("AI 用量助手 — 有额度告警{suffix}"));
+        assert_eq!(tray_tooltip("en", false), format!("AI Usage Tracker{suffix}"));
+        assert_eq!(tray_tooltip("en", true), format!("AI Usage Tracker — quota alert{suffix}"));
+        assert_eq!(app_title("zh"), format!("AI 用量助手{suffix}"));
+        assert_eq!(app_title("en"), format!("AI Usage Tracker{suffix}"));
     }
 
     #[test]

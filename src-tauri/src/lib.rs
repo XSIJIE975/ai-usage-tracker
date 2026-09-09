@@ -65,10 +65,21 @@ pub fn run() {
             // 注册设置中配置的快速面板全局快捷键；失败不阻断启动
             let app_state = app.state::<AppState>();
             if let Ok(settings) = app_state.db.lock().expect("db lock poisoned").get_settings() {
+                // 窗口标题统一走 app_title（内含开发实例 (dev) 后缀，ADR-0018）；
+                // 语言切换后 refresh_tray_menu 会用同一函数重放，两处不可再各写一套
+                let language = settings.get("interfaceLanguage").and_then(Value::as_str).unwrap_or("");
+                let title = commands::app_title(language);
+                for label in ["main", "quick", "glance"] {
+                    if let Some(window) = app.get_webview_window(label) {
+                        let _ = window.set_title(&title);
+                    }
+                }
                 if let Some(shortcut) = settings.get("quickPanelShortcut").and_then(Value::as_str) {
                     if !shortcut.is_empty() {
                         if let Err(error) = commands::apply_quick_shortcut(app.handle(), shortcut.to_string()) {
                             eprintln!("注册快速面板快捷键失败：{error}");
+                            // 占用/冲突在启动期无内联界面可提示（ADR-0018）：发系统通知告知用户
+                            commands::notify_quick_shortcut_failure(app.handle(), language, shortcut);
                         }
                     }
                 }

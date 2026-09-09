@@ -93,7 +93,7 @@ impl TrayState {
 /// 动态 tooltip：告警态沿用现有后缀；常态拼最紧（或钉选）实例摘要
 pub fn tooltip_text(language: &str, meter: Option<&TrayMeter>) -> String {
     if meter.is_some_and(|meter| meter.alert) {
-        return tray_tooltip(language, true).to_string();
+        return tray_tooltip(language, true);
     }
     let title = tray_tooltip(language, false);
     match meter.and_then(|meter| meter.summary.as_deref()) {
@@ -103,7 +103,7 @@ pub fn tooltip_text(language: &str, meter: Option<&TrayMeter>) -> String {
             let summary = summary.replace('\n', "\r\n");
             format!("{title} — {summary}")
         }
-        _ => title.to_string(),
+        _ => title,
     }
 }
 

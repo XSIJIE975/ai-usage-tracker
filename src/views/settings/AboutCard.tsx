@@ -34,7 +34,9 @@ export function AboutCard() {
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="text-sm font-semibold text-fg">{t("AI 用量助手")}</h3>
-              <span className="text-xs text-fg-muted">AI Usage Tracker</span>
+              <span className="text-xs text-fg-muted">
+                {import.meta.env.DEV ? "AI Usage Tracker (dev)" : "AI Usage Tracker"}
+              </span>
               {version && (
                 <Badge variant="neutral" className="tnum">
                   v{version}
