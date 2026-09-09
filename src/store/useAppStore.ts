@@ -16,7 +16,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   refreshEnabled: true,
   refreshIntervalMinutes: 5,
   alertsEnabled: true,
-  quickPanelShortcut: "Alt+KeyU",
+  // 快捷键默认值随构建分流（ADR-0018）：开发实例 Ctrl+Shift+U，与安装版 Alt+U 错开注册位
+  quickPanelShortcut: import.meta.env.DEV ? "Control+Shift+KeyU" : "Alt+KeyU",
   quickAutoHide: true,
   resetTimeDisplay: "relative",
   interfaceLanguage: "auto",

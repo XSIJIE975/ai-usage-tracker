@@ -393,7 +393,6 @@ export const en: Record<string, string> = {
   "发现新版本": "New version available",
   "已配置": "Set",
   "未配置": "Not set",
-  "快捷键可能与其他程序冲突，请更换": "Shortcut registration failed — it may conflict with another app. Please pick another.",
   "个月": "month",
   "启动": "Startup",
   "登录时自动运行与启动窗口行为。": "Automatic launch and startup window behavior.",

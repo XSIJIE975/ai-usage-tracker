@@ -165,7 +165,9 @@ impl Db {
             "refreshEnabled": true,
             "refreshIntervalMinutes": 5,
             "alertsEnabled": true,
-            "quickPanelShortcut": "Alt+KeyU",
+            // 开发实例默认 Ctrl+Shift+U（ADR-0018）：与安装版的 Alt+U 错开，
+            // 两实例并存时全局快捷键不再抢占同一注册位
+            "quickPanelShortcut": if cfg!(debug_assertions) { "Control+Shift+KeyU" } else { "Alt+KeyU" },
             "quickAutoHide": true,
             "resetTimeDisplay": "relative",
             "interfaceLanguage": "auto",
@@ -579,7 +581,9 @@ mod tests {
     fn missing_row_returns_full_defaults() {
         let db = temp_db();
         let settings = db.get_settings().unwrap();
-        assert_eq!(settings.get("quickPanelShortcut").and_then(Value::as_str), Some("Alt+KeyU"));
+        // 默认快捷键随构建分流（ADR-0018）：debug 测试构建为 dev 默认值
+        let expected_shortcut = if cfg!(debug_assertions) { "Control+Shift+KeyU" } else { "Alt+KeyU" };
+        assert_eq!(settings.get("quickPanelShortcut").and_then(Value::as_str), Some(expected_shortcut));
         assert_eq!(settings.get("autoStart").and_then(Value::as_bool), Some(false));
         assert_eq!(settings.get("silentStart").and_then(Value::as_bool), Some(false));
     }
@@ -595,8 +599,9 @@ mod tests {
         }))
         .unwrap();
         let settings = db.get_settings().unwrap();
-        // 缺失键补默认值 → 启动注册等后端消费方能取到默认快捷键
-        assert_eq!(settings.get("quickPanelShortcut").and_then(Value::as_str), Some("Alt+KeyU"));
+        // 缺失键补默认值 → 启动注册等后端消费方能取到默认快捷键（默认随构建分流，ADR-0018）
+        let expected_shortcut = if cfg!(debug_assertions) { "Control+Shift+KeyU" } else { "Alt+KeyU" };
+        assert_eq!(settings.get("quickPanelShortcut").and_then(Value::as_str), Some(expected_shortcut));
         assert_eq!(settings.get("autoStart").and_then(Value::as_bool), Some(false));
         // 已有键保留用户值，不被默认值覆盖
         assert_eq!(settings.get("refreshIntervalMinutes").and_then(Value::as_i64), Some(30));
