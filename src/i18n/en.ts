@@ -399,6 +399,7 @@ export const en: Record<string, string> = {
   "登录时自动运行与启动窗口行为。": "Automatic launch and startup window behavior.",
   "开机自启": "Launch at login",
   "登录系统后自动运行程序，驻留系统托盘。": "Run the app automatically after signing in and keep it in the system tray.",
+  "开发实例不注册开机自启，安装版的自启设置不受影响。": "Dev builds never register autostart; the installed app's settings are unaffected.",
   "静默启动": "Silent start",
   "开机自启启动时不显示主窗口，仅在系统托盘运行。": "When launched at login, start without showing the main window and stay in the system tray only.",
   "托盘与速览": "Tray & glance",

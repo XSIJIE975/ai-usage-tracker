@@ -10,6 +10,7 @@ import { useT } from "../../i18n";
 /**
  * 启动行为：开机自启与静默启动。静默启动仅作用于自启路径（ADR-0015），
  * 关闭自启时静默启动一并复位为关；系统注册成功后才持久化设置，失败红字提示并回退 UI。
+ * 开发实例不注册开机自启（ADR-0018）：开关置灰并提示，Rust 侧 apply() 亦已短路兜底。
  */
 export function StartupSettings() {
   const settings = useAppStore((state) => state.settings);
@@ -17,6 +18,7 @@ export function StartupSettings() {
   const { visible: savedVisible, flash } = useSaveFlash();
   const [error, setError] = useState<string | null>(null);
   const t = useT();
+  const isDev = import.meta.env.DEV;
 
   /** 先注册系统自启项再落库：注册失败时不改 UI 状态 */
   async function applyAutostart(enabled: boolean, silent: boolean) {
@@ -44,9 +46,11 @@ export function StartupSettings() {
             <SavedHint visible={savedVisible} />
           </div>
           <p className="mt-1 text-[13px] text-fg-muted">{t("登录系统后自动运行程序，驻留系统托盘。")}</p>
+          {isDev && <p className="mt-1 text-xs text-fg-muted">{t("开发实例不注册开机自启，安装版的自启设置不受影响。")}</p>}
         </div>
         <Switch
           checked={settings.autoStart}
+          disabled={isDev}
           onCheckedChange={(value) => void applyAutostart(value, value && settings.silentStart)}
         />
       </div>
@@ -61,6 +65,7 @@ export function StartupSettings() {
             </div>
             <Switch
               checked={settings.silentStart}
+              disabled={isDev}
               onCheckedChange={(value) => void applyAutostart(true, value)}
             />
           </div>

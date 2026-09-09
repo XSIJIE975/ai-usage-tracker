@@ -13,7 +13,12 @@ pub fn launched_silently() -> bool {
 
 /// 注册/取消开机自启。重复调用幂等：enable 以当前可执行路径与参数覆盖旧条目，
 /// 因此启动时对已开启的设置重放一次 enable 可顺带修正安装路径变化。
+/// debug 构建一律短路（ADR-0018）：debug exe 是 console 子系统且路径随构建漂移，
+/// 注册它会覆盖安装版的同名 Run 值；disable 也拦，防止 dev 误删安装版的自启条目。
 pub fn apply(app: &AppHandle, enabled: bool, silent: bool) -> Result<(), String> {
+    if cfg!(debug_assertions) {
+        return Ok(());
+    }
     let entry = build_entry(app, silent)?;
     if enabled {
         entry.enable().map_err(|error| format!("开启开机自启失败：{error}"))
