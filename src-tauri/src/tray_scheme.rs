@@ -52,12 +52,15 @@ impl TrayScheme {
 /// 前端在刷新完成/告警态变化时推送的计量快照
 #[derive(Debug, Clone, Default)]
 pub struct TrayMeter {
-    /// 环/macOS 数字展示的已用百分比（选中实例的最紧窗口，全部窗口的最大值）；None = 无可绘数据。
-    /// 多层化后保留作单层回退与兼容（ADR-0017）
+    /// 环的单层回退百分比（选中实例的最紧窗口）；None = 无可绘数据。
+    /// 多层化后仅作 ring_windows 缺失时的兜底（ADR-0017）；数字标题由 badge_percent 承载（ADR-0020）
     pub ring_percent: Option<f64>,
     /// 环层序百分比（ADR-0017）：外→内按窗口周期短→长排位、取最紧三扇，由前端排序截断后推送；
     /// 空 = 无层数据（回退 ring_percent 单层）
     pub ring_windows: Vec<f64>,
+    /// macOS 数字标题的来源（ADR-0020）：最紧窗口已用百分比（全窗最大值，与选例主键同源）。
+    /// 显式字段、与环层序解耦——数字正确性不依赖「最紧必入图」；None = 无数字
+    pub badge_percent: Option<f64>,
     /// 柱的上条（已用%最高两窗中重置较近的）；None = 无柱可绘
     pub bar_top: Option<f64>,
     /// 柱的下条（重置较远的）；None = 上条单条居中
@@ -109,16 +112,15 @@ fn presentation_changes(previous: Option<&Presentation>, next: &Presentation) ->
     }
 }
 
-/// macOS 图标旁的数字标题：用量环方案 = 外环（最短周期窗）百分比取整，与图标最外那根环一一对应
-/// （ADR-0017）；其余方案为空串。
+/// macOS 图标旁的数字标题：用量环方案 = 最紧窗口已用百分比取整（ADR-0020）——数字回答
+/// 「离下一次撞限额还有多远」，随最紧窗切换，与图标外环不必对应；其余方案为空串。
 ///
 /// 为什么是空串而不是 None：tray-icon 0.24.2 的 `set_title_inner` 是 `if let Some(title)`，
 /// 传 `None` 在 macOS 是**空操作**——从「用量环」切到「默认 / 用量柱」后，旧数字会永远留在
 /// 菜单栏上（Windows/Linux 的 set_title 是空实现，传什么都不会有副作用）。
-fn badge_text(scheme: TrayScheme, ring_percents: &[f64]) -> String {
+fn badge_text(scheme: TrayScheme, badge_percent: Option<f64>) -> String {
     match scheme {
-        TrayScheme::UsageRing => ring_percents
-            .first()
+        TrayScheme::UsageRing => badge_percent
             .map(|percent| format!("{}", percent.round()))
             .unwrap_or_default(),
         _ => String::new(),
@@ -175,6 +177,8 @@ pub fn apply(app: &tauri::AppHandle) {
         .as_ref()
         .map(|meter| ring_layer_percents(&meter.ring_windows, meter.ring_percent))
         .unwrap_or_default();
+    // badge 数字（ADR-0020）：显式字段，不从 ring_windows 推断
+    let badge_percent = meter.as_ref().and_then(|meter| meter.badge_percent);
 
     // 图标按主窗口 DPI 档位绘制（100%→16px、125%→20px、150%→24px、200%→32px）
     let scale = app
@@ -195,7 +199,7 @@ pub fn apply(app: &tauri::AppHandle) {
     };
     let presentation = Presentation {
         icon: Some((icon.width(), icon.height(), icon.rgba().to_vec())),
-        title: badge_text(scheme, &ring_percents),
+        title: badge_text(scheme, badge_percent),
         tooltip: tooltip_text(&language, meter.as_ref()),
     };
 
@@ -573,12 +577,14 @@ pub fn set_tray_icon_scheme(app: tauri::AppHandle, scheme: String) -> Result<(),
 
 /// 推送计量快照（主窗口在刷新完成/告警态变化时调用，是托盘呈现的唯一数据写入方）。
 /// ring_windows（ADR-0017）：环层序百分比（外→内 = 周期短→长，前端取最紧三扇），
-/// 缺省时回退 ring_percent 单层。
+/// 缺省时回退 ring_percent 单层。badge_percent（ADR-0020）：数字标题 = 最紧窗口已用
+/// 百分比，由前端显式传递，与环层序解耦。
 #[tauri::command]
 pub fn update_tray_meter(
     app: tauri::AppHandle,
     ring_percent: Option<f64>,
     ring_windows: Option<Vec<f64>>,
+    badge_percent: Option<f64>,
     bar_top: Option<f64>,
     bar_bottom: Option<f64>,
     alert: bool,
@@ -597,6 +603,7 @@ pub fn update_tray_meter(
                 .filter(|value| value.is_finite())
                 .take(RING_LAYERS_MAX)
                 .collect(),
+            badge_percent,
             bar_top,
             bar_bottom,
             alert,
@@ -1123,16 +1130,16 @@ mod tests {
         assert_eq!(presentation_changes(Some(&base), &repainted), (true, false, false));
     }
 
-    /// 数字标题（ADR-0017/0019）：环方案取层序首元素（外环百分比）取整；
+    /// 数字标题（ADR-0020）：环方案取显式 badge_percent（最紧窗口已用百分比）取整；
     /// 非环方案是**空串**而不是「不设置」——tray-icon 0.24.2 的 `set_title(None)` 在 macOS
     /// 是空操作，传空串才能清掉切换方案后残留的旧数字。
     #[test]
-    fn badge_text_follows_scheme_and_outer_ring() {
-        assert_eq!(badge_text(TrayScheme::UsageRing, &[4.4, 100.0, 12.0]), "4");
-        assert_eq!(badge_text(TrayScheme::UsageRing, &[99.6]), "100");
-        assert_eq!(badge_text(TrayScheme::UsageRing, &[]), "");
-        assert_eq!(badge_text(TrayScheme::Default, &[4.4]), "");
-        assert_eq!(badge_text(TrayScheme::UsageBars, &[4.4, 100.0]), "");
+    fn badge_text_follows_tightest_window() {
+        assert_eq!(badge_text(TrayScheme::UsageRing, Some(4.4)), "4");
+        assert_eq!(badge_text(TrayScheme::UsageRing, Some(99.6)), "100");
+        assert_eq!(badge_text(TrayScheme::UsageRing, None), "");
+        assert_eq!(badge_text(TrayScheme::Default, Some(4.4)), "");
+        assert_eq!(badge_text(TrayScheme::UsageBars, Some(4.4)), "");
     }
 
     /// 手工预览工具：把「修复前 vs 修复后」的用量柱渲染成放大 PNG（ADR-0016 修复留档）。

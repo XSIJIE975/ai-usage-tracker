@@ -147,3 +147,25 @@ describe("ringWindows 环层序（ADR-0017：周期短→长，取最紧三扇�
     ]);
   });
 });
+
+describe("最紧百分比（ADR-0020：badge 数字口径）", () => {
+  const HOUR_MS = 3_600_000;
+  const DAY_MS = 86_400_000;
+
+  it("取全部窗口的最大值，与环层序解耦（外环仍是最短周期窗）", () => {
+    const fiveHour = progress("{hours} 小时请求配额", 20, undefined, 5 * HOUR_MS);
+    const weekly = progress("每周请求配额", 90, "2026-09-13T00:00:00.000Z", 7 * DAY_MS);
+    const candidate = build([fiveHour, weekly]);
+    // 数字 = 全窗 max（周窗 90），外环 = 周期最短窗（5h 20）——两口径互不干涉
+    expect(candidate.percent).toBe(90);
+    expect(candidate.ringWindows.map((w) => w.percent)).toEqual([20, 90]);
+  });
+
+  it("平手时数字取值不变，tightestWindow 落在重置更近的一扇", () => {
+    const fiveHour = progress("5h 窗", 50, "2026-09-11T00:00:00.000Z", 5 * HOUR_MS);
+    const weekly = progress("周窗", 50, "2026-09-13T00:00:00.000Z", 7 * DAY_MS);
+    const candidate = build([fiveHour, weekly]);
+    expect(candidate.percent).toBe(50);
+    expect(candidate.tightestWindow.label).toBe("5h 窗");
+  });
+});

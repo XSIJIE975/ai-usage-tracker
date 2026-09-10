@@ -27,7 +27,7 @@ export interface TrayMeterCandidate {
   /** 全部配额窗口，按重置时间近→远排序（柱的上→下、tooltip 行序，ADR-0016 口径）；
       缺失 resetsAt 的排在后段、保持快照相对顺序 */
   windows: TrayMeterWindow[];
-  /** 最紧窗口已用百分比（全部窗口的最大值）：环/macOS 数字展示它，也是自动排序主键 */
+  /** 最紧窗口已用百分比（全部窗口的最大值，平手取重置更近的一扇）：badge 数字（ADR-0020）与自动排序主键 */
   percent: number;
   /** 最紧窗口（设置页「当前展示」的原因标注用它） */
   tightestWindow: TrayMeterWindow;
@@ -163,6 +163,9 @@ export function useTraySync(
     const ringPercent = chosen?.percent ?? null;
     // 环层序百分比（ADR-0017）：外→内 = 周期短→长，前端取最紧三扇；ring_percent 保留兼容
     const ringWindowPercents = chosen?.ringWindows.map((window) => window.percent) ?? [];
+    // badge 数字（ADR-0020）：最紧窗口已用百分比，显式字段传递——与环层序解耦，
+    // 数字正确性不依赖「最紧必入图」，外环是哪扇窗与数字读哪扇窗互不干涉
+    const badgePercent = chosen?.percent ?? null;
     const barTop = chosen?.barWindows[0]?.percent ?? null;
     const barBottom = chosen?.barWindows[1]?.percent ?? null;
     // tooltip 多行摘要：首行实例名，其后每个配额窗口一行（顺序与柱的上→下一致）
@@ -180,6 +183,7 @@ export function useTraySync(
     void invoke("update_tray_meter", {
       ringPercent,
       ringWindows: ringWindowPercents,
+      badgePercent,
       barTop,
       barBottom,
       alert,
