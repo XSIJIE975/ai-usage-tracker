@@ -45,17 +45,9 @@ export function useT() {
   };
 }
 
-/** 替换模板文案中的 {name} 占位符（与诊断文案的 {detail} 约定一致，中文模板同样适用） */
-export function applyParams(
-  text: string,
-  params: Record<string, string | number> | undefined,
-): string {
-  if (!params) return text;
-  return Object.entries(params).reduce(
-    (acc, [key, value]) => acc.split(`{${key}}`).join(String(value)),
-    text,
-  );
-}
+/** 纯函数从 ./apply-params 转发：保持既有导入路径不变；
+ *  处于 store 导入链上的非 React 模块请直接走纯模块，避免循环导入 */
+export { applyParams } from "./apply-params";
 
 /** 当前解析后的语言（供非字典的模板格式化使用，如预测文案） */
 export function useLanguage(): Language {

@@ -227,3 +227,51 @@ describe("GLM 配额与余额双规则", () => {
     expect(onActiveChange).toHaveBeenLastCalledWith("glm-1", false);
   });
 });
+
+describe("额度耗尽规则（ADR-0021）", () => {
+  const windowed = (
+    providerId: "glm" | "opencode-go",
+    lines: ProviderSnapshot["lines"],
+  ): { inst: ProviderInstance; snapshot: ProviderSnapshot } => ({
+    inst: instance({ id: providerId, providerId, threshold: 80 }),
+    snapshot: {
+      instanceId: providerId,
+      providerId,
+      providerName: providerId === "glm" ? "智谱 GLM" : "OpenCode Go",
+      status: "ok",
+      updatedAt: 0,
+      lines,
+    },
+  });
+
+  it("盲区场景：预算窗（月 40%）远低于阈值、5h 窗撞满，仍产生耗尽告警", () => {
+    const { inst, snapshot } = windowed("opencode-go", [
+      { type: "progress", label: "本月额度", percentUsed: 40, resetsAt: "2026-09-30T00:00:00Z" },
+      { type: "progress", label: "本周额度", percentUsed: 95, resetsAt: "2026-09-14T00:00:00Z" },
+      { type: "progress", label: "5 小时请求配额", percentUsed: 100 },
+    ]);
+    const fires = evaluateRules(inst, snapshot);
+    // 主指标 = 重置最远窗（月 40）< 阈值 80 → monthly 不触发；耗尽规则兜住撞满的 5h 窗
+    expect(fires.map((fire) => fire.ruleKey)).toEqual(["opencode-go:exhausted"]);
+    expect(fires[0]!.body).toContain("5 小时请求配额");
+  });
+
+  it("多窗同时撞满时全部列名；阈值告警与耗尽告警互不替代", () => {
+    const { inst, snapshot } = windowed("glm", [
+      { type: "progress", label: "每周请求配额", percentUsed: 100, resetsAt: "2026-09-14T00:00:00Z" },
+      { type: "progress", label: "{hours} 小时请求配额", percentUsed: 100, params: { hours: 5 } },
+    ]);
+    const fires = evaluateRules(inst, snapshot);
+    expect(fires.map((fire) => fire.ruleKey)).toEqual(["glm:quota", "glm:exhausted"]);
+    expect(fires[1]!.title).toBe("智谱 GLM 额度耗尽");
+    expect(fires[1]!.body).toContain("「每周请求配额」");
+    expect(fires[1]!.body).toContain("「5 小时请求配额」");
+  });
+
+  it("无窗口达到 100% 时不产生耗尽 fire", () => {
+    const { inst, snapshot } = windowed("glm", [
+      { type: "progress", label: "每周请求配额", percentUsed: 50 },
+    ]);
+    expect(evaluateRules(inst, snapshot)).toEqual([]);
+  });
+});
