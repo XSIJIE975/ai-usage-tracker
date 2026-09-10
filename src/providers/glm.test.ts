@@ -319,7 +319,13 @@ describe("parseQuotaLimits", () => {
     });
     expect(lines).toHaveLength(2);
     expect(lines[0]).toMatchObject({ type: "badge", value: "Pro" });
-    expect(lines[1]).toMatchObject({ label: "{hours} 小时请求配额", used: 600, limit: 1000 });
+    // percentage 缺失时按 used/limit 折算：托盘候选与告警都要求 percentUsed 是数字（600/1000 → 60%）
+    expect(lines[1]).toMatchObject({
+      label: "{hours} 小时请求配额",
+      used: 600,
+      limit: 1000,
+      percentUsed: 60,
+    });
   });
 
   it("recognizes the international TOKENS_LIMIT / TIME_LIMIT vocabulary", () => {

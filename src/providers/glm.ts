@@ -193,14 +193,19 @@ export function parseQuotaLimits(data: GlmQuotaData | undefined): MetricLine[] {
     const limitValue =
       limit.usage ??
       (limit.remaining != null && limit.currentValue != null ? limit.remaining + limit.currentValue : undefined);
-    if (limit.percentage == null && (used == null || limitValue == null)) continue;
+    // percentage 缺失时用 used/limit 折算：托盘候选与告警都要求 percentUsed 是数字，
+    // 缺了它实例会整条出局（托盘不显示、阈值告警失效）
+    const percent =
+      limit.percentage ??
+      (used != null && limitValue != null && limitValue > 0 ? (used / limitValue) * 100 : undefined);
+    if (percent == null) continue;
     lines.push({
       type: "progress",
       label: spec.label,
       ...(spec.params ? { params: spec.params } : {}),
       windowPeriodMs: spec.periodMs,
       ...(used != null && limitValue != null ? { used, limit: limitValue } : {}),
-      ...(limit.percentage != null ? { percentUsed: limit.percentage } : {}),
+      percentUsed: percent,
       ...(limit.nextResetTime != null && limit.nextResetTime > 0
         ? { resetsAt: new Date(limit.nextResetTime).toISOString() }
         : {}),
