@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type {
   AppSettings,
   ProviderInstance,
@@ -60,8 +61,25 @@ function waitForTauriRuntime(timeoutMs = 5_000) {
   });
 }
 
+/** 当前 webview 的窗口标签（main / quick / glance）；非 Tauri 环境取不到时返回空串 */
+export function currentWindowLabel(): string {
+  try {
+    return getCurrentWindow().label;
+  } catch {
+    return "";
+  }
+}
+
+/** `refresh-completed` 的载荷：倒计时基准 + 发起方标签（发起方自己刚读过库，收敛时可跳过重读） */
+export interface RefreshCompletedPayload {
+  refreshedAt: number;
+  source: string;
+}
+
+/** 广播刷新完成：既对齐各窗口的倒计时基准，也宣告快照事实源已更新（ADR-0019 快照收敛） */
 function emitRefreshCompleted(refreshedAt: number) {
-  void emit("refresh-completed", { refreshedAt }).catch(() => undefined);
+  const payload: RefreshCompletedPayload = { refreshedAt, source: currentWindowLabel() };
+  void emit("refresh-completed", payload).catch(() => undefined);
 }
 
 async function invokeWithTimeout<T>(command: string, timeoutMs: number): Promise<T> {
@@ -121,6 +139,8 @@ interface AppStore {
   manualRefreshTick: number;
   loadInitial: () => Promise<void>;
   reloadInstances: () => Promise<void>;
+  /** 快照收敛（ADR-0019）：只重读落库快照，不碰设置/实例 */
+  reloadSnapshots: () => Promise<void>;
   refreshAll: (options?: { auto?: boolean }) => Promise<void>;
   refreshInstance: (instanceId: string) => Promise<void>;
   addInstance: (
@@ -218,6 +238,18 @@ export const useAppStore = create<AppStore>((set, get) => ({
       set({ instances });
     } catch {
       // 留旧值兜底，下一轮事件/聚焦会再同步
+    }
+  },
+
+  // 快照收敛（ADR-0019）：任一窗口刷新落库后，其余窗口以落库结果为准重读快照。
+  // 只读快照、不重读设置与实例；读的是各实例的最新行，因此部分刷新（自动刷新只覆盖开自动的实例）
+  // 也能正确收敛——未参与本轮的实例拿到自己的上次落库值，不会被抹掉。
+  reloadSnapshots: async () => {
+    try {
+      const stored = await invoke<StoredSnapshot[]>("get_latest_snapshots");
+      set({ snapshots: stored.map(toSnapshot) });
+    } catch {
+      // 留旧值兜底，下一轮刷新/唤起会再同步
     }
   },
 

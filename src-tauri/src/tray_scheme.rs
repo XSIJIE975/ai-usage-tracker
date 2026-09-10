@@ -68,13 +68,61 @@ pub struct TrayMeter {
     pub summary: Option<String>,
 }
 
-/// 托盘呈现的共享状态：方案、计量快照、界面语言与 glance 隐藏时刻（blur 竞态判定）
+/// 托盘呈现的共享状态：方案、计量快照、界面语言、glance 隐藏时刻（blur 竞态判定）
+/// 与上一次写进状态项的呈现（呈现指纹，ADR-0019）
 #[derive(Default)]
 pub struct TrayState {
     pub scheme: Mutex<TrayScheme>,
     pub meter: Mutex<Option<TrayMeter>>,
     pub language: Mutex<String>,
     pub glance_hidden_at: Mutex<Option<Instant>>,
+    /// 呈现指纹（ADR-0019）：内容没变就不碰状态项，避免 macOS 上无谓重建重绘
+    pub presentation: Mutex<Option<Presentation>>,
+}
+
+/// 呈现指纹：上一次真正写进状态项的三部分内容（ADR-0019）。
+///
+/// 为什么必须比对：macOS 上每个 setter 都会重建状态项——tray-icon 0.24.2 的
+/// `set_icon_for_ns_status_item_button` 走「PNG 编码 → 新建 NSImage → `setImage` →
+/// `setImagePosition(ImageLeft)`」，`set_title_inner` 走 `button.setTitle`，两者末尾都调
+/// `tray_target.update_dimensions()`（内部 `setFrame`）。因此内容一字未改的重放，用户看到的是
+/// 图标旁数字肉眼可见地闪一下（D 方案：数据没变就不许重绘）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct Presentation {
+    /// 图标位图（尺寸 + 直通 RGBA）：DPI 档位或用量变化才不同
+    pub icon: Option<(u32, u32, Vec<u8>)>,
+    /// macOS 图标旁的数字标题；空串 = 无数字（不可用 None，见 `badge_text`）
+    pub title: String,
+    pub tooltip: String,
+}
+
+/// 呈现差异：需要写入的三部分（图标 / 提示 / 标题），与上次一致的部分不必调用对应 setter
+fn presentation_changes(previous: Option<&Presentation>, next: &Presentation) -> (bool, bool, bool) {
+    match previous {
+        Some(previous) => (
+            previous.icon != next.icon,
+            previous.tooltip != next.tooltip,
+            previous.title != next.title,
+        ),
+        // 首次应用（进程启动）：三件套全写
+        None => (true, true, true),
+    }
+}
+
+/// macOS 图标旁的数字标题：用量环方案 = 外环（最短周期窗）百分比取整，与图标最外那根环一一对应
+/// （ADR-0017）；其余方案为空串。
+///
+/// 为什么是空串而不是 None：tray-icon 0.24.2 的 `set_title_inner` 是 `if let Some(title)`，
+/// 传 `None` 在 macOS 是**空操作**——从「用量环」切到「默认 / 用量柱」后，旧数字会永远留在
+/// 菜单栏上（Windows/Linux 的 set_title 是空实现，传什么都不会有副作用）。
+fn badge_text(scheme: TrayScheme, ring_percents: &[f64]) -> String {
+    match scheme {
+        TrayScheme::UsageRing => ring_percents
+            .first()
+            .map(|percent| format!("{}", percent.round()))
+            .unwrap_or_default(),
+        _ => String::new(),
+    }
 }
 
 impl TrayState {
@@ -108,7 +156,8 @@ pub fn tooltip_text(language: &str, meter: Option<&TrayMeter>) -> String {
 }
 
 /// 按当前方案与计量快照重放托盘呈现（图标 + tooltip + macOS 标题）。
-/// 切换方案、推送计量、语言变化、DPI 变化后都要调一次。
+/// 切换方案、推送计量、语言变化、DPI 变化后都要调一次；重放是**幂等**的——
+/// 与上次内容一致的部分不会写进状态项（呈现指纹，ADR-0019），所以重复调用不会让状态项闪烁。
 pub fn apply(app: &tauri::AppHandle) {
     let Some(tray) = app.tray_by_id("main-tray") else {
         return;
@@ -144,15 +193,34 @@ pub fn apply(app: &tauri::AppHandle) {
         }
         _ => fallback_icon(app, alert),
     };
-    let _ = tray.set_icon(Some(icon));
-    let _ = tray.set_tooltip(Some(tooltip_text(&language, meter.as_ref())));
-    // macOS 在图标旁显示外环（最短周期窗）的百分比文本（ADR-0017：与图标最外那根环一一对应，
-    // 单层时即唯一环、与旧「最紧窗」行为一致）；Windows/Linux 为空实现（ADR-0016）
-    let badge = match scheme {
-        TrayScheme::UsageRing => ring_percents.first().map(|percent| format!("{}", percent.round())),
-        _ => None,
+    let presentation = Presentation {
+        icon: Some((icon.width(), icon.height(), icon.rgba().to_vec())),
+        title: badge_text(scheme, &ring_percents),
+        tooltip: tooltip_text(&language, meter.as_ref()),
     };
-    let _ = tray.set_title(badge.as_deref());
+
+    // 指纹比对与写入分两段：tray-icon 的 setter 会把闭包派发到主线程并等待
+    // （run_item_main_thread），若持着锁等主线程、而主线程恰好也在 apply 里等这把锁，
+    // 就是一个真实的死锁面——锁内只做比对与记账。
+    let (write_icon, write_tooltip, write_title) = {
+        let mut applied = state
+            .presentation
+            .lock()
+            .expect("tray presentation lock poisoned");
+        let previous = applied.replace(presentation.clone());
+        presentation_changes(previous.as_ref(), &presentation)
+    };
+
+    // 内容没变的部分一个 setter 都不调（ADR-0019）：macOS 状态项只在真的变化时重建重绘
+    if write_icon {
+        let _ = tray.set_icon(Some(icon));
+    }
+    if write_tooltip {
+        let _ = tray.set_tooltip(Some(presentation.tooltip.as_str()));
+    }
+    if write_title {
+        let _ = tray.set_title(Some(presentation.title.as_str()));
+    }
 }
 
 /// 环层数据解析（ADR-0017）：优先层序数组 ring_windows（外→内），缺失回退单值
@@ -1020,6 +1088,51 @@ mod tests {
         );
         assert_eq!(ring_layer_percents(&[], Some(42.0)), vec![42.0]);
         assert!(ring_layer_percents(&[], None).is_empty());
+    }
+
+    /// 呈现指纹（ADR-0019）：无变化时一个 setter 都不许被调用；任一字段变化只放行对应那一项。
+    /// 回归背景：无谓重放会在 macOS 上整项重建状态项，肉眼表现为图标旁数字闪一下。
+    #[test]
+    fn presentation_changes_flags_only_dirty_parts() {
+        let base = Presentation {
+            icon: Some((16, 16, vec![0, 1, 2, 3])),
+            title: "4".to_string(),
+            tooltip: "AI 用量助手 — 5 小时请求配额（已用 4%）".to_string(),
+        };
+
+        // 首次应用：三件套全写
+        assert_eq!(presentation_changes(None, &base), (true, true, true));
+        // 内容一致：一项都不写
+        assert_eq!(presentation_changes(Some(&base), &base), (false, false, false));
+
+        let mut title = base.clone();
+        title.title = "5".to_string();
+        assert_eq!(presentation_changes(Some(&base), &title), (false, false, true));
+
+        let mut tooltip = base.clone();
+        tooltip.tooltip.push('。');
+        assert_eq!(presentation_changes(Some(&base), &tooltip), (false, true, false));
+
+        let mut icon = base.clone();
+        icon.icon = Some((24, 24, vec![0, 1, 2, 3]));
+        assert_eq!(presentation_changes(Some(&base), &icon), (true, false, false));
+
+        // 图标同尺寸但像素不同（用量变化）也要放行
+        let mut repainted = base.clone();
+        repainted.icon = Some((16, 16, vec![9, 9, 9, 9]));
+        assert_eq!(presentation_changes(Some(&base), &repainted), (true, false, false));
+    }
+
+    /// 数字标题（ADR-0017/0019）：环方案取层序首元素（外环百分比）取整；
+    /// 非环方案是**空串**而不是「不设置」——tray-icon 0.24.2 的 `set_title(None)` 在 macOS
+    /// 是空操作，传空串才能清掉切换方案后残留的旧数字。
+    #[test]
+    fn badge_text_follows_scheme_and_outer_ring() {
+        assert_eq!(badge_text(TrayScheme::UsageRing, &[4.4, 100.0, 12.0]), "4");
+        assert_eq!(badge_text(TrayScheme::UsageRing, &[99.6]), "100");
+        assert_eq!(badge_text(TrayScheme::UsageRing, &[]), "");
+        assert_eq!(badge_text(TrayScheme::Default, &[4.4]), "");
+        assert_eq!(badge_text(TrayScheme::UsageBars, &[4.4, 100.0]), "");
     }
 
     /// 手工预览工具：把「修复前 vs 修复后」的用量柱渲染成放大 PNG（ADR-0016 修复留档）。

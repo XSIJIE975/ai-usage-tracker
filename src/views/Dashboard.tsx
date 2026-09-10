@@ -36,7 +36,7 @@ import {
   sortableKeyboardCoordinates,
   useSortable,
 } from "@dnd-kit/sortable";
-import { useAppStore } from "../store/useAppStore";
+import { useAppStore, currentWindowLabel, type RefreshCompletedPayload } from "../store/useAppStore";
 import { useAlertStore } from "../store/useAlertStore";
 import { selectUnreadCount, useNotificationStore } from "../store/useNotificationStore";
 import { Button } from "../components/ui/button";
@@ -203,9 +203,14 @@ export function Dashboard() {
     let disposed = false;
     let stopListening: UnlistenFn | undefined;
 
-    void listen<{ refreshedAt: number }>("refresh-completed", (event) => {
+    void listen<RefreshCompletedPayload>("refresh-completed", (event) => {
       if (disposed) return;
       setRemoteRefreshedAt((current) => Math.max(current, event.payload.refreshedAt));
+      // 快照收敛（ADR-0019）：别的窗口刷出来的结果回流到本窗口，托盘呈现随之重算。
+      // 本窗口自己发起的那次刚在 refreshAll 里读过库，跳过以免白读一遍。
+      if (event.payload.source !== currentWindowLabel()) {
+        void useAppStore.getState().reloadSnapshots();
+      }
     })
       .then((unlisten) => {
         if (disposed) unlisten();

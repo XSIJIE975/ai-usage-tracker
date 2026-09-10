@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
-import { useAppStore } from "../store/useAppStore";
+import { useAppStore, type RefreshCompletedPayload } from "../store/useAppStore";
 import { useAlertStore } from "../store/useAlertStore";
 import { useNotificationStore } from "../store/useNotificationStore";
 import { applyTheme } from "../lib/theme";
@@ -31,7 +31,8 @@ export interface PanelWindowConfig {
  * - theme-changed           主题模式（lib/theme.ts，main.tsx 的 initThemeSync 全窗口监听）
  * - instances-changed       实例增删/排序（Rust 命令发出）
  * - alert-state-changed     实例告警态（告警协调器发出）
- * - refresh-completed       刷新完成基准（store 发出）
+ * - refresh-completed       刷新完成：倒计时基准 + 快照事实源已更新（ADR-0019 快照收敛，
+ *                           新窗口接入必须两者都挂，只挂基准会表现为「面板数字停在旧值」）
  * - vault-status-changed / credentials-changed（Rust 发出）
  * 注意：事件与窗口 API 受 Tauri capabilities 管控——capabilities/default.json 对窗口标签
  * 用 glob 全量授权，新增窗口不要改回逐个列举，否则新窗口会静默失去全部事件（速览面板配置
@@ -49,6 +50,9 @@ export function usePanelWindow(config: PanelWindowConfig) {
   focusGuardRef.current = config.onFocusGained;
   const escapeRef = useRef(config.onEscape);
   escapeRef.current = config.onEscape;
+  // 可见性同样经 ref 透传：事件管道只在挂载时建立一次，而快照收敛（ADR-0019）要读「当时」的可见性
+  const panelVisibleRef = useRef(false);
+  panelVisibleRef.current = panelVisible;
 
   const syncFromBackend = useCallback(async () => {
     await loadInitial();
@@ -122,12 +126,18 @@ export function usePanelWindow(config: PanelWindowConfig) {
             void syncFromBackend();
           }),
         );
-        // 主窗口（或本窗口）刷新完成时同步倒计时基准，各窗口的自动刷新节奏保持一致
+        // 主窗口（或本窗口）刷新完成时同步倒计时基准，各窗口的自动刷新节奏保持一致；
+        // 同时按 ADR-0019 收敛快照：别的窗口刷出的结果回流到本窗口，面板展示随之更新。
+        // 隐藏中的面板不重读——不可见 webview 不吃数据，唤起事件会把它补上（syncFromBackend
+        // 先 loadInitial）；发起方自己刚在 refreshAll 里读过库，也跳过。
         track(
-          await listen<{ refreshedAt: number }>("refresh-completed", (event) => {
+          await listen<RefreshCompletedPayload>("refresh-completed", (event) => {
             useAppStore.setState((state) => ({
               lastRefreshedAt: Math.max(state.lastRefreshedAt, event.payload.refreshedAt),
             }));
+            if (event.payload.source === window.label) return;
+            if (!panelVisibleRef.current) return;
+            void useAppStore.getState().reloadSnapshots();
           }),
         );
         // 主窗口保存设置（界面语言、自动刷新等）时实时同步到本窗口，无需等聚焦重载

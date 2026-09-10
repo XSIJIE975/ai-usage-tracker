@@ -118,9 +118,13 @@ pub fn run() {
                         let _ = window.hide();
                     }
                 }
-                // DPI 变化后用量环需按新档位重绘（ADR-0016）
+                // DPI 变化后用量环需按新档位重绘（ADR-0016）。
+                // 只认主窗口：图标尺寸取自主窗口的缩放档位（tray_scheme::apply 内读 main 的
+                // scale_factor），面板窗口的缩放变化对托盘没有意义，不该触发重绘（ADR-0019）
                 tauri::WindowEvent::ScaleFactorChanged { .. } => {
-                    tray_scheme::apply(window.app_handle());
+                    if window.label() == "main" {
+                        tray_scheme::apply(window.app_handle());
+                    }
                 }
                 _ => {}
             }
