@@ -9,17 +9,28 @@ export function parseMetricValue(raw: string): number | null {
 }
 
 /**
- * 主指标对应的进度行：resetsAt 最远的一行（OpenCode：本月额度是重置周期最长的窗口；GLM：周配额）。
+ * 主指标对应的进度行：重置周期最长的一行（OpenCode：本月额度；GLM：周配额）。
  * 按结构而非文案匹配（对 i18n 与供应商扩展稳健）。无进度行返回 null。
+ *
+ * 排序口径：有 resetsAt 的行用重置时刻；缺失时（GLM 滚动窗只在有消耗时下发
+ * nextResetTime）不能用「空串=最近」参与比较——那会让周窗落选、阈值告警退化为盯
+ * 5h 短窗的日常冲高——改用结构化周期 windowPeriodMs（ADR-0017）外推：周期越长
+ * 离下一次重置越远。
  */
 export function primaryProgressLine(lines: MetricLine[]): MetricLine | null {
   const progressLines = lines.filter(
     (line) => line.type === "progress" && typeof line.percentUsed === "number",
   );
   if (progressLines.length === 0) return null;
-  return progressLines.reduce((a, b) =>
-    (a.resetsAt ?? "") >= (b.resetsAt ?? "") ? a : b,
-  );
+  const now = Date.now();
+  const resetDistance = (line: MetricLine): number => {
+    if (line.resetsAt) {
+      const parsed = Date.parse(line.resetsAt);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return now + (line.windowPeriodMs ?? 0);
+  };
+  return progressLines.reduce((a, b) => (resetDistance(a) >= resetDistance(b) ? a : b));
 }
 
 /** 账户余额所在的 text 行（第一个可解析数值的 text 行），供展示余额原文；无则 null */

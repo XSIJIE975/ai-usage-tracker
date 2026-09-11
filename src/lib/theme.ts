@@ -78,15 +78,14 @@ export function getEffectiveTheme(): "light" | "dark" {
  * 主题变化时触发组件重渲染，图表 / 色板等可以读取最新 CSS 变量值。
  */
 export function useEffectiveTheme(): "light" | "dark" {
-  const mode = useThemeMode();
+  // useThemeMode 的调用（而非其返回值）订阅 data-theme 变化，保证模式切换时本 hook 重渲染；
+  // useSyncExternalStore 负责监听 matchMedia 变化
+  useThemeMode();
   return useSyncExternalStore(
     subscribeEffectiveTheme,
     getEffectiveTheme,
     () => "light" as "light" | "dark",
   );
-  // useThemeMode 调用保证 mode 变化时本 hook 也重渲染；
-  // useSyncExternalStore 负责监听 matchMedia 变化
-  void mode;
 }
 
 function subscribeEffectiveTheme(fn: () => void) {

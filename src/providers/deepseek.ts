@@ -17,6 +17,14 @@ interface DeepSeekBalanceResponse {
   }>;
 }
 
+/** 金额字段解析为有限数；缺失/非数值返回 null——不折算为 0（会把余额显示成 ¥0.00
+ *  并误报余额告警），不透传 NaN（Intl.format 会渲染出 "NaN"） */
+function toAmount(value: string | number | undefined): number | null {
+  if (value === undefined) return null;
+  const parsed = typeof value === "number" ? value : Number(String(value).trim());
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 async function fetchBalance(instance: ProviderInstance): Promise<ProviderSnapshot> {
   const status = await invoke<InstanceCredentialStatus>("vault_credential_status", {
     instanceId: instance.id,
@@ -72,7 +80,21 @@ async function fetchBalance(instance: ProviderInstance): Promise<ProviderSnapsho
     }
 
     const currency = infos[0].currency ?? "CNY";
-    const total = Number(infos[0].total_balance ?? 0);
+    const total = toAmount(infos[0].total_balance);
+    if (total === null) {
+      // 余额是 DeepSeek 的唯一指标：解析不出就如实报错误快照（ADR-0023 语义），
+      // 绝不能折算成 0 触发虚假的余额告警
+      return {
+        instanceId: instance.id,
+        providerId: "deepseek",
+        providerName: "DeepSeek",
+        status: "error",
+        updatedAt,
+        message: "DeepSeek 余额字段无法解析：{detail}",
+        messageParams: { detail: String(infos[0].total_balance ?? "字段缺失") },
+        lines: [],
+      };
+    }
     const formatter = new Intl.NumberFormat("zh-CN", { style: "currency", currency });
     const lines = [
       {
@@ -88,8 +110,9 @@ async function fetchBalance(instance: ProviderInstance): Promise<ProviderSnapsho
       },
     ];
 
-    const toppedUp = Number(infos[0].topped_up_balance ?? 0);
-    const granted = Number(infos[0].granted_balance ?? 0);
+    // 充值/赠送余额缺字段时跳过该行（不显示 ¥0.00）
+    const toppedUp = toAmount(infos[0].topped_up_balance);
+    const granted = toAmount(infos[0].granted_balance);
     if (toppedUp > 0) {
       lines.push({ type: "text" as const, label: "充值余额", value: formatter.format(toppedUp) });
     }

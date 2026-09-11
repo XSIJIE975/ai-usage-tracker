@@ -620,8 +620,10 @@ pub fn list_notifications(
     state: State<'_, AppState>,
     limit: Option<i64>,
 ) -> Result<Vec<db::StoredNotification>, String> {
+    // limit 收敛到合法区间：SQLite 的 LIMIT -1 语义是「不限制」，不能把负数当全量放行
+    let limit = limit.unwrap_or(200).clamp(1, 500);
     let db = state.db.lock().expect("db lock poisoned");
-    db.list_notifications(limit.unwrap_or(200))
+    db.list_notifications(limit)
 }
 
 #[tauri::command]

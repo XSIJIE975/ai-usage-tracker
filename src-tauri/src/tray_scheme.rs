@@ -600,18 +600,20 @@ pub fn update_tray_meter(
     let state = app.state::<TrayState>();
     {
         let mut meter = state.meter.lock().expect("tray meter lock poisoned");
+        // 防御性规整：丢弃非有限值（当前 JSON 序列化下 NaN 不可达，防御深度保持一致——
+        // NaN 一旦到达会把 badge 渲染成 "NaN"、环画成满圈）
+        let finite = |value: Option<f64>| value.filter(|value| value.is_finite());
         *meter = Some(TrayMeter {
-            ring_percent,
-            // 防御性规整：只取前三层、丢弃非有限值（正常路径前端已保证）
+            ring_percent: finite(ring_percent),
             ring_windows: ring_windows
                 .unwrap_or_default()
                 .into_iter()
                 .filter(|value| value.is_finite())
                 .take(RING_LAYERS_MAX)
                 .collect(),
-            badge_percent,
-            bar_top,
-            bar_bottom,
+            badge_percent: finite(badge_percent),
+            bar_top: finite(bar_top),
+            bar_bottom: finite(bar_bottom),
             alert,
             // tooltip Windows 上限 127 字符，摘要超长直接丢弃（前端通常已截断）
             summary: summary.filter(|text| !text.is_empty()).map(|text| text.chars().take(80).collect()),

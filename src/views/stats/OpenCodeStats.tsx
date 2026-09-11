@@ -225,16 +225,23 @@ export function OpenCodeStats({ instance }: { instance: ProviderInstance }) {
                     {t("重试")}
                   </Button>
                 </div>
-              ) : visibleRecords.length === 0 && !history.loading ? (
-                <p className="text-center text-xs text-fg-muted">{t("当前筛选条件下暂无使用记录。")}</p>
               ) : (
-                <Pagination
-                  currentPage={history.currentPage}
-                  hasPrev={history.hasPrev}
-                  hasNext={history.hasNext && visibleRecords.length > 0}
-                  loading={history.loading}
-                  onPageChange={history.goToPage}
-                />
+                <>
+                  {/* 筛选拦不住翻页：当前页被滤空时下一页可能有匹配数据，
+                      空态文案与分页器并存，hasNext 只绑定历史分页本身 */}
+                  {visibleRecords.length === 0 && !history.loading && (
+                    <p className="text-center text-xs text-fg-muted">
+                      {t("当前筛选条件下暂无使用记录。")}
+                    </p>
+                  )}
+                  <Pagination
+                    currentPage={history.currentPage}
+                    hasPrev={history.hasPrev}
+                    hasNext={history.hasNext}
+                    loading={history.loading}
+                    onPageChange={history.goToPage}
+                  />
+                </>
               )}
             </>
           )}

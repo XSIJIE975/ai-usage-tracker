@@ -380,10 +380,15 @@ impl Db {
     }
 
     pub fn reorder_instances(&self, ordered_ids: &[String]) -> Result<(), String> {
+        // 事务包裹（ADR-0024）：逐条 UPDATE 中途失败（含清单校验不过）整体回滚，
+        // 不给数据库留下半新半旧的撕裂排序
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|error| error.to_string())?;
         let mut count = 0;
         for (index, id) in ordered_ids.iter().enumerate() {
-            count += self
-                .conn
+            count += tx
                 .execute(
                     "UPDATE provider_instances SET sort_order = ?2 WHERE id = ?1",
                     rusqlite::params![id, index as i64],
@@ -393,6 +398,7 @@ impl Db {
         if count != ordered_ids.len() {
             return Err("排序清单与现有实例不一致".to_string());
         }
+        tx.commit().map_err(|error| error.to_string())?;
         Ok(())
     }
 
@@ -426,6 +432,15 @@ impl Db {
                 rusqlite::params![instance_id, captured_at, body],
             )
             .map_err(|error| error.to_string())?;
+        // 保留策略随写入顺带执行：之前只在打开数据库时清一次，托盘常驻数月不重启
+        // 会让 30 天外的旧行持续累积（ADR-0024）。表有保留期上界，扫描成本可忽略。
+        let cutoff = chrono_utc_now() - SNAPSHOT_RETENTION_MS;
+        if let Err(error) = self
+            .conn
+            .execute("DELETE FROM snapshots WHERE captured_at < ?1", [cutoff])
+        {
+            eprintln!("清理历史快照失败：{error}");
+        }
         Ok(())
     }
 

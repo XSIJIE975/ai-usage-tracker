@@ -112,7 +112,7 @@ export function GlmStats({ instance }: { instance: ProviderInstance }) {
   const [accountBalance, setAccountBalance] = useState<GlmAccountBalance | null>(null);
   useEffect(() => {
     let cancelled = false;
-    setAccountBalance(null);
+    // 重取时不先置空（旧值顶住）：先卸载再挂载会让余额卡在每轮自动刷新里闪没又闪回
     fetchGlmAccountBalance(instanceId)
       .then((result) => {
         if (!cancelled && result.status === "ok") setAccountBalance(result.data);
@@ -128,7 +128,6 @@ export function GlmStats({ instance }: { instance: ProviderInstance }) {
   const [resetCards, setResetCards] = useState<GlmResetCardList | null>(null);
   useEffect(() => {
     let cancelled = false;
-    setResetCards(null);
     fetchGlmResetCards(instanceId)
       .then((result) => {
         if (!cancelled && result.status === "ok") setResetCards(result.data);
