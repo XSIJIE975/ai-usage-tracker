@@ -256,6 +256,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
   // 刷新一律置 loading：手动、聚焦回填、自动定时刷新都要让顶栏与卡片按钮联动转起来，
   // 否则自动刷新全程无可见反馈，用户只能靠更新时间变化才能察觉
   refreshAll: async (options) => {
+    // in-flight 去重（ADR-0023）：刷新进行中的重入直接复用那一轮——StrictMode 双挂载、
+    // 面板唤起撞上定时器等场景不再对同一批实例发两倍请求
+    if (get().loading) return;
     set({ loading: true, error: null });
     if (!options?.auto) {
       set((state) => ({ manualRefreshTick: state.manualRefreshTick + 1 }));
@@ -269,15 +272,23 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
     const targets = options?.auto ? instances.filter((instance) => instance.autoRefresh) : instances;
     const results: ProviderSnapshot[] = [];
+    // 落库失败不冒充成功：错误留给本轮 error 字段（ADR-0024），读回路径拿旧行属预期兜底
+    let persistedError: string | null = null;
     for (const instance of targets) {
       const module = getProviderModule(instance.providerId);
       if (!module) continue;
+      let snapshot: ProviderSnapshot;
       try {
-        const snapshot = await module.fetch(instance);
-        results.push(snapshot);
+        snapshot = await module.fetch(instance);
+      } catch (error) {
+        snapshot = fallbackSnapshot(instance, error);
+      }
+      results.push(snapshot);
+      // 错误快照也落库（ADR-0023）：失败同样是事实源的一部分，跨窗口诚实显示
+      try {
         await invoke("save_snapshot", { instanceId: instance.id, payload: snapshot });
       } catch (error) {
-        results.push(fallbackSnapshot(instance, error));
+        persistedError ??= error instanceof Error ? error.message : String(error);
       }
     }
 
@@ -288,7 +299,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       set({
         snapshots: stored.map(toSnapshot),
         loading: false,
-        error: null,
+        error: persistedError,
         lastRefreshedAt: refreshedAt,
       });
     } catch (error) {
@@ -300,7 +311,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
         lastRefreshedAt: refreshedAt,
       });
     }
-    // 刷新落库后评估阈值告警（成功与失败的快照都参与，失败会解除告警态）
+    // 刷新落库后评估阈值告警。错误快照由协调器冻结（ADR-0023）：未知 ≠ 正常，
+    // 不解除已激活的告警态，网络恢复后边沿未重置、不会重复通知
     const observed = new Map(get().instances.map((instance) => [instance.id, instance]));
     for (const result of results) {
       const instance = observed.get(result.instanceId);
@@ -338,7 +350,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const stored = await invoke<StoredSnapshot[]>("get_latest_snapshots");
       refreshedAt = Date.now();
       set({
-        snapshots: stored.map((item) => item.payload),
+        // 行的 instance_id 是唯一事实（旧版 payload 无该字段），与其余读回路径同口径
+        snapshots: stored.map(toSnapshot),
         error: null,
         lastRefreshedAt: refreshedAt,
       });

@@ -124,6 +124,33 @@ describe("AlertCoordinator", () => {
     expect(onActiveChange).toHaveBeenLastCalledWith("deepseek", false);
   });
 
+  it("错误快照冻结：不触发也不解除，恢复后不重复通知（ADR-0023）", () => {
+    const now = { value: 0 };
+    const notify = vi.fn();
+    const onActiveChange = vi.fn();
+    const coordinator = new AlertCoordinator({ now: () => now.value, notify, onActiveChange });
+    const errorSnapshot: ProviderSnapshot = {
+      ...deepseekSnapshot(0),
+      status: "error",
+      lines: [],
+    };
+
+    coordinator.observe(instance(), deepseekSnapshot(10), true);
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(onActiveChange).toHaveBeenLastCalledWith("deepseek", true);
+
+    // 错误快照：告警态原样保持（不解除），边沿不被重置
+    coordinator.observe(instance(), errorSnapshot, true);
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(onActiveChange).toHaveBeenLastCalledWith("deepseek", true);
+
+    // 恢复后仍是同一条越阈边沿（triggered 未被错误快照清除）：不重复通知
+    now.value = HOUR;
+    coordinator.observe(instance(), deepseekSnapshot(20), true);
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(onActiveChange).toHaveBeenLastCalledWith("deepseek", true);
+  });
+
   it("OpenCode 本月额度达到阈值触发", () => {
     const notify = vi.fn();
     const coordinator = new AlertCoordinator({ notify, onActiveChange: vi.fn() });

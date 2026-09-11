@@ -23,8 +23,10 @@ export interface PanelWindowConfig {
 
 /**
  * 常驻面板窗口的公共基建（快速面板与速览面板共用，ADR-0016 抽取）：
- * 启动同步数据并标记就绪、唤起事件重读主题+拉数据、失焦按光标位置自动隐藏、
+ * 启动轻量同步并标记就绪、唤起事件重读主题+全量刷新、失焦按光标位置自动隐藏、
  * 跨窗口事件（凭据库/设置/实例/告警/刷新完成）同步、Esc 收起。面板组件只保留布局与交互差异。
+ * 零抓取门控（ADR-0023）：面板隐藏时不发起任何供应商网络请求——挂载与 vault/实例事件
+ * 走轻量路径（本地 IPC），网络刷新只发生在唤起/聚焦语境；主窗口豁免（驻留心跳）。
  *
  * 跨窗口事件契约（全局广播，@tauri-apps/api/event 的 emit/listen）：
  * - settings-changed        设置整体（saveSettings 发出，payload 为完整 AppSettings）
@@ -54,13 +56,21 @@ export function usePanelWindow(config: PanelWindowConfig) {
   const panelVisibleRef = useRef(false);
   panelVisibleRef.current = panelVisible;
 
-  const syncFromBackend = useCallback(async () => {
+  // 轻量同步（ADR-0023 零抓取）：只重读本地状态（IPC 读库），不发起任何供应商网络请求。
+  // 隐藏中的面板收到 vault/实例变化事件时走这条路——结构正确性靠它，新鲜度靠唤起兜底
+  const syncFromBackendLight = useCallback(async () => {
     await loadInitial();
     void useNotificationStore.getState().load();
+  }, [loadInitial]);
+
+  // 完整同步：轻量同步 + 全量刷新。只在面板可见的语境调用（唤起、聚焦）；
+  // 面板隐藏时不抓取，主窗口不受此约束——它的自动刷新是驻留心跳（ADR-0023）
+  const syncFromBackend = useCallback(async () => {
+    await syncFromBackendLight();
     if (useAppStore.getState().vaultStatus?.unlocked) {
       await refreshAll();
     }
-  }, [loadInitial, refreshAll]);
+  }, [syncFromBackendLight, refreshAll]);
 
   const hideWindow = useCallback(async () => {
     setPanelVisible(false);
@@ -77,7 +87,9 @@ export function usePanelWindow(config: PanelWindowConfig) {
     };
 
     void (async () => {
-      await syncFromBackend();
+      // 挂载同步走轻量路径（ADR-0023 零抓取）：面板启动时是隐藏的，不发起网络抓取；
+      // 新鲜度由唤起事件（shownEvent → 完整同步）兜底
+      await syncFromBackendLight();
       if (disposed) return;
       setReady(true);
 
@@ -116,8 +128,10 @@ export function usePanelWindow(config: PanelWindowConfig) {
             })();
           }),
         );
-        track(await listen("vault-status-changed", () => void syncFromBackend()));
-        track(await listen("credentials-changed", () => void syncFromBackend()));
+        // 凭据库状态/凭据变化：只做轻量同步（ADR-0023 零抓取）。抓取依赖凭据可用性，
+        // 且解锁方（主窗口）刷出的结果会经 refresh-completed 收敛回来，这里不抢跑
+        track(await listen("vault-status-changed", () => void syncFromBackendLight()));
+        track(await listen("credentials-changed", () => void syncFromBackendLight()));
         track(
           await listen(shownEvent, () => {
             // 兜底：每次显示前重读主题，防止错过广播事件
@@ -146,10 +160,16 @@ export function usePanelWindow(config: PanelWindowConfig) {
             useAppStore.setState({ settings: event.payload });
           }),
         );
-        // 主窗口增删/排序实例时重载（面板高度随后自然跟随）
+        // 主窗口增删/排序实例时重载（面板高度随后自然跟随）。
+        // 零抓取（ADR-0023）：只做本地重读，网络刷新留给唤起事件与主窗口的刷新收敛
         track(
           await listen("instances-changed", () => {
-            if (!disposed) void syncFromBackend();
+            if (!disposed) {
+              void (async () => {
+                await useAppStore.getState().reloadInstances();
+                await useAppStore.getState().reloadSnapshots();
+              })();
+            }
           }),
         );
         // 主窗口上下文刷新产生的告警态变化同步到本窗口
@@ -174,7 +194,7 @@ export function usePanelWindow(config: PanelWindowConfig) {
       disposed = true;
       for (const unlisten of unlisteners) unlisten();
     };
-  }, [syncFromBackend, shownEvent, hideCommand, autoHideKey]);
+  }, [syncFromBackend, syncFromBackendLight, shownEvent, hideCommand, autoHideKey]);
 
   // Esc：onEscape 先行（如先关闭通知面板），未消费则收起整个窗口
   useEffect(() => {

@@ -35,7 +35,8 @@ function usable(value: number | null | undefined): value is number {
 /**
  * 纯函数：根据快照指标与实例阈值判断应触发的全部告警（同一实例可命中多条规则）。
  * 不含边沿触发与冷却状态（那是 AlertCoordinator 的职责）。
- * 快照非 ok、解析不出指标或实例未设阈值时对应规则不产生 fire（视为正常，用于解除告警态）。
+ * 快照非 ok 时不产生 fire——错误快照由协调器**冻结**告警态（ADR-0023：未知 ≠ 正常，
+ * 不触发也不解除），不再是旧契约的「视为正常用于解除」。
  * 阈值语义按种类固定：DeepSeek=余额低于该值（元，规则 balance）；
  * OpenCode=已用达到该百分比（规则 monthly，主指标=重置最远窗）；
  * GLM=配额已用达到百分比（规则 quota，主指标=周窗）+ 余额低于阈值（规则 balance，独立阈值 balanceThreshold）。

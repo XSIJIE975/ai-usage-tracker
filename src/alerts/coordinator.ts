@@ -54,6 +54,10 @@ export class AlertCoordinator {
 
   /** 每次刷新落快照后调用 */
   observe(instance: ProviderInstance, snapshot: ProviderSnapshot, alertsEnabled: boolean): void {
+    // 冻结语义（ADR-0023）：错误快照是「未知」而非「正常」——既不触发也不解除，
+    // 边沿状态不被网络抖动重置，恢复后不会因重新越阈而重复通知；
+    // 总开关关闭（alertsEnabled=false）是明确的「关」，照常走解除路径
+    if (snapshot.status !== "ok") return;
     const now = this.deps.now();
     const fires = alertsEnabled
       ? evaluateRules(instance, snapshot, this.deps.translate ?? ((text) => text))
