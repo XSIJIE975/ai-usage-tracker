@@ -64,11 +64,30 @@ pub fn run() {
 
             // 注册设置中配置的快速面板全局快捷键；失败不阻断启动
             let app_state = app.state::<AppState>();
-            if let Ok(settings) = app_state.db.lock().expect("db lock poisoned").get_settings() {
+            // 读设置失败必须可见（ADR-0024）：静默跳过会让快捷键/自启重放/窗口标题
+            // 全部失效且无任何痕迹，用户只会觉得「设置丢了」
+            let settings = match app_state.db.lock().expect("db lock poisoned").get_settings() {
+                Ok(settings) => Some(settings),
+                Err(error) => {
+                    eprintln!("启动读取设置失败，跳过窗口标题/快捷键注册/自启重放：{error}");
+                    None
+                }
+            };
+            // 托盘初始语言取落库设置（ADR-0024）：en 用户启动即见英文托盘菜单，
+            // 不必等 webview 加载后的 refresh_tray_menu 来纠正
+            let language = settings
+                .as_ref()
+                .and_then(|value| value.get("interfaceLanguage").and_then(Value::as_str))
+                .unwrap_or("")
+                .to_string();
+            *app.state::<tray_scheme::TrayState>()
+                .language
+                .lock()
+                .expect("tray language lock poisoned") = language.clone();
+            if let Some(settings) = settings {
                 // 窗口标题统一走 app_title（内含开发实例 (dev) 后缀，ADR-0018）；
                 // 语言切换后 refresh_tray_menu 会用同一函数重放，两处不可再各写一套
-                let language = settings.get("interfaceLanguage").and_then(Value::as_str).unwrap_or("");
-                let title = commands::app_title(language);
+                let title = commands::app_title(&language);
                 for label in ["main", "quick", "glance"] {
                     if let Some(window) = app.get_webview_window(label) {
                         let _ = window.set_title(&title);
@@ -79,7 +98,7 @@ pub fn run() {
                         if let Err(error) = commands::apply_quick_shortcut(app.handle(), shortcut.to_string()) {
                             eprintln!("注册快速面板快捷键失败：{error}");
                             // 占用/冲突在启动期无内联界面可提示（ADR-0018）：发系统通知告知用户
-                            commands::notify_quick_shortcut_failure(app.handle(), language, shortcut);
+                            commands::notify_quick_shortcut_failure(app.handle(), &language, shortcut);
                         }
                     }
                 }
@@ -100,14 +119,20 @@ pub fn run() {
                 }
             }
 
+            // 隐藏工具窗口是纯优化性操作（两个窗口本就默认隐藏），失败记日志后继续（ADR-0024）：
+            // 不该让一次窗口操作失败阻断 setup、连托盘都建不起来
             if let Some(quick) = app.get_webview_window("quick") {
-                quick.hide()?;
+                if let Err(error) = quick.hide() {
+                    eprintln!("隐藏快速面板窗口失败：{error}");
+                }
             }
             if let Some(glance) = app.get_webview_window("glance") {
-                glance.hide()?;
+                if let Err(error) = glance.hide() {
+                    eprintln!("隐藏速览面板窗口失败：{error}");
+                }
             }
 
-            setup_tray(app.handle())?;
+            setup_tray(app.handle(), &language)?;
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -175,12 +200,12 @@ fn build_tray_menu(app: &AppHandle, lang: &str) -> tauri::Result<Menu<tauri::Wry
     Menu::with_items(app, &[&open, &quick, &quit])
 }
 
-fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
-    let menu = build_tray_menu(app, "zh")?;
+fn setup_tray(app: &AppHandle, language: &str) -> tauri::Result<()> {
+    let menu = build_tray_menu(app, language)?;
 
     let mut builder = TrayIconBuilder::with_id("main-tray")
         .menu(&menu)
-        .tooltip(commands::tray_tooltip("zh", false))
+        .tooltip(commands::tray_tooltip(language, false))
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open" => open_main(app),

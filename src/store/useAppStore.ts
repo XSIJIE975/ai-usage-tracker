@@ -88,11 +88,12 @@ async function invokeWithTimeout<T>(command: string, timeoutMs: number): Promise
     timer = window.setTimeout(() => reject(new Error(`${command} 加载超时`)), timeoutMs);
   });
 
+  const request = Promise.resolve().then(() => invoke<T>(command));
+  // 超时输掉 race 后原请求若再 reject 会成为 unhandled rejection（ADR-0024）：补一个兜底 catch
+  request.catch(() => undefined);
+
   try {
-    return await Promise.race([
-      Promise.resolve().then(() => invoke<T>(command)),
-      timeout,
-    ]);
+    return await Promise.race([request, timeout]);
   } finally {
     if (timer !== undefined) window.clearTimeout(timer);
   }
@@ -385,7 +386,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   updateInstance: async (id, patch) => {
-    await invoke("update_instance", { id, patch });
+    // 更新失败必须可见（ADR-0024）：置顶/阈值改动的失败不能静默，本地保持原值
+    try {
+      await invoke("update_instance", { id, patch });
+    } catch (error) {
+      set({ error: error instanceof Error ? error.message : String(error) });
+      return;
+    }
     set((state) => ({
       instances: state.instances.map((instance) => {
         if (instance.id !== id) return instance;
@@ -403,7 +410,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   removeInstance: async (id) => {
-    await invoke("delete_instance", { id });
+    // 删除失败必须可见（ADR-0024）：顶部错误横幅提示，本地实例保持不动
+    try {
+      await invoke("delete_instance", { id });
+    } catch (error) {
+      set({ error: error instanceof Error ? error.message : String(error) });
+      return;
+    }
     set((state) => ({
       instances: state.instances.filter((instance) => instance.id !== id),
       snapshots: state.snapshots.filter((snapshot) => snapshot.instanceId !== id),

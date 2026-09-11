@@ -90,7 +90,7 @@ pub struct TrayState {
 /// `setImagePosition(ImageLeft)`」，`set_title_inner` 走 `button.setTitle`，两者末尾都调
 /// `tray_target.update_dimensions()`（内部 `setFrame`）。因此内容一字未改的重放，用户看到的是
 /// 图标旁数字肉眼可见地闪一下（D 方案：数据没变就不许重绘）。
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Presentation {
     /// 图标位图（尺寸 + 直通 RGBA）：DPI 档位或用量变化才不同
     pub icon: Option<(u32, u32, Vec<u8>)>,
@@ -205,26 +205,32 @@ pub fn apply(app: &tauri::AppHandle) {
 
     // 指纹比对与写入分两段：tray-icon 的 setter 会把闭包派发到主线程并等待
     // （run_item_main_thread），若持着锁等主线程、而主线程恰好也在 apply 里等这把锁，
-    // 就是一个真实的死锁面——锁内只做比对与记账。
-    let (write_icon, write_tooltip, write_title) = {
-        let mut applied = state
-            .presentation
-            .lock()
-            .expect("tray presentation lock poisoned");
-        let previous = applied.replace(presentation.clone());
-        presentation_changes(previous.as_ref(), &presentation)
-    };
+    // 就是一个真实的死锁面——锁内只做比对。
+    let previous = state
+        .presentation
+        .lock()
+        .expect("tray presentation lock poisoned")
+        .clone();
+    let (write_icon, write_tooltip, write_title) = presentation_changes(previous.as_ref(), &presentation);
 
+    // 写入与记账分离（ADR-0024）：setter **成功**才把对应字段记为已应用，失败保留旧值——
+    // 下一次 apply() 即使内容未变也会因指纹差异重试，托盘在 Explorer 重启等竞态后自愈；
+    // 旧实现「先记账后写入」会让失败被永久跳过（告警红点该出现却缺席）。
     // 内容没变的部分一个 setter 都不调（ADR-0019）：macOS 状态项只在真的变化时重建重绘
-    if write_icon {
-        let _ = tray.set_icon(Some(icon));
+    let mut committed = previous.clone().unwrap_or_default();
+    if write_icon && tray.set_icon(Some(icon)).is_ok() {
+        committed.icon = presentation.icon.clone();
     }
-    if write_tooltip {
-        let _ = tray.set_tooltip(Some(presentation.tooltip.as_str()));
+    if write_tooltip && tray.set_tooltip(Some(presentation.tooltip.as_str())).is_ok() {
+        committed.tooltip = presentation.tooltip.clone();
     }
-    if write_title {
-        let _ = tray.set_title(Some(presentation.title.as_str()));
+    if write_title && tray.set_title(Some(presentation.title.as_str())).is_ok() {
+        committed.title = presentation.title.clone();
     }
+    *state
+        .presentation
+        .lock()
+        .expect("tray presentation lock poisoned") = Some(committed);
 }
 
 /// 环层数据解析（ADR-0017）：优先层序数组 ring_windows（外→内），缺失回退单值

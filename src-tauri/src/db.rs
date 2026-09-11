@@ -198,16 +198,13 @@ impl Db {
             "autoStart": false,
             "silentStart": false
         });
-        let row = self
-            .conn
-            .query_row(
-                "SELECT value FROM settings WHERE key = 'app_settings'",
-                [],
-                |row| row.get::<_, String>(0),
-            )
-            .ok();
+        let row = self.conn.query_row(
+            "SELECT value FROM settings WHERE key = 'app_settings'",
+            [],
+            |row| row.get::<_, String>(0),
+        );
         match row {
-            Some(value) => {
+            Ok(value) => {
                 let mut stored: Value = serde_json::from_str(&value).map_err(|error| error.to_string())?;
                 // 逐键补默认值：旧版本写入的行缺新版本引入的键（如 quickPanelShortcut），
                 // 不补会导致启动注册等后端消费方取不到键而静默失效（前端 UI 因自身合并默认值而看不到差异）
@@ -218,7 +215,10 @@ impl Db {
                 }
                 Ok(stored)
             }
-            None => Ok(default),
+            // 无行 = 首次启动，全套默认值属正常路径
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(default),
+            // 读失败必须可见（ADR-0024）：静默回默认值会让用户下一次保存把真实设置整体覆盖
+            Err(error) => Err(error.to_string()),
         }
     }
 

@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::sync::OnceLock;
+use std::time::Duration;
 
 use reqwest::Method;
 use serde::Deserialize;
@@ -8,6 +10,22 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::db::{self, chrono_utc_now};
 use crate::{instances, AppState};
+
+/// 共享 HTTP 客户端（ADR-0024）：进程级单例，保留连接池与 keep-alive——
+/// 之前每次调用重建 Client，自动刷新每轮都重新 TLS 握手。统一 10s 连接 / 30s 总超时：
+/// 供应商挂起时超时错误走错误快照链路（ADR-0023），可见而不是把刷新无限挂死。
+static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+fn http_client() -> &'static reqwest::Client {
+    HTTP_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .user_agent("AI Usage Tracker/0.1.0")
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
+            .build()
+            .expect("HTTP 客户端初始化失败")
+    })
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -395,32 +413,40 @@ pub fn app_title(language: &str) -> String {
 
 // ─── 全局快捷键 ───
 
-/// 注册快速面板全局快捷键（注销旧组合）。空字符串表示不启用。
+/// 注册快速面板全局快捷键（换绑语义）。空字符串表示不启用。
 /// 注册失败通常意味着组合被其他程序占用（无法识别具体占用者）。
 pub fn apply_quick_shortcut(app: &AppHandle, shortcut: String) -> Result<(), String> {
     use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
     let state = app.state::<AppState>();
-    {
-        let mut current = state.quick_shortcut.lock().expect("quick_shortcut lock poisoned");
-        if current.as_deref() == Some(shortcut.as_str()) {
-            return Ok(());
-        }
-        if let Some(previous) = current.take() {
-            let _ = app.global_shortcut().unregister(previous.as_str());
-        }
-        if shortcut.is_empty() {
-            return Ok(());
-        }
-        app.global_shortcut()
-            .on_shortcut(shortcut.as_str(), |app, _shortcut, event| {
-                if event.state == ShortcutState::Pressed {
-                    crate::toggle_quick(app);
-                }
-            })
-            .map_err(|error| format!("快捷键注册失败，可能已被其他程序占用，请更换组合键（{error}）"))?;
-        *current = Some(shortcut);
+    let mut current = state.quick_shortcut.lock().expect("quick_shortcut lock poisoned");
+    if current.as_deref() == Some(shortcut.as_str()) {
+        return Ok(());
     }
+    if shortcut.is_empty() {
+        // 清空快捷键：注销旧组合即可；注销失败仅记日志（状态与实际注册背离时重启自愈）
+        if let Some(previous) = current.take() {
+            if let Err(error) = app.global_shortcut().unregister(previous.as_str()) {
+                eprintln!("注销快速面板快捷键失败：{error}");
+            }
+        }
+        return Ok(());
+    }
+    // 先注册新组合成功、再注销旧组合（ADR-0024）：注册失败时旧组合仍然可用，
+    // 用户手里始终握着上一个能唤起面板的组合，不会静默丢快捷键
+    app.global_shortcut()
+        .on_shortcut(shortcut.as_str(), |app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed {
+                crate::toggle_quick(app);
+            }
+        })
+        .map_err(|error| format!("快捷键注册失败，可能已被其他程序占用，请更换组合键（{error}）"))?;
+    if let Some(previous) = current.take() {
+        if let Err(error) = app.global_shortcut().unregister(previous.as_str()) {
+            eprintln!("注销旧快速面板快捷键失败：{error}");
+        }
+    }
+    *current = Some(shortcut);
     Ok(())
 }
 
@@ -486,10 +512,7 @@ pub async fn diagnose_request(
     credential: Option<String>,
     expect_html: Option<bool>,
 ) -> Result<DiagnosisResult, String> {
-    let client = reqwest::Client::builder()
-        .user_agent("AI Usage Tracker/0.1.0")
-        .build()
-        .map_err(|error| error.to_string())?;
+    let client = http_client();
 
     let mut request = client.request(Method::GET, &url);
     match auth.as_deref() {
@@ -663,10 +686,7 @@ pub async fn provider_request(
         )
     };
 
-    let client = reqwest::Client::builder()
-        .user_agent("AI Usage Tracker/0.1.0")
-        .build()
-        .map_err(|error| error.to_string())?;
+    let client = http_client();
 
     let method = match method.as_deref().unwrap_or("GET") {
         "POST" => Method::POST,
