@@ -209,7 +209,11 @@ export function Dashboard() {
       // 快照收敛（ADR-0019）：别的窗口刷出来的结果回流到本窗口，托盘呈现随之重算。
       // 本窗口自己发起的那次刚在 refreshAll 里读过库，跳过以免白读一遍。
       if (event.payload.source !== currentWindowLabel()) {
-        void useAppStore.getState().reloadSnapshots();
+        // 收敛后重跑告警评估（ADR-0022）：面板刷出的快照主窗口也要能触发告警
+        void useAppStore
+          .getState()
+          .reloadSnapshots()
+          .then(() => useAlertStore.getState().reevaluate());
       }
     })
       .then((unlisten) => {

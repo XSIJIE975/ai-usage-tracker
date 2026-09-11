@@ -4,7 +4,7 @@ import { cn, formatClock } from "../lib/utils";
 import { Button } from "../components/ui/button";
 import { IconButton } from "../components/ui/icon-button";
 import { useNotificationStore } from "../store/useNotificationStore";
-import { useT } from "../i18n";
+import { renderTemplate, useT } from "../i18n";
 
 const DAY_MS = 86_400_000;
 const localMidnight = (ts: number) => new Date(new Date(ts).setHours(0, 0, 0, 0)).getTime();
@@ -133,11 +133,13 @@ export function NotificationCenterPanel({
                         "truncate text-[13px]",
                         item.read ? "text-fg-secondary" : "font-medium text-fg",
                       )}
-                      title={item.title}
+                      title={renderTemplate(item.title, item.params, t)}
                     >
-                      {item.title}
+                      {renderTemplate(item.title, item.params, t)}
                     </p>
-                    <p className="mt-0.5 text-xs leading-relaxed text-fg-muted">{item.body}</p>
+                    <p className="mt-0.5 text-xs leading-relaxed text-fg-muted">
+                      {renderTemplate(item.body, item.params, t)}
+                    </p>
                   </div>
                   <div className="flex shrink-0 flex-col items-end gap-1">
                     <span className="tnum text-[11px] text-fg-muted">{relativeTime(item.created_at, t)}</span>

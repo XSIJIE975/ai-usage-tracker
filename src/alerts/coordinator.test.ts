@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AlertCoordinator } from "./coordinator";
 import type { AlertFire } from "./evaluate";
 import { evaluateRules } from "./evaluate";
+import { renderTemplate } from "../i18n/apply-params";
 import type { ProviderInstance, ProviderSnapshot } from "../types/ipc";
 import { extractMetric } from "./metric";
 
@@ -73,7 +74,7 @@ describe("AlertCoordinator", () => {
     expect(notify).toHaveBeenCalledTimes(2);
     const fire = notify.mock.calls[1][0] as AlertFire;
     expect(fire.instanceId).toBe("uuid-personal");
-    expect(fire.title).toContain("个人号");
+    expect(fire.params.note).toBe("个人号");
   });
 
   it("未设阈值的实例不告警", () => {
@@ -143,14 +144,86 @@ describe("AlertCoordinator", () => {
   });
 });
 
-describe("evaluateRules 标题", () => {
-  it("备注为空时标题与旧版一致；有备注时带备注与供应商名", () => {
+describe("evaluateRules 文案模板（ADR-0022）", () => {
+  it("标题是模板 + 参数；经 renderTemplate 渲染后与旧版成品文案一致", () => {
     const snapshot = deepseekSnapshot(10);
     const plain = evaluateRules(instance(), snapshot)[0]!;
-    expect(plain.title).toBe("DeepSeek 余额告警");
+    expect(plain.title).toBe("{provider} {rule}");
+    expect(plain.params.rule).toBe("余额告警");
+    expect(renderTemplate(plain.title, plain.params, (s) => s)).toBe("DeepSeek 余额告警");
 
     const noted = evaluateRules(instance({ note: "公司主账号" }), snapshot)[0]!;
-    expect(noted.title).toBe("公司主账号（DeepSeek）余额告警");
+    expect(noted.title).toBe("{note}（{provider}）{rule}");
+    expect(renderTemplate(noted.title, noted.params, (s) => s)).toBe("公司主账号（DeepSeek）余额告警");
+  });
+
+  it("正文与数值走模板参数，渲染后还原语义", () => {
+    const fire = evaluateRules(instance(), deepseekSnapshot(10))[0]!;
+    expect(fire.body).toBe("当前余额 {balance} 元，已低于 {threshold} 元，请及时充值。");
+    expect(fire.params.balance).toBe("10.00");
+    expect(fire.params.threshold).toBe(50);
+    expect(renderTemplate(fire.body, fire.params, (s) => s)).toContain("10.00");
+  });
+
+  it("translate 依赖只烘焙动态窗口名（撞满列表），框架文案保持模板", () => {
+    const snapshot: ProviderSnapshot = {
+      instanceId: "glm",
+      providerId: "glm",
+      providerName: "智谱 GLM",
+      status: "ok",
+      updatedAt: 0,
+      lines: [
+        {
+          type: "progress",
+          label: "{hours} 小时请求配额",
+          params: { hours: 5 },
+          percentUsed: 100,
+        },
+      ],
+    };
+    const inst = instance({ id: "glm", providerId: "glm", threshold: 80 });
+    // GLM 100% 会同时产出 quota 与 exhausted，撞满列表在后者
+    const fire = evaluateRules(inst, snapshot, (text) =>
+      text === "{hours} 小时请求配额" ? "{hours}-hour request quota" : text,
+    ).find((candidate) => candidate.ruleKey === "glm:exhausted")!;
+    expect(fire.params.names).toBe("「5-hour request quota」");
+    expect(fire.body).toBe("{names}已用尽（100%），等待重置恢复。");
+  });
+});
+
+describe("AlertCoordinator.prune（ADR-0022）", () => {
+  it("删除实例后清理其全部规则的边沿与实例告警态", () => {
+    const notify = vi.fn();
+    const onActiveChange = vi.fn();
+    const coordinator = new AlertCoordinator({ notify, onActiveChange });
+
+    coordinator.observe(instance(), deepseekSnapshot(10), true);
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(onActiveChange).toHaveBeenLastCalledWith("deepseek", true);
+
+    coordinator.prune("deepseek");
+
+    // 边沿状态已清：同样的越阈快照重新评估会再次触发（实例已删，这是新生命的首次越阈）
+    coordinator.observe(instance(), deepseekSnapshot(10), true);
+    expect(notify).toHaveBeenCalledTimes(2);
+  });
+
+  it("prune 不影响其他实例的状态", () => {
+    const notify = vi.fn();
+    const onActiveChange = vi.fn();
+    const coordinator = new AlertCoordinator({ notify, onActiveChange });
+    const other = instance({ id: "other" });
+
+    coordinator.observe(instance(), deepseekSnapshot(10), true);
+    coordinator.observe(other, deepseekSnapshot(10), true);
+    expect(notify).toHaveBeenCalledTimes(2);
+
+    // 只清 other：deepseek 的已触发边沿保留，恢复后不再重复通知
+    coordinator.prune("other");
+    expect(onActiveChange).toHaveBeenLastCalledWith("other", true);
+    coordinator.observe(instance(), deepseekSnapshot(100), true);
+    expect(notify).toHaveBeenCalledTimes(2);
+    expect(onActiveChange).toHaveBeenLastCalledWith("deepseek", false);
   });
 });
 
@@ -178,7 +251,7 @@ describe("GLM 配额与余额双规则", () => {
   it("配额与余额同时越线时产生两条独立 fire", () => {
     const fires = evaluateRules(glmInstance({ threshold: 80, balanceThreshold: 5 }), glmSnapshot(90, 2));
     expect(fires.map((fire) => fire.ruleKey)).toEqual(["glm-1:quota", "glm-1:balance"]);
-    expect(fires[1]!.body).toContain("2.00");
+    expect(fires[1]!.params.balance).toBe("2.00");
   });
 
   it("只越余额线时仅产生余额 fire；主指标仍是配额百分比", () => {
@@ -253,7 +326,7 @@ describe("额度耗尽规则（ADR-0021）", () => {
     const fires = evaluateRules(inst, snapshot);
     // 主指标 = 重置最远窗（月 40）< 阈值 80 → monthly 不触发；耗尽规则兜住撞满的 5h 窗
     expect(fires.map((fire) => fire.ruleKey)).toEqual(["opencode-go:exhausted"]);
-    expect(fires[0]!.body).toContain("5 小时请求配额");
+    expect(fires[0]!.params.names).toContain("5 小时请求配额");
   });
 
   it("多窗同时撞满时全部列名；阈值告警与耗尽告警互不替代", () => {
@@ -263,9 +336,9 @@ describe("额度耗尽规则（ADR-0021）", () => {
     ]);
     const fires = evaluateRules(inst, snapshot);
     expect(fires.map((fire) => fire.ruleKey)).toEqual(["glm:quota", "glm:exhausted"]);
-    expect(fires[1]!.title).toBe("智谱 GLM 额度耗尽");
-    expect(fires[1]!.body).toContain("「每周请求配额」");
-    expect(fires[1]!.body).toContain("「5 小时请求配额」");
+    expect(renderTemplate(fires[1]!.title, fires[1]!.params, (s) => s)).toBe("智谱 GLM 额度耗尽");
+    expect(fires[1]!.params.names).toContain("「每周请求配额」");
+    expect(fires[1]!.params.names).toContain("「5 小时请求配额」");
   });
 
   it("无窗口达到 100% 时不产生耗尽 fire", () => {

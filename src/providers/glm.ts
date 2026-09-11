@@ -426,12 +426,25 @@ async function fetchGlmSnapshot(instance: ProviderInstance): Promise<ProviderSna
     };
   }
 
+  // 多源错误模板拼成一条 message（渲染端统一 t+params）：各源模板共用 {detail} 等占位符，
+  // 直接合并参数会互相覆盖——第 2 段起的占位符加序号后缀，模板与参数同步改写（ADR-0022 顺带修复）
   const messages: string[] = [];
   const messageParams: Record<string, string | number> = {};
+  let segment = 0;
   for (const outcome of [quotaOutcome, balanceOutcome, resetOutcome]) {
     if (!outcome.ok && outcome.error) {
-      messages.push(outcome.error);
-      Object.assign(messageParams, outcome.errorParams);
+      segment += 1;
+      const params = outcome.errorParams ?? {};
+      let template = outcome.error;
+      if (segment > 1) {
+        for (const key of Object.keys(params)) {
+          template = template.split(`{${key}}`).join(`{${key}${segment}}`);
+        }
+      }
+      messages.push(template);
+      for (const [key, value] of Object.entries(params)) {
+        messageParams[segment === 1 ? key : `${key}${segment}`] = value;
+      }
     }
   }
 

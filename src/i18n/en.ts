@@ -213,11 +213,22 @@ export const en: Record<string, string> = {
   "删除": "Delete",
   "关闭": "Close",
   "加载中…": "Loading…",
-  "DeepSeek 余额告警": "DeepSeek balance alert",
-  "请及时充值。": " Please top up soon.",
-  "OpenCode Go 额度告警": "OpenCode Go quota alert",
-  "注意分配剩余用量。": " Plan the remaining quota carefully.",
-  "智谱配额告警": "Zhipu quota alert",
+  // ── 告警文案（ADR-0022 模板化）：{rule} 是规则名字典键，渲染层先翻译再替换；
+  //    撞满窗名在评估时刻已按语言烘焙进 {names} ──
+  "{provider} {rule}": "{provider} {rule}",
+  "{note}（{provider}）{rule}": "{rule} — {note} ({provider})",
+  "余额告警": "balance alert",
+  "配额告警": "quota alert",
+  "额度告警": "quota alert",
+  "额度耗尽": "quota exhausted",
+  "当前余额 {balance} 元，已低于 {threshold} 元，请及时充值。":
+    "Balance is {balance} CNY, below the {threshold} CNY threshold. Please top up soon.",
+  "本月额度已用 {percent}%，达到 {threshold}%，注意分配剩余用量。":
+    "Monthly quota usage at {percent}% has reached the {threshold}% threshold. Plan the remaining quota carefully.",
+  "Coding Plan 配额已用 {percent}%，达到 {threshold}%，注意分配剩余用量。":
+    "Coding Plan quota usage at {percent}% has reached the {threshold}% threshold. Plan the remaining quota carefully.",
+  "{names}已用尽（100%），等待重置恢复。":
+    "{names} used up (100%). Waiting for the window to reset.",
 
   // ── 设置 ──
   "自动刷新": "Auto refresh",

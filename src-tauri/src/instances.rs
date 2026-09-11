@@ -465,8 +465,8 @@ mod tests {
         let snapshot = json!({ "updatedAt": now });
         db.save_snapshot("deepseek", &snapshot).unwrap();
         db.save_snapshot("glm", &snapshot).unwrap();
-        db.add_notification("deepseek", "标题", "正文").unwrap();
-        db.add_notification("glm", "标题", "正文").unwrap();
+        db.add_notification("deepseek", "标题", "正文", None).unwrap();
+        db.add_notification("glm", "标题", "正文", Some(r#"{"rule":"余额告警"}"#)).unwrap();
 
         db.delete_instance("deepseek").unwrap();
 

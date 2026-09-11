@@ -122,7 +122,10 @@ export interface StoredNotification {
   id: number;
   created_at: number;
   instance_id: string;
+  /** 中文模板（含 {占位符}），渲染层经 renderTemplate 翻译（ADR-0022）；
+   *  存量行是旧版成品文案、无 params，原样显示 */
   title: string;
   body: string;
+  params?: Record<string, string | number> | null;
   read: boolean;
 }

@@ -25,6 +25,8 @@ pub struct StoredNotification {
     pub instance_id: String,
     pub title: String,
     pub body: String,
+    /// 模板参数（ADR-0022）：JSON 对象的文本形式；存量行为 NULL，前端原样显示
+    pub params: Option<Value>,
     pub read: bool,
 }
 
@@ -84,6 +86,7 @@ impl Db {
                 instance_id TEXT NOT NULL,
                 title TEXT NOT NULL,
                 body TEXT NOT NULL,
+                params TEXT,
                 read INTEGER NOT NULL DEFAULT 0
             );
             "#,
@@ -92,6 +95,7 @@ impl Db {
         let db = Self { conn };
         db.rename_legacy_provider_columns()?;
         db.ensure_instance_balance_threshold_column()?;
+        db.ensure_notification_params_column()?;
         // 索引依赖列名，必须在改名之后建
         db.conn
             .execute_batch(
@@ -155,6 +159,26 @@ impl Db {
         if !columns.iter().any(|column| column == "balance_threshold") {
             self.conn
                 .execute_batch("ALTER TABLE provider_instances ADD COLUMN balance_threshold REAL;")
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// 通知模板参数列（ADR-0022）晚于建表语句加入：存量库用 ALTER TABLE 补列，
+    /// 新库建表已含该列，此函数为幂等空操作。存量通知行 params 为 NULL，前端原样显示。
+    fn ensure_notification_params_column(&self) -> Result<(), String> {
+        let mut statement = self
+            .conn
+            .prepare("PRAGMA table_info(notifications)")
+            .map_err(|error| error.to_string())?;
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<String>, _>>()
+            .map_err(|error| error.to_string())?;
+        if !columns.iter().any(|column| column == "params") {
+            self.conn
+                .execute_batch("ALTER TABLE notifications ADD COLUMN params TEXT;")
                 .map_err(|error| error.to_string())?;
         }
         Ok(())
@@ -442,18 +466,20 @@ impl Db {
 
     // ─── 通知 ───
 
-    /// 写入一条告警通知，并按保留策略（30 天 / 200 条）清理旧数据
+    /// 写入一条告警通知，并按保留策略（30 天 / 200 条）清理旧数据。
+    /// params 是模板参数的 JSON 文本（ADR-0022）；传 None 即存量兼容的成品文案。
     pub fn add_notification(
         &self,
         instance_id: &str,
         title: &str,
         body: &str,
+        params: Option<&str>,
     ) -> Result<StoredNotification, String> {
         let created_at = chrono_utc_now();
         self.conn
             .execute(
-                "INSERT INTO notifications(created_at, instance_id, title, body) VALUES(?1, ?2, ?3, ?4)",
-                rusqlite::params![created_at, instance_id, title, body],
+                "INSERT INTO notifications(created_at, instance_id, title, body, params) VALUES(?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![created_at, instance_id, title, body, params],
             )
             .map_err(|error| error.to_string())?;
         let id = self.conn.last_insert_rowid();
@@ -485,6 +511,7 @@ impl Db {
             instance_id: instance_id.to_string(),
             title: title.to_string(),
             body: body.to_string(),
+            params: params.and_then(|text| serde_json::from_str(text).ok()),
             read: false,
         })
     }
@@ -494,7 +521,7 @@ impl Db {
             .conn
             .prepare(
                 r#"
-                SELECT id, created_at, instance_id, title, body, read
+                SELECT id, created_at, instance_id, title, body, params, read
                 FROM notifications
                 ORDER BY created_at DESC, id DESC
                 LIMIT ?1
@@ -503,13 +530,15 @@ impl Db {
             .map_err(|error| error.to_string())?;
         let rows = statement
             .query_map([limit], |row| {
+                let params_text: Option<String> = row.get(5)?;
                 Ok(StoredNotification {
                     id: row.get(0)?,
                     created_at: row.get(1)?,
                     instance_id: row.get(2)?,
                     title: row.get(3)?,
                     body: row.get(4)?,
-                    read: row.get::<_, i64>(5)? != 0,
+                    params: params_text.and_then(|text| serde_json::from_str(&text).ok()),
+                    read: row.get::<_, i64>(6)? != 0,
                 })
             })
             .map_err(|error| error.to_string())?;

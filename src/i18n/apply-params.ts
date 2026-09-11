@@ -11,3 +11,19 @@ export function applyParams(
     text,
   );
 }
+
+/** 渲染模板 + 参数：字符串参数先经 t 翻译再替换（参数值本身可能是字典键，
+ *  如告警标题里的规则名「余额告警」；供应商名等专名无字典键、t 原样返回）。
+ *  告警文案模板化（ADR-0022）的统一渲染出口：通知中心与系统通知共用。 */
+export function renderTemplate(
+  text: string,
+  params: Record<string, string | number> | undefined | null,
+  t: (s: string) => string,
+): string {
+  const localized = params
+    ? Object.fromEntries(
+        Object.entries(params).map(([key, value]) => [key, typeof value === "string" ? t(value) : value]),
+      )
+    : undefined;
+  return applyParams(t(text), localized);
+}

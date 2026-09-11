@@ -395,6 +395,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       instances: state.instances.filter((instance) => instance.id !== id),
       snapshots: state.snapshots.filter((snapshot) => snapshot.instanceId !== id),
     }));
+    // 协调器的边沿/冷却状态不清理会随常驻运行累积（ADR-0022）
+    useAlertStore.getState().prune(id);
   },
 
   reorderInstances: async (orderedIds) => {

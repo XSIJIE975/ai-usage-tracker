@@ -17,6 +17,8 @@ export interface AlertCoordinatorDeps {
   notify: (fire: AlertFire) => void;
   /** 告警态变化（true=进入告警，false=解除） */
   onActiveChange: (instanceId: string, active: boolean) => void;
+  /** 评估时刻的文案翻译（ADR-0022）：撞满窗口名等动态片段按当前语言烘焙，其余保持模板 */
+  translate?: (text: string) => string;
 }
 
 /**
@@ -29,7 +31,7 @@ export class AlertCoordinator {
   /** 实例上一次的告警态，仅在变化时回调 onActiveChange，避免每轮刷新重复广播 */
   private lastActive = new Map<string, boolean>();
   private deps: Required<Pick<AlertCoordinatorDeps, "now" | "cooldownMs">> &
-    Pick<AlertCoordinatorDeps, "notify" | "onActiveChange">;
+    Pick<AlertCoordinatorDeps, "notify" | "onActiveChange" | "translate">;
 
   constructor(deps: AlertCoordinatorDeps) {
     this.deps = {
@@ -37,13 +39,25 @@ export class AlertCoordinator {
       cooldownMs: deps.cooldownMs ?? 6 * 3_600_000,
       notify: deps.notify,
       onActiveChange: deps.onActiveChange,
+      translate: deps.translate,
     };
+  }
+
+  /** 删除实例后清理其全部规则的边沿/冷却状态（ADR-0022）：常驻 webview 反复增删实例不累积 */
+  prune(instanceId: string): void {
+    const prefix = `${instanceId}:`;
+    for (const key of this.state.keys()) {
+      if (key.startsWith(prefix)) this.state.delete(key);
+    }
+    this.lastActive.delete(instanceId);
   }
 
   /** 每次刷新落快照后调用 */
   observe(instance: ProviderInstance, snapshot: ProviderSnapshot, alertsEnabled: boolean): void {
     const now = this.deps.now();
-    const fires = alertsEnabled ? evaluateRules(instance, snapshot) : [];
+    const fires = alertsEnabled
+      ? evaluateRules(instance, snapshot, this.deps.translate ?? ((text) => text))
+      : [];
     const firedByKey = new Map(fires.map((fire) => [fire.ruleKey, fire]));
 
     // 本实例关心的规则键 = 已有状态中属于本实例的 + 本次触发的

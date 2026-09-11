@@ -582,9 +582,14 @@ pub fn add_notification(
     instance_id: String,
     title: String,
     body: String,
+    params: Option<Value>,
 ) -> Result<db::StoredNotification, String> {
+    let params_text = match params {
+        Some(value) => Some(serde_json::to_string(&value).map_err(|error| error.to_string())?),
+        None => None,
+    };
     let db = state.db.lock().expect("db lock poisoned");
-    db.add_notification(&instance_id, &title, &body)
+    db.add_notification(&instance_id, &title, &body, params_text.as_deref())
 }
 
 #[tauri::command]
