@@ -17,6 +17,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   refreshEnabled: true,
   refreshIntervalMinutes: 5,
   alertsEnabled: true,
+  // 告警冷却（ADR-0025）：同一规则两次通知的最小墙钟间隔（小时），设置页可改
+  alertCooldownHours: 6,
   // 快捷键默认值随构建分流（ADR-0018）：开发实例 Ctrl+Shift+U，与安装版 Alt+U 错开注册位
   quickPanelShortcut: import.meta.env.DEV ? "Control+Shift+KeyU" : "Alt+KeyU",
   quickAutoHide: true,
@@ -222,6 +224,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
         snapshots: snapshots.map(toSnapshot),
         error: null,
       });
+      // 水合告警边沿/冷却（ADR-0025）：早于任何一轮评估（评估要等刷新网络往返），
+      // F5/重启后同一状况不再重复通知；仅主窗口实际执行（ADR-0022）
+      void useAlertStore.getState().hydrate();
     } catch (error) {
       set({
         settings: DEFAULT_SETTINGS,

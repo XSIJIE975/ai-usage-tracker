@@ -89,6 +89,8 @@ dependencies = [
  "tiny-skia",
  "tokio",
  "uuid",
+ "webview2-com",
+ "windows",
  "zeroize",
 ]
 

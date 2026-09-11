@@ -132,6 +132,13 @@ pub fn run() {
                 }
             }
 
+            // release 加固（ADR-0026）：发布版关闭页面重载加速键、右键菜单与 devtools；
+            // dev 构建保留（HMR 与调试依赖）。Windows 在 WebView2 设置层权威关闭，
+            // macOS/Linux 的右键菜单由前端 PROD 拦截兜底（src/main.tsx）
+            if !cfg!(debug_assertions) {
+                harden_release_webviews(app.handle());
+            }
+
             setup_tray(app.handle(), &language)?;
             Ok(())
         })
@@ -172,6 +179,8 @@ pub fn run() {
             tray_scheme::set_tray_icon_scheme,
             tray_scheme::update_tray_meter,
             commands::add_notification,
+            commands::list_alert_states,
+            commands::save_alert_states,
             commands::list_notifications,
             commands::unread_notification_count,
             commands::mark_all_notifications_read,
@@ -199,6 +208,48 @@ fn build_tray_menu(app: &AppHandle, lang: &str) -> tauri::Result<Menu<tauri::Wry
     let quit = MenuItem::with_id(app, "quit", if en { "Quit" } else { "退出" }, true, None::<&str>)?;
     Menu::with_items(app, &[&open, &quick, &quit])
 }
+
+/// release 加固（ADR-0026）：对全部 webview 关闭 WebView2 的浏览器级加速键
+/// （F5/Ctrl+R 重载、F12 devtools）与默认右键菜单。仅 Windows 有该设置层；
+/// 失败只记日志——加固失败回退到 WebView2 默认行为，不该崩掉启动。
+#[cfg(windows)]
+fn harden_release_webviews(app: &AppHandle) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
+    use windows::core::Interface;
+
+    for (label, window) in app.webview_windows() {
+        let closure_label = label.clone();
+        let result = window.with_webview(move |webview| unsafe {
+            let label = &closure_label;
+            let controller = webview.controller();
+            let core = match controller.CoreWebView2() {
+                Ok(core) => core,
+                Err(error) => {
+                    eprintln!("窗口 {label} 获取 WebView2 句柄失败：{error}");
+                    return;
+                }
+            };
+            if let Err(error) = core.Settings().and_then(|settings| {
+                // 加速键开关在 Settings3（WebView2 SDK 1.0.774+），基础接口没有；cast 失败 = 运行时过旧，跳过该项
+                settings
+                    .cast::<ICoreWebView2Settings3>()?
+                    .SetAreBrowserAcceleratorKeysEnabled(false.into())?;
+                settings.SetAreDefaultContextMenusEnabled(false.into())?;
+                settings.SetAreDevToolsEnabled(false.into())?;
+                Ok(())
+            }) {
+                eprintln!("窗口 {label} 的 release 加固失败：{error}");
+            }
+        });
+        if let Err(error) = result {
+            eprintln!("窗口 {label} 调度加固任务失败：{error}");
+        }
+    }
+}
+
+/// 非 Windows 无 WebView2 设置层：右键菜单等由前端 PROD 拦截兜底（ADR-0026）
+#[cfg(not(windows))]
+fn harden_release_webviews(_app: &AppHandle) {}
 
 fn setup_tray(app: &AppHandle, language: &str) -> tauri::Result<()> {
     let menu = build_tray_menu(app, language)?;

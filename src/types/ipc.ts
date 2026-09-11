@@ -82,6 +82,8 @@ export interface AppSettings {
   refreshIntervalMinutes: number;
   /** 用量告警总开关 */
   alertsEnabled: boolean;
+  /** 告警冷却（ADR-0025）：同一规则两次通知的最小间隔（小时），0=关闭冷却；事实源在 Rust 端 */
+  alertCooldownHours: number;
   /** 快速面板全局快捷键（规范格式，如 "Alt+KeyU"；空字符串表示不启用） */
   quickPanelShortcut: string;
   /** 快速面板失焦自动隐藏 */
@@ -128,4 +130,13 @@ export interface StoredNotification {
   body: string;
   params?: Record<string, string | number> | null;
   read: boolean;
+}
+
+/** 一条告警规则的持久化状态（ADR-0025）：边沿触发与冷却的事实源在 Rust 端，
+ *  评估窗口启动/重载后据此水合；字段 snake_case 与 StoredNotification 同口径 */
+export interface StoredAlertState {
+  rule_key: string;
+  instance_id: string;
+  triggered: boolean;
+  last_notified_at: number;
 }

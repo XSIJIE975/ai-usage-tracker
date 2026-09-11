@@ -1,4 +1,5 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
+import { HintTooltip } from "../../components/ui/tooltip";
 import { Label } from "../../components/ui/label";
 import { Select } from "../../components/ui/select";
 import { Separator } from "../../components/ui/separator";
@@ -16,6 +17,8 @@ import { useT } from "../../i18n";
 import { SavedHint, useSaveFlash } from "./save-flash";
 
 const INTERVAL_PRESETS = [5, 10, 15, 30, 60, 120];
+/** 告警冷却预设（小时，ADR-0025）；0 = 关闭冷却 */
+const COOLDOWN_PRESETS = [1, 3, 6, 12, 24];
 
 export function GeneralSettings() {
   const settings = useAppStore((state) => state.settings);
@@ -111,10 +114,34 @@ export function GeneralSettings() {
             onCheckedChange={(value) => void save({ alertsEnabled: value })}
           />
         </CardHeader>
-        <CardContent>
-          <p className="text-[13px] text-fg-muted">
-            {t("各实例的阈值在其配置弹窗中设置；触发后 6 小时内不会重复通知，恢复到阈值以上会自动解除。")}
-          </p>
+        <CardContent className="space-y-5">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <Label htmlFor="alert-cooldown">
+                {t("重复通知冷却")}
+                <HintTooltip
+                  tip={t(
+                    "同一状况告警一次后，在该时段内不再重复通知；跨界面刷新与应用重启持续有效。恢复到阈值以上会自动解除。",
+                  )}
+                />
+              </Label>
+              <p className="mt-1 text-[13px] text-fg-muted">{t("各实例的阈值在其配置弹窗中设置。")}</p>
+            </div>
+            <Select
+              id="alert-cooldown"
+              value={String(settings.alertCooldownHours)}
+              disabled={!settings.alertsEnabled}
+              onChange={(value) => void save({ alertCooldownHours: Number(value) })}
+              options={[
+                ...COOLDOWN_PRESETS.map((hours) => ({
+                  value: String(hours),
+                  label: `${hours} ${t("小时")}`,
+                })),
+                { value: "0", label: t("关闭") },
+              ]}
+              aria-label={t("重复通知冷却")}
+            />
+          </div>
         </CardContent>
       </Card>
 

@@ -599,20 +599,58 @@ pub fn refresh_tray_menu(app: AppHandle, language: String) -> Result<(), String>
 
 // ─── 通知 ───
 
+/// 告警通知入口（ADR-0025）：带 ruleKey 时后端按墙钟冷却判重，冷却期内返回 null，
+/// 前端据此跳过系统通知。冷却时长读设置库；读失败时判重降级为放行——投递韧性优先。
 #[tauri::command]
 pub fn add_notification(
     state: State<'_, AppState>,
     instance_id: String,
+    rule_key: Option<String>,
     title: String,
     body: String,
     params: Option<Value>,
-) -> Result<db::StoredNotification, String> {
+) -> Result<Option<db::StoredNotification>, String> {
     let params_text = match params {
         Some(value) => Some(serde_json::to_string(&value).map_err(|error| error.to_string())?),
         None => None,
     };
     let db = state.db.lock().expect("db lock poisoned");
-    db.add_notification(&instance_id, &title, &body, params_text.as_deref())
+    let cooldown_ms = match db.get_settings() {
+        Ok(settings) => settings
+            .get("alertCooldownHours")
+            .and_then(|value| value.as_f64())
+            .unwrap_or(6.0) as i64
+            * 3_600_000,
+        Err(error) => {
+            eprintln!("读取告警冷却设置失败，本次判重降级为放行：{error}");
+            0
+        }
+    };
+    db.add_notification(
+        &instance_id,
+        rule_key.as_deref(),
+        cooldown_ms,
+        &title,
+        &body,
+        params_text.as_deref(),
+    )
+}
+
+/// 告警规则状态水合（ADR-0025）：评估窗口启动/重载后恢复边沿与冷却
+#[tauri::command]
+pub fn list_alert_states(state: State<'_, AppState>) -> Result<Vec<db::StoredAlertState>, String> {
+    let db = state.db.lock().expect("db lock poisoned");
+    db.list_alert_states()
+}
+
+/// 告警规则状态回写（ADR-0025）：评估产生的边沿解除等变化持久化到事实源
+#[tauri::command]
+pub fn save_alert_states(
+    state: State<'_, AppState>,
+    states: Vec<db::StoredAlertState>,
+) -> Result<(), String> {
+    let db = state.db.lock().expect("db lock poisoned");
+    db.save_alert_states(&states)
 }
 
 #[tauri::command]

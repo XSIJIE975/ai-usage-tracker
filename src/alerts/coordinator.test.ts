@@ -3,7 +3,7 @@ import { AlertCoordinator } from "./coordinator";
 import type { AlertFire } from "./evaluate";
 import { evaluateRules } from "./evaluate";
 import { renderTemplate } from "../i18n/apply-params";
-import type { ProviderInstance, ProviderSnapshot } from "../types/ipc";
+import type { ProviderInstance, ProviderSnapshot, StoredAlertState } from "../types/ipc";
 import { extractMetric } from "./metric";
 
 const HOUR = 3_600_000;
@@ -215,6 +215,94 @@ describe("evaluateRules 文案模板（ADR-0022）", () => {
     ).find((candidate) => candidate.ruleKey === "glm:exhausted")!;
     expect(fire.params.names).toBe("「5-hour request quota」");
     expect(fire.body).toBe("{names}已用尽（100%），等待重置恢复。");
+  });
+});
+
+describe("状态持久化与水合（ADR-0025）", () => {
+  it("通知后回写状态：重载水合后冷却期内同一状况不再通知（F5 回归）", () => {
+    const now = { value: 0 };
+    const notify = vi.fn();
+    const onActiveChange = vi.fn();
+    const onStateChange = vi.fn();
+    // 会话 A：越阈通知一次，状态经 onStateChange 回写
+    const sessionA = new AlertCoordinator({ now: () => now.value, notify, onActiveChange, onStateChange });
+    sessionA.observe(instance(), deepseekSnapshot(10), true);
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(onStateChange).toHaveBeenCalledWith([
+      { rule_key: "deepseek:balance", instance_id: "deepseek", triggered: true, last_notified_at: 0 },
+    ]);
+
+    // 会话 B：F5 重载，新协调器水合后评估同样的越阈快照——不重复通知，告警态立即恢复
+    const persisted = onStateChange.mock.calls[0][0] as StoredAlertState[];
+    const sessionB = new AlertCoordinator({ now: () => now.value, notify, onActiveChange });
+    sessionB.hydrate(persisted);
+    expect(onActiveChange).toHaveBeenLastCalledWith("deepseek", true);
+    now.value = HOUR;
+    sessionB.observe(instance(), deepseekSnapshot(10), true);
+    expect(notify).toHaveBeenCalledTimes(1);
+
+    // 恢复 → 越过冷却期后再越阈，才重新通知
+    now.value = 7 * HOUR;
+    sessionB.observe(instance(), deepseekSnapshot(100), true);
+    now.value = 8 * HOUR;
+    sessionB.observe(instance(), deepseekSnapshot(10), true);
+    expect(notify).toHaveBeenCalledTimes(2);
+  });
+
+  it("水合恢复冷却时间戳：即使边沿已解除，冷却期内再越阈也不通知", () => {
+    const now = { value: 2 * HOUR };
+    const notify = vi.fn();
+    const coordinator = new AlertCoordinator({ now: () => now.value, notify, onActiveChange: vi.fn() });
+    // 库中状态：4 小时前通知过、之后解除（triggered=false 但冷却未过）
+    coordinator.hydrate([
+      { rule_key: "deepseek:balance", instance_id: "deepseek", triggered: false, last_notified_at: 0 },
+    ]);
+    coordinator.observe(instance(), deepseekSnapshot(10), true);
+    expect(notify).not.toHaveBeenCalled();
+    now.value = 6 * HOUR + 1;
+    coordinator.observe(instance(), deepseekSnapshot(100), true);
+    now.value = 7 * HOUR;
+    coordinator.observe(instance(), deepseekSnapshot(10), true);
+    expect(notify).toHaveBeenCalledTimes(1);
+  });
+
+  it("恢复解除时回写边沿态：重载水合后不会误报活跃告警", () => {
+    const now = { value: 0 };
+    const onActiveChange = vi.fn();
+    const onStateChange = vi.fn();
+    const coordinator = new AlertCoordinator({ now: () => now.value, notify: vi.fn(), onActiveChange, onStateChange });
+    coordinator.observe(instance(), deepseekSnapshot(10), true);
+    coordinator.observe(instance(), deepseekSnapshot(100), true);
+    expect(onActiveChange).toHaveBeenLastCalledWith("deepseek", false);
+    expect(onStateChange).toHaveBeenLastCalledWith([
+      { rule_key: "deepseek:balance", instance_id: "deepseek", triggered: false, last_notified_at: 0 },
+    ]);
+  });
+
+  it("水合只播种会话中尚不存在的键，不回退本会话已推进的状态", () => {
+    const now = { value: 10 * HOUR };
+    const notify = vi.fn();
+    const coordinator = new AlertCoordinator({ now: () => now.value, notify, onActiveChange: vi.fn() });
+    coordinator.observe(instance(), deepseekSnapshot(10), true);
+    expect(notify).toHaveBeenCalledTimes(1);
+    // 过期的库快照（triggered=false、从未通知）不得把内存态拉回去，否则会立即重复通知
+    coordinator.hydrate([
+      { rule_key: "deepseek:balance", instance_id: "deepseek", triggered: false, last_notified_at: 0 },
+    ]);
+    coordinator.observe(instance(), deepseekSnapshot(10), true);
+    expect(notify).toHaveBeenCalledTimes(1);
+  });
+
+  it("自定义冷却逐次生效：设置改短后冷却期按新值计算", () => {
+    const now = { value: 0 };
+    const notify = vi.fn();
+    const coordinator = new AlertCoordinator({ now: () => now.value, notify, onActiveChange: vi.fn() });
+    coordinator.observe(instance(), deepseekSnapshot(10), true, HOUR);
+    expect(notify).toHaveBeenCalledTimes(1);
+    now.value = HOUR + 1;
+    coordinator.observe(instance(), deepseekSnapshot(100), true, HOUR);
+    coordinator.observe(instance(), deepseekSnapshot(10), true, HOUR);
+    expect(notify).toHaveBeenCalledTimes(2);
   });
 });
 

@@ -40,3 +40,9 @@ zeroize = "1"
 uuid = { version = "1", features = ["v4"] }
 keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service"] }
 
+# release 加固（ADR-0026）：与 tauri 锁定的 webview2-com 0.38.x 对齐，
+# 经 with_webview 关闭 WebView2 的加速键/右键菜单/devtools
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38"
+windows = "0.61"
+
