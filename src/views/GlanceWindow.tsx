@@ -23,8 +23,14 @@ import { useT } from "../i18n";
  * 与快速面板共用 usePanelWindow。
  */
 export function GlanceWindow() {
-  const { vaultStatus, settings, instances, snapshots, refreshAll, refreshingInstances, loading } =
-    useAppStore();
+  // 按字段订阅：面板窗口同样不该被无关 store 写入整树重渲染
+  const vaultStatus = useAppStore((state) => state.vaultStatus);
+  const settings = useAppStore((state) => state.settings);
+  const instances = useAppStore((state) => state.instances);
+  const snapshots = useAppStore((state) => state.snapshots);
+  const refreshAll = useAppStore((state) => state.refreshAll);
+  const refreshingInstances = useAppStore((state) => state.refreshingInstances);
+  const loading = useAppStore((state) => state.loading);
   const unread = useNotificationStore(selectUnreadCount);
   const alertActiveMap = useAlertStore((state) => state.active);
   const t = useT();

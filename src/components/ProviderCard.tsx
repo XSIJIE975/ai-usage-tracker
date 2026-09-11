@@ -276,7 +276,13 @@ function CardBody({
   const statsDisabled = snapshot?.status !== "ok";
 
   return (
-    <div className={faceClassName} aria-hidden={!faceVisible}>
+    <div
+      className={faceClassName}
+      aria-hidden={!faceVisible}
+      // inert 让隐藏面内的按钮彻底退出 Tab 序（aria-hidden 只挡读屏，不挡聚焦——
+      // 焦点落在 aria-hidden 子树属 a11y 违规）
+      inert={!faceVisible}
+    >
       <CardHeader
         className={cn(
           "flex-row items-center justify-between space-y-0",

@@ -272,7 +272,15 @@ export function InstanceDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        // 保存进行中拦下 ESC/遮罩关闭（ADR-0024 可见性）：半途关掉后保存结果
+        // 会写进已关闭的弹窗，新建路径用户完全得不到反馈
+        if (!next && saving) return;
+        onOpenChange(next);
+      }}
+    >
       <DialogContent aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle>

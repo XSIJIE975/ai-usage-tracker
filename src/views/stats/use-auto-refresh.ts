@@ -12,22 +12,25 @@ import type { ProviderInstance } from "../../types/ipc";
  * vault 未解锁、实例缺失或任一门控关闭时不启动定时器。
  */
 export function useAutoRefresh(onRefresh: () => void, instance: ProviderInstance | null) {
-  const { settings, vaultStatus } = useAppStore();
+  // 窄化 selector：只订阅用到的两个设置字段与解锁态，其他设置变化不触发重渲染
+  const refreshEnabled = useAppStore((state) => state.settings.refreshEnabled);
+  const refreshIntervalMinutes = useAppStore((state) => state.settings.refreshIntervalMinutes);
+  const vaultUnlocked = useAppStore((state) => state.vaultStatus?.unlocked ?? false);
   const callbackRef = useRef(onRefresh);
   callbackRef.current = onRefresh;
 
   const instanceEnabled = instance?.autoRefresh ?? false;
 
   useEffect(() => {
-    if (!vaultStatus?.unlocked) return;
-    if (!settings.refreshEnabled || settings.refreshIntervalMinutes <= 0) return;
+    if (!vaultUnlocked) return;
+    if (!refreshEnabled || refreshIntervalMinutes <= 0) return;
     if (!instanceEnabled) return;
 
-    const intervalMs = settings.refreshIntervalMinutes * 60_000;
+    const intervalMs = refreshIntervalMinutes * 60_000;
     const timer = window.setInterval(() => {
       callbackRef.current();
     }, intervalMs);
 
     return () => window.clearInterval(timer);
-  }, [settings.refreshEnabled, settings.refreshIntervalMinutes, instanceEnabled, vaultStatus?.unlocked]);
+  }, [refreshEnabled, refreshIntervalMinutes, instanceEnabled, vaultUnlocked]);
 }

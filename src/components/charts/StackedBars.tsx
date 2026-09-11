@@ -229,7 +229,8 @@ export function StackedBars({
         barGap: "20%",
         itemStyle: {
           color: modelColor(s.name),
-          borderRadius: si === series.length - 1 ? [3, 3, 0, 0] : [0, 0, 0, 0],
+          // 圆角只给可见栈顶：si 是 visibleSeries 下标，与全量 series 比较会在隐藏系列后错位
+          borderRadius: si === visibleSeries.length - 1 ? [3, 3, 0, 0] : [0, 0, 0, 0],
         },
         emphasis: {
           focus: "series" as const,

@@ -54,6 +54,15 @@ export function LineChartView({
   const legend = useChartLegend(allNames);
   const activeNameRef = useRef<string | null>(null);
   activeNameRef.current = legend.activeName;
+  // 系列名 → 全量 series 下标：线条/图例/tooltip 三处取色必须同一口径（全量下标），
+  // 按 visibleSeries 下标取色会在隐藏前面的系列后与图例/tooltip 颜色错位。
+  // 经 ref 读取：tooltip formatter 不必捕获 series，option deps 无需包含原始 series
+  const nameIndexRef = useRef(new Map<string, number>());
+  nameIndexRef.current = new Map(series.map((s, i) => [s.name, i]));
+  const colorOf = useCallback(
+    (name: string) => chartHexColor(nameIndexRef.current.get(name) ?? 0),
+    [],
+  );
 
   const handleLegendToggle = useCallback((name: string) => legend.toggle(name), [legend]);
   const handleLegendEnter = useCallback((name: string) => legend.setActive(name), [legend]);
@@ -104,7 +113,7 @@ export function LineChartView({
           ];
           for (const p of sorted) {
             const isActive = p.seriesName === activeName;
-            const seriesColor = chartHexColor(series.findIndex((s) => s.name === p.seriesName));
+            const seriesColor = colorOf(p.seriesName);
             const opacity = isActive ? 1 : 0.55;
             const fontWeight = isActive ? 700 : 400;
             const nameColor = isActive ? seriesColor : colors.fgSecondary;
@@ -139,19 +148,19 @@ export function LineChartView({
         splitLine: { lineStyle: { color: colors.line } },
         axisLabel: { fontSize: 10, color: colors.fgMuted, formatter: (v: number) => yFormat(v) },
       },
-      series: visibleSeries.map((s, si) => ({
+      series: visibleSeries.map((s) => ({
         name: s.name,
         type: "line" as const,
         smooth: true,
         showSymbol: false,
-        lineStyle: { width: 2, color: chartHexColor(si) },
-        itemStyle: { color: chartHexColor(si) },
+        lineStyle: { width: 2, color: colorOf(s.name) },
+        itemStyle: { color: colorOf(s.name) },
         emphasis: { focus: "series" as const },
         data: s.values,
       })),
     }),
-    // 依赖刻意不含 legend.activeName：hover 不触发 setOption
-    [colors, labels, visibleSeries, yFormat, tooltipFormat, series],
+    // 依赖刻意不含 legend.activeName（hover 不触发 setOption）与 series（经 nameIndexRef 读取）
+    [colors, labels, visibleSeries, yFormat, tooltipFormat, colorOf],
   );
 
   return (

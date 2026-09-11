@@ -27,6 +27,10 @@ import { useAutoRefresh } from "./use-auto-refresh";
 import { useGlobalRefresh } from "./use-global-refresh";
 import type { ProviderInstance } from "../../types/ipc";
 
+/** 美元格式化器（模块级稳定引用，避免穿透 StackedBars 的 option memo） */
+const formatUsdInt = (value: number) => `$${formatInt(value)}`;
+const formatUsdPrecise = (value: number) => `$${value.toFixed(2)}`;
+
 const monthlyCache = createUsageCache();
 
 const currentMonth = () => {
@@ -92,6 +96,11 @@ export function OpenCodeStats({ instance }: { instance: ProviderInstance }) {
   const series = useMemo(
     () => buildCostSeries(filteredCosts, costDays, chartModels),
     [filteredCosts, costDays, chartModels],
+  );
+  // 稳定引用：内联 map/箭头会让 StackedBars 的 option memo 每次 render 失效 → 每渲染重建图表
+  const costLabels = useMemo(
+    () => costDays.map((day) => formatCostDayLabel(day, language)),
+    [costDays, language],
   );
   const monthTotal = useMemo(
     () => sumCostUsd(model === "all" ? filteredCosts : filteredCosts.filter((p) => p.model === model)),
@@ -184,10 +193,10 @@ export function OpenCodeStats({ instance }: { instance: ProviderInstance }) {
           </div>
 
           <StackedBars
-            labels={costDays.map((day) => formatCostDayLabel(day, language))}
+            labels={costLabels}
             series={series}
-            yFormat={(v) => `$${formatInt(v)}`}
-            tooltipFormat={(v) => `$${v.toFixed(2)}`}
+            yFormat={formatUsdInt}
+            tooltipFormat={formatUsdPrecise}
             height={280}
           />
         </CardContent>

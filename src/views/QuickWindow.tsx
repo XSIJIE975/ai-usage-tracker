@@ -36,15 +36,14 @@ function useNextRefreshCountdown(): string | null {
 }
 
 export function QuickWindow() {
-  const {
-    vaultStatus,
-    instances,
-    snapshots,
-    refreshAll,
-    refreshInstance,
-    refreshingInstances,
-    loading,
-  } = useAppStore();
+  // 按字段订阅：面板窗口同样不该被无关 store 写入整树重渲染
+  const vaultStatus = useAppStore((state) => state.vaultStatus);
+  const instances = useAppStore((state) => state.instances);
+  const snapshots = useAppStore((state) => state.snapshots);
+  const refreshAll = useAppStore((state) => state.refreshAll);
+  const refreshInstance = useAppStore((state) => state.refreshInstance);
+  const refreshingInstances = useAppStore((state) => state.refreshingInstances);
+  const loading = useAppStore((state) => state.loading);
   const unread = useNotificationStore(selectUnreadCount);
   const alertActiveMap = useAlertStore((state) => state.active);
   const countdown = useNextRefreshCountdown();

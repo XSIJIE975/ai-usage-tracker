@@ -166,6 +166,12 @@ export function GlmStats({ instance }: { instance: ProviderInstance }) {
     () => (bundle ? aggregateModelUsage(bundle.models) : null),
     [bundle],
   );
+
+  // 稳定引用：内联 map 会让 Donut 的内部 memo 每次 render 失效
+  const donutSegments = useMemo(
+    () => aggregates?.perModel.map((model) => ({ name: model.name, value: model.tokens })) ?? [],
+    [aggregates],
+  );
   const chartSeries = useMemo(() => {
     if (!bundle || !totals) return [];
     return metric === "tokens"
@@ -339,10 +345,7 @@ export function GlmStats({ instance }: { instance: ProviderInstance }) {
                 className="w-full"
                 centerLabel={t("总 Token")}
                 format={formatCompact}
-                segments={aggregates.perModel.map((model) => ({
-                  name: model.name,
-                  value: model.tokens,
-                }))}
+                segments={donutSegments}
               />
             ) : (
               <div className="w-full">{emptyUsageHint}</div>

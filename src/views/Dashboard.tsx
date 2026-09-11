@@ -135,23 +135,23 @@ function SortableProviderCard({
 }
 
 export function Dashboard() {
-  const {
-    vaultStatus,
-    settings,
-    instances,
-    initialLoaded,
-    snapshots,
-    refreshAll,
-    refreshInstance,
-    refreshingInstances,
-    loading,
-    error,
-    clearError,
-    updateInstance,
-    removeInstance,
-    reorderInstances,
-    lastRefreshedAt: storeLastRefreshedAt,
-  } = useAppStore();
+  // 按字段订阅（zustand selector）：整库订阅会让任何 store 写入（每张卡的
+  // refreshingInstances 替换、manualRefreshTick…）都整树重渲染
+  const vaultStatus = useAppStore((state) => state.vaultStatus);
+  const settings = useAppStore((state) => state.settings);
+  const instances = useAppStore((state) => state.instances);
+  const initialLoaded = useAppStore((state) => state.initialLoaded);
+  const snapshots = useAppStore((state) => state.snapshots);
+  const refreshAll = useAppStore((state) => state.refreshAll);
+  const refreshInstance = useAppStore((state) => state.refreshInstance);
+  const refreshingInstances = useAppStore((state) => state.refreshingInstances);
+  const loading = useAppStore((state) => state.loading);
+  const error = useAppStore((state) => state.error);
+  const clearError = useAppStore((state) => state.clearError);
+  const updateInstance = useAppStore((state) => state.updateInstance);
+  const removeInstance = useAppStore((state) => state.removeInstance);
+  const reorderInstances = useAppStore((state) => state.reorderInstances);
+  const storeLastRefreshedAt = useAppStore((state) => state.lastRefreshedAt);
   const [view, setView] = useState<ViewKey>("overview");
   const t = useT();
   const language = useLanguage();
