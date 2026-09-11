@@ -19,7 +19,7 @@ import { useGlobalRefresh } from "./use-global-refresh";
 import { OverviewCards } from "./deepseek/OverviewCards";
 import { ModelUsageTable } from "./deepseek/ModelUsageTable";
 import { customRangeError, isoDate, resolveRangeMs, timeRangeOptions, type TimeRange } from "./time-range";
-import { useT } from "../../i18n";
+import { useLanguage, useT } from "../../i18n";
 import type { ProviderInstance } from "../../types/ipc";
 import {
   aggregateUsage,
@@ -58,6 +58,7 @@ export function DeepSeekStats({ instance }: { instance: ProviderInstance }) {
   const rangeMs = useMemo(() => resolveRangeMs(range, customFrom, customTo), [range, customFrom, customTo]);
   const customError = range === "custom" ? customRangeError(customFrom, customTo) : null;
   const t = useT();
+  const language = useLanguage();
   // cache key 前缀 instanceId：同种类两个实例的统计互不串数据
   const cacheKey =
     rangeMs === null ? null : `${instance.id}:${rangeMs.startMs}:${rangeMs.endMs}`;
@@ -99,7 +100,7 @@ export function DeepSeekStats({ instance }: { instance: ProviderInstance }) {
     () => buildStackedSeries(filteredRows, dayLabels, metric),
     [filteredRows, dayLabels, metric],
   );
-  const chartLabels = useMemo(() => dayLabels.map(formatDayLabel), [dayLabels]);
+  const chartLabels = useMemo(() => dayLabels.map((day) => formatDayLabel(day, language)), [dayLabels, language]);
 
   const keyOptions = useMemo(
     () => [
@@ -134,7 +135,7 @@ export function DeepSeekStats({ instance }: { instance: ProviderInstance }) {
               options={timeRangeOptions.map((option) => ({ ...option, label: t(option.label) }))}
               value={range}
               onChange={setRange}
-              aria-label="时间范围"
+              aria-label={t("时间范围")}
             />
             {range === "custom" && (
               <div className="flex items-center gap-1.5">
@@ -169,7 +170,7 @@ export function DeepSeekStats({ instance }: { instance: ProviderInstance }) {
               options={keyOptions.map((option) => ({ ...option, label: t(option.label) }))}
               value={apiKeyId}
               onChange={setApiKeyId}
-              aria-label="API 密钥"
+              aria-label={t("API 密钥")}
             />
         </div>
 
@@ -205,7 +206,7 @@ export function DeepSeekStats({ instance }: { instance: ProviderInstance }) {
             <EmptyState
               icon={<CalendarRange className="h-5 w-5" />}
               title={t("时间范围无效")}
-              description={customError}
+              description={t(customError)}
             />
           </CardContent>
         </Card>

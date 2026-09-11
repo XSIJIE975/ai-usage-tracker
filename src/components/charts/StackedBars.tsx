@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useRef } from "react";
+import { useT } from "../../i18n";
 import ReactEChartsCore from "echarts-for-react/lib/core";
 import * as echarts from "echarts/core";
 import { BarChart } from "echarts/charts";
@@ -64,6 +65,7 @@ export function StackedBars({
   className?: string;
 }) {
   const theme = useEffectiveTheme();
+  const t = useT();
   // 注意：getThemeColors() 每次调用都返回新对象，必须按 theme 缓存，否则 option 每次 render 重算。
   const colors = useMemo(() => getThemeColors(), [theme]);
   const [chartRef] = useResizeObserver<HTMLDivElement>();
@@ -170,7 +172,7 @@ export function StackedBars({
           const total = params.reduce((sum, p) => sum + p.value, 0);
           lines.push(
             `<div style="margin-top:6px;padding-top:6px;border-top:1px solid ${colors.line};display:flex;justify-content:space-between;color:${colors.fgMuted};font-size:13px;">` +
-              `<span>合计</span>` +
+              `<span>${t("合计")}</span>` +
               `<b style="color:${colors.fg}">${tooltipFormat(total)}</b>` +
               `</div>`
           );
@@ -236,7 +238,7 @@ export function StackedBars({
       })),
     }),
     // 依赖刻意不含 legend.activeName：hover 不触发 option 重算 → 不触发 setOption → ECharts 状态机不受干扰
-    [colors, labels, visibleSeries, yFormat, tooltipFormat]
+    [colors, labels, visibleSeries, yFormat, tooltipFormat, t]
   );
 
   return (

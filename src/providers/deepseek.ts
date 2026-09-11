@@ -113,10 +113,10 @@ async function fetchBalance(instance: ProviderInstance): Promise<ProviderSnapsho
     // 充值/赠送余额缺字段时跳过该行（不显示 ¥0.00）
     const toppedUp = toAmount(infos[0].topped_up_balance);
     const granted = toAmount(infos[0].granted_balance);
-    if (toppedUp > 0) {
+    if (toppedUp !== null && toppedUp > 0) {
       lines.push({ type: "text" as const, label: "充值余额", value: formatter.format(toppedUp) });
     }
-    if (granted > 0) {
+    if (granted !== null && granted > 0) {
       lines.push({ type: "text" as const, label: "赠送余额", value: formatter.format(granted) });
     }
 

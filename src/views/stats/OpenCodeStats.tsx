@@ -165,13 +165,13 @@ export function OpenCodeStats({ instance }: { instance: ProviderInstance }) {
               options={modelOptions.map((option) => ({ ...option, label: t(option.label) }))}
               value={model}
               onChange={setModel}
-              aria-label="模型筛选"
+              aria-label={t("模型筛选")}
             />
             <Select
               options={keyOptions.map((option) => ({ ...option, label: t(option.label) }))}
               value={keyId}
               onChange={setKeyId}
-              aria-label="密钥筛选"
+              aria-label={t("密钥筛选")}
             />
             <IconButton
               onClick={refresh}
@@ -184,7 +184,7 @@ export function OpenCodeStats({ instance }: { instance: ProviderInstance }) {
           </div>
 
           <StackedBars
-            labels={costDays.map(formatCostDayLabel)}
+            labels={costDays.map((day) => formatCostDayLabel(day, language))}
             series={series}
             yFormat={(v) => `$${formatInt(v)}`}
             tooltipFormat={(v) => `$${v.toFixed(2)}`}

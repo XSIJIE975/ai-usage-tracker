@@ -2,6 +2,7 @@ import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AlertCircle, KeyRound } from "lucide-react";
 import { useAppStore } from "../../store/useAppStore";
+import { useT } from "../../i18n";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import { Input } from "../../components/ui/input";
@@ -9,6 +10,7 @@ import { Label } from "../../components/ui/label";
 
 export function MigrationCard() {
   const { loadInitial } = useAppStore();
+  const t = useT();
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState("");
@@ -30,15 +32,15 @@ export function MigrationCard() {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <KeyRound className="h-4 w-4 text-warning" /> 凭据库迁移
+          <KeyRound className="h-4 w-4 text-warning" /> {t("凭据库迁移")}
         </CardTitle>
         <CardDescription>
-          凭据加密方式已升级为本机设备密钥。最后一次输入旧主密码完成迁移，之后启动不再需要密码。
+          {t("凭据加密方式已升级为本机设备密钥。最后一次输入旧主密码完成迁移，之后启动不再需要密码。")}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-2">
-          <Label htmlFor="migration-password">旧主密码</Label>
+          <Label htmlFor="migration-password">{t("旧主密码")}</Label>
           <Input
             id="migration-password"
             type="password"
@@ -56,7 +58,7 @@ export function MigrationCard() {
           </p>
         )}
         <Button disabled={busy || !password} onClick={() => void submit()}>
-          {busy ? "迁移中..." : "完成迁移"}
+          {busy ? t("迁移中...") : t("完成迁移")}
         </Button>
       </CardContent>
     </Card>

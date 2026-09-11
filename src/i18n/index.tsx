@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { useAppStore } from "../store/useAppStore";
-import { resolveLanguage, translateText } from "./translate";
+import { resolveLanguage, translateText, type Language } from "./translate";
 
 export type { Language, LanguageSetting } from "./translate";
 export { resolveLanguage, translateText } from "./translate";

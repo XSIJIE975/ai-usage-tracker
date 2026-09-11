@@ -302,8 +302,8 @@ export const en: Record<string, string> = {
     "How to get: open the bigmodel.cn console → Coding Plan page → \"Generate API Key\", then copy the generated API Key and paste it above.",
   "凭据已配置": "Credentials set",
   "凭据未配置": "Credentials not set",
-  "凭据库待迁移，请先完成上方的一次性迁移，再保存凭据。":
-    "Credential vault needs migration — finish the one-time migration above before saving credentials.",
+  "凭据库待迁移，请先完成一次性迁移，再保存凭据。":
+    "Credential vault needs migration — finish the one-time migration before saving credentials.",
   "显示": "Show",
   "清除": "Clear",
   "已保存": "Saved",
@@ -474,4 +474,19 @@ export const en: Record<string, string> = {
     "The panel hides automatically when you click outside it.",
   "可在设置的「速览面板」中勾选要在此展示的实例":
     "Pick which instances to show here in Settings → Glance panel.",
+  // ── 2026-09 i18n 清剿补键 ──
+  "凭据库迁移": "Credential vault migration",
+  "凭据加密方式已升级为本机设备密钥。最后一次输入旧主密码完成迁移，之后启动不再需要密码。":
+    "Credential encryption has been upgraded to the local device key. Enter your old master password one last time to migrate; afterwards startup needs no password.",
+  "旧主密码": "Old master password",
+  "迁移中...": "Migrating…",
+  "完成迁移": "Finish migration",
+  "已下载 {downloaded}": "{downloaded} downloaded",
+  "点击隐藏该系列": "Click to hide this series",
+  "点击显示该系列": "Click to show this series",
+  "模型筛选": "Model filter",
+  "密钥筛选": "Key filter",
+  "通知中心（{count} 条未读）": "Notification center ({count} unread)",
+  "新版本 v{version} 可用，前往设置安装":
+    "Version v{version} is available — go to Settings to install",
 };

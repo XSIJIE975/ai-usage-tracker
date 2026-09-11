@@ -54,7 +54,7 @@ import { selectOrderedInstances } from "../lib/instance";
 import type { AppSettings, ProviderInstance, ProviderKind } from "../types/ipc";
 import { updateSupported, useUpdateStore } from "../store/useUpdateStore";
 import { useTraySync } from "../hooks/use-tray-sync";
-import { useLanguage, useT } from "../i18n";
+import { applyParams, useLanguage, useT } from "../i18n";
 
 type ViewKey = "overview" | "settings";
 
@@ -437,7 +437,7 @@ export function Dashboard() {
               className="border-brand/40 text-brand"
               onClick={() => setView("settings")}
               title={t("前往设置安装新版本")}
-              aria-label={`新版本 v${updateVersion} 可用，前往设置安装`}
+              aria-label={applyParams(t("新版本 v{version} 可用，前往设置安装"), { version: updateVersion ?? "" })}
             >
               <ArrowUpCircle className="h-3.5 w-3.5" /> {t("新版本")} v{updateVersion}
             </Button>
@@ -445,8 +445,12 @@ export function Dashboard() {
           <div className="relative">
             <IconButton
               onClick={() => setNoticeOpen((open) => !open)}
-              title="通知中心"
-              aria-label={`通知中心${unread > 0 ? `（${unread} 条未读）` : ""}`}
+              title={t("通知中心")}
+              aria-label={
+                unread > 0
+                  ? applyParams(t("通知中心（{count} 条未读）"), { count: unread })
+                  : t("通知中心")
+              }
               className="relative h-8"
             >
               <Bell className="h-4 w-4" />

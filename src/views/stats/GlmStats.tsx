@@ -43,7 +43,7 @@ import {
   timeRangeOptions,
   type TimeRange,
 } from "./time-range";
-import { useT } from "../../i18n";
+import { useLanguage, useT } from "../../i18n";
 import type { ProviderInstance } from "../../types/ipc";
 import {
   aggregateModelUsage,
@@ -88,6 +88,7 @@ export function GlmStats({ instance }: { instance: ProviderInstance }) {
   const customError =
     range === "custom" ? customRangeError(customFrom, customTo) : null;
   const t = useT();
+  const language = useLanguage();
   // cache key 前缀 instanceId：同种类两个实例的统计互不串数据
   const cacheKey =
     rangeMs === null ? null : `${instance.id}:${rangeMs.startMs}:${rangeMs.endMs}`;
@@ -172,8 +173,8 @@ export function GlmStats({ instance }: { instance: ProviderInstance }) {
       : buildCallsSeries(totals.calls);
   }, [bundle, totals, metric]);
   const chartLabels = useMemo(
-    () => (totals ? totals.days.map(formatDayLabel) : []),
-    [totals],
+    () => (totals ? totals.days.map((day) => formatDayLabel(day, language)) : []),
+    [totals, language],
   );
 
   const yFormat = formatCompact;
@@ -204,7 +205,7 @@ export function GlmStats({ instance }: { instance: ProviderInstance }) {
               }))}
               value={range}
               onChange={setRange}
-              aria-label="时间范围"
+              aria-label={t("时间范围")}
             />
             {range === "custom" && (
               <div className="flex items-center gap-1.5">
@@ -266,7 +267,7 @@ export function GlmStats({ instance }: { instance: ProviderInstance }) {
             <EmptyState
               icon={<CalendarRange className="h-5 w-5" />}
               title={t("时间范围无效")}
-              description={customError}
+              description={t(customError)}
             />
           </CardContent>
         </Card>

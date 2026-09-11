@@ -4,26 +4,26 @@ import { cn, formatClock } from "../lib/utils";
 import { Button } from "../components/ui/button";
 import { IconButton } from "../components/ui/icon-button";
 import { useNotificationStore } from "../store/useNotificationStore";
-import { renderTemplate, useT } from "../i18n";
+import { renderTemplate, useLanguage, useT } from "../i18n";
 
 const DAY_MS = 86_400_000;
 const localMidnight = (ts: number) => new Date(new Date(ts).setHours(0, 0, 0, 0)).getTime();
 
-/** 相对时间：1 小时内显示"X 分钟前"，当天显示"HH:mm"，否则显示"M月D日" */
-function relativeTime(ts: number, t: (s: string) => string): string {
+/** 相对时间：1 小时内显示"X 分钟前"，当天显示"HH:mm"，否则按界面语言显示短日期 */
+function relativeTime(ts: number, t: (s: string) => string, locale: string): string {
   const delta = Date.now() - ts;
   if (delta < 60_000) return t("刚刚");
   if (delta < 3_600_000) return `${Math.floor(delta / 60_000)} ${t("分钟前")}`;
   if (delta < DAY_MS) return formatClock(ts);
-  return new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(new Date(ts));
+  return new Intl.DateTimeFormat(locale, { month: "numeric", day: "numeric" }).format(new Date(ts));
 }
 
-function dayLabel(ts: number, t: (s: string) => string): string {
+function dayLabel(ts: number, t: (s: string) => string, locale: string): string {
   const today = localMidnight(Date.now());
   const day = localMidnight(ts);
   if (day === today) return t("今天");
   if (day === today - DAY_MS) return t("昨天");
-  return new Intl.DateTimeFormat("zh-CN", { month: "long", day: "numeric" }).format(new Date(ts));
+  return new Intl.DateTimeFormat(locale, { month: "long", day: "numeric" }).format(new Date(ts));
 }
 
 /**
@@ -40,6 +40,8 @@ export function NotificationCenterPanel({
 }) {
   const { items, loaded, load, markAllRead, removeOne, clearAll } = useNotificationStore();
   const t = useT();
+  const language = useLanguage();
+  const locale = language === "en" ? "en-US" : "zh-CN";
   const unread = useMemo(() => items.filter((item) => !item.read).length, [items]);
 
   useEffect(() => {
@@ -49,13 +51,13 @@ export function NotificationCenterPanel({
   const groups = useMemo(() => {
     const map = new Map<string, typeof items>();
     for (const item of items) {
-      const label = dayLabel(item.created_at, t);
+      const label = dayLabel(item.created_at, t, locale);
       const list = map.get(label) ?? [];
       list.push(item);
       map.set(label, list);
     }
     return [...map.entries()];
-  }, [items]);
+  }, [items, t, locale]);
 
   return (
     <div
@@ -142,7 +144,7 @@ export function NotificationCenterPanel({
                     </p>
                   </div>
                   <div className="flex shrink-0 flex-col items-end gap-1">
-                    <span className="tnum text-[11px] text-fg-muted">{relativeTime(item.created_at, t)}</span>
+                    <span className="tnum text-[11px] text-fg-muted">{relativeTime(item.created_at, t, locale)}</span>
                     <button
                       type="button"
                       onClick={() => void removeOne(item.id)}

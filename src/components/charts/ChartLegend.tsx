@@ -1,3 +1,4 @@
+import { useT } from "../../i18n";
 import { cn } from "../../lib/utils";
 
 export interface ChartLegendItem {
@@ -31,6 +32,7 @@ export interface ChartLegendProps {
  * - 支持换行，不会遮挡图表绘图区。
  */
 export function ChartLegend({ items, selected, activeName, onToggle, onMouseEnter, onMouseLeave, className }: ChartLegendProps) {
+  const t = useT();
   if (items.length === 0) return null;
 
   return (
@@ -53,7 +55,7 @@ export function ChartLegend({ items, selected, activeName, onToggle, onMouseEnte
               isActive && "font-semibold"
             )}
             aria-pressed={isSelected}
-            title={isSelected ? "点击隐藏该系列" : "点击显示该系列"}
+            title={t(isSelected ? "点击隐藏该系列" : "点击显示该系列")}
           >
             <span
               className={cn(

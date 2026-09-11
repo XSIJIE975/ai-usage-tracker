@@ -49,7 +49,7 @@ function createCoordinator(): AlertCoordinator {
   const deps: AlertCoordinatorDeps = {
     // 撞满窗口名是含数值的动态模板（「{hours} 小时请求配额」），整串没法当字典键，
     // 在评估时刻按当前语言烘焙进参数；标题/正文的框架文案仍保持模板（ADR-0022）
-    translate: () => currentTranslator(),
+    translate: (text) => currentTranslator()(text),
     notify: (fire) => {
       void invoke<StoredNotification>("add_notification", {
         instanceId: fire.instanceId,

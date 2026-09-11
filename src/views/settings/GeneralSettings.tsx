@@ -76,7 +76,7 @@ export function GeneralSettings() {
                 value: String(minutes),
                 label: formatRefreshLabel(minutes, t),
               }))}
-              aria-label="刷新间隔"
+              aria-label={t("刷新间隔")}
             />
           </div>
         </CardContent>
