@@ -116,17 +116,14 @@ export function GeneralSettings() {
         </CardHeader>
         <CardContent className="space-y-5">
           <div className="flex items-center justify-between gap-4">
-            <div>
-              <Label htmlFor="alert-cooldown">
-                {t("重复通知冷却")}
-                <HintTooltip
-                  tip={t(
-                    "同一状况告警一次后，在该时段内不再重复通知；跨界面刷新与应用重启持续有效。恢复到阈值以上会自动解除。",
-                  )}
-                />
-              </Label>
-              <p className="mt-1 text-[13px] text-fg-muted">{t("各实例的阈值在其配置弹窗中设置。")}</p>
-            </div>
+            <Label htmlFor="alert-cooldown">
+              {t("重复提醒间隔")}
+              <HintTooltip
+                tip={t(
+                  "同一情况持续期间只提醒一次；恢复正常后若再次出现，需距上一次提醒超过所选时长才会再次提醒。重启程序也不会重复提醒。",
+                )}
+              />
+            </Label>
             <Select
               id="alert-cooldown"
               value={String(settings.alertCooldownHours)}
@@ -139,9 +136,10 @@ export function GeneralSettings() {
                 })),
                 { value: "0", label: t("关闭") },
               ]}
-              aria-label={t("重复通知冷却")}
+              aria-label={t("重复提醒间隔")}
             />
           </div>
+          <p className="text-[13px] text-fg-muted">{t("各实例的告警阈值在其配置弹窗中设置。")}</p>
         </CardContent>
       </Card>
 
