@@ -1,4 +1,10 @@
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "../../components/ui/card";
 import { HintTooltip } from "../../components/ui/tooltip";
 import { Label } from "../../components/ui/label";
 import { Select } from "../../components/ui/select";
@@ -55,7 +61,9 @@ export function GeneralSettings() {
           <div className="flex items-center justify-between gap-4">
             <div>
               <Label>{t("自动刷新总开关")}</Label>
-              <p className="mt-1 text-[13px] text-fg-muted">{t("关闭后所有供应商与统计页均不再自动刷新。")}</p>
+              <p className="mt-1 text-[13px] text-fg-muted">
+                {t("关闭后所有供应商与统计页均不再自动刷新。")}
+              </p>
             </div>
             <Switch
               checked={settings.refreshEnabled}
@@ -68,13 +76,17 @@ export function GeneralSettings() {
           <div className="flex items-center justify-between gap-4">
             <div>
               <Label htmlFor="refresh-interval">{t("刷新间隔")}</Label>
-              <p className="mt-1 text-[13px] text-fg-muted">{t("所有供应商共用同一间隔。")}</p>
+              <p className="mt-1 text-[13px] text-fg-muted">
+                {t("所有供应商共用同一间隔。")}
+              </p>
             </div>
             <Select
               id="refresh-interval"
               value={String(interval)}
               disabled={!settings.refreshEnabled}
-              onChange={(value) => void save({ refreshIntervalMinutes: Number(value) })}
+              onChange={(value) =>
+                void save({ refreshIntervalMinutes: Number(value) })
+              }
               options={presets.map((minutes) => ({
                 value: String(minutes),
                 label: formatRefreshLabel(minutes, t),
@@ -89,7 +101,9 @@ export function GeneralSettings() {
         <CardHeader className="flex-row items-start justify-between space-y-0 pb-3">
           <div className="space-y-1.5">
             <CardTitle>{t("启动")}</CardTitle>
-            <CardDescription>{t("登录时自动运行与启动窗口行为。")}</CardDescription>
+            <CardDescription>
+              {t("登录时自动运行与启动窗口行为。")}
+            </CardDescription>
           </div>
         </CardHeader>
         <CardContent>
@@ -116,19 +130,22 @@ export function GeneralSettings() {
         </CardHeader>
         <CardContent className="space-y-5">
           <div className="flex items-center justify-between gap-4">
-            <Label htmlFor="alert-cooldown">
-              {t("重复提醒间隔")}
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="alert-cooldown">{t("重复提醒间隔")}</Label>
               <HintTooltip
                 tip={t(
                   "同一情况持续期间只提醒一次；恢复正常后若再次出现，需距上一次提醒超过所选时长才会再次提醒。重启程序也不会重复提醒。",
                 )}
               />
-            </Label>
+            </div>
+
             <Select
               id="alert-cooldown"
               value={String(settings.alertCooldownHours)}
               disabled={!settings.alertsEnabled}
-              onChange={(value) => void save({ alertCooldownHours: Number(value) })}
+              onChange={(value) =>
+                void save({ alertCooldownHours: Number(value) })
+              }
               options={[
                 ...COOLDOWN_PRESETS.map((hours) => ({
                   value: String(hours),
@@ -139,7 +156,9 @@ export function GeneralSettings() {
               aria-label={t("重复提醒间隔")}
             />
           </div>
-          <p className="text-[13px] text-fg-muted">{t("各实例的告警阈值在其配置弹窗中设置。")}</p>
+          <p className="text-[13px] text-fg-muted">
+            {t("各实例的告警阈值在其配置弹窗中设置。")}
+          </p>
         </CardContent>
       </Card>
 
