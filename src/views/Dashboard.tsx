@@ -36,7 +36,7 @@ import {
   sortableKeyboardCoordinates,
   useSortable,
 } from "@dnd-kit/sortable";
-import { useAppStore } from "../store/useAppStore";
+import { useAppStore, currentWindowLabel, type RefreshCompletedPayload } from "../store/useAppStore";
 import { useAlertStore } from "../store/useAlertStore";
 import { selectUnreadCount, useNotificationStore } from "../store/useNotificationStore";
 import { Button } from "../components/ui/button";
@@ -54,7 +54,7 @@ import { selectOrderedInstances } from "../lib/instance";
 import type { AppSettings, ProviderInstance, ProviderKind } from "../types/ipc";
 import { updateSupported, useUpdateStore } from "../store/useUpdateStore";
 import { useTraySync } from "../hooks/use-tray-sync";
-import { useLanguage, useT } from "../i18n";
+import { applyParams, useLanguage, useT } from "../i18n";
 
 type ViewKey = "overview" | "settings";
 
@@ -135,23 +135,23 @@ function SortableProviderCard({
 }
 
 export function Dashboard() {
-  const {
-    vaultStatus,
-    settings,
-    instances,
-    initialLoaded,
-    snapshots,
-    refreshAll,
-    refreshInstance,
-    refreshingInstances,
-    loading,
-    error,
-    clearError,
-    updateInstance,
-    removeInstance,
-    reorderInstances,
-    lastRefreshedAt: storeLastRefreshedAt,
-  } = useAppStore();
+  // 按字段订阅（zustand selector）：整库订阅会让任何 store 写入（每张卡的
+  // refreshingInstances 替换、manualRefreshTick…）都整树重渲染
+  const vaultStatus = useAppStore((state) => state.vaultStatus);
+  const settings = useAppStore((state) => state.settings);
+  const instances = useAppStore((state) => state.instances);
+  const initialLoaded = useAppStore((state) => state.initialLoaded);
+  const snapshots = useAppStore((state) => state.snapshots);
+  const refreshAll = useAppStore((state) => state.refreshAll);
+  const refreshInstance = useAppStore((state) => state.refreshInstance);
+  const refreshingInstances = useAppStore((state) => state.refreshingInstances);
+  const loading = useAppStore((state) => state.loading);
+  const error = useAppStore((state) => state.error);
+  const clearError = useAppStore((state) => state.clearError);
+  const updateInstance = useAppStore((state) => state.updateInstance);
+  const removeInstance = useAppStore((state) => state.removeInstance);
+  const reorderInstances = useAppStore((state) => state.reorderInstances);
+  const storeLastRefreshedAt = useAppStore((state) => state.lastRefreshedAt);
   const [view, setView] = useState<ViewKey>("overview");
   const t = useT();
   const language = useLanguage();
@@ -203,9 +203,18 @@ export function Dashboard() {
     let disposed = false;
     let stopListening: UnlistenFn | undefined;
 
-    void listen<{ refreshedAt: number }>("refresh-completed", (event) => {
+    void listen<RefreshCompletedPayload>("refresh-completed", (event) => {
       if (disposed) return;
       setRemoteRefreshedAt((current) => Math.max(current, event.payload.refreshedAt));
+      // 快照收敛（ADR-0019）：别的窗口刷出来的结果回流到本窗口，托盘呈现随之重算。
+      // 本窗口自己发起的那次刚在 refreshAll 里读过库，跳过以免白读一遍。
+      if (event.payload.source !== currentWindowLabel()) {
+        // 收敛后重跑告警评估（ADR-0022）：面板刷出的快照主窗口也要能触发告警
+        void useAppStore
+          .getState()
+          .reloadSnapshots()
+          .then(() => useAlertStore.getState().reevaluate());
+      }
     })
       .then((unlisten) => {
         if (disposed) unlisten();
@@ -428,7 +437,7 @@ export function Dashboard() {
               className="border-brand/40 text-brand"
               onClick={() => setView("settings")}
               title={t("前往设置安装新版本")}
-              aria-label={`新版本 v${updateVersion} 可用，前往设置安装`}
+              aria-label={applyParams(t("新版本 v{version} 可用，前往设置安装"), { version: updateVersion ?? "" })}
             >
               <ArrowUpCircle className="h-3.5 w-3.5" /> {t("新版本")} v{updateVersion}
             </Button>
@@ -436,8 +445,12 @@ export function Dashboard() {
           <div className="relative">
             <IconButton
               onClick={() => setNoticeOpen((open) => !open)}
-              title="通知中心"
-              aria-label={`通知中心${unread > 0 ? `（${unread} 条未读）` : ""}`}
+              title={t("通知中心")}
+              aria-label={
+                unread > 0
+                  ? applyParams(t("通知中心（{count} 条未读）"), { count: unread })
+                  : t("通知中心")
+              }
               className="relative h-8"
             >
               <Bell className="h-4 w-4" />

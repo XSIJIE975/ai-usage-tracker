@@ -11,7 +11,7 @@ import { useT } from "../../i18n";
 
 /**
  * 快速面板全局快捷键：录制式捕获（按下组合键即录入），保存时真实注册，
- * 注册失败（组合被其他程序占用）会红字提示并回退。
+ * 注册失败（组合被其他程序占用，Windows 不告知占用者）红字提示并回退旧组合。
  */
 export function QuickPanelShortcutSetting() {
   const settings = useAppStore((state) => state.settings);
@@ -37,10 +37,9 @@ export function QuickPanelShortcutSetting() {
       flash();
       return true;
     } catch (error) {
+      // 后端错误文案自含「占用/冲突，请更换」提示；注意 invoke 对 Err(String) 直接以字符串 reject
       setError(
-        error instanceof Error
-          ? `${t("快捷键可能与其他程序冲突，请更换")}（${error.message}）`
-          : String(error),
+        typeof error === "string" ? error : error instanceof Error ? error.message : String(error),
       );
       // 注册失败时回退：重新注册旧组合
       if (previous) {

@@ -3,6 +3,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { AppSettings, MetricLine, ProviderInstance, ProviderSnapshot } from "../types/ipc";
 import { useAlertStore } from "../store/useAlertStore";
 import { displayName, selectOrderedInstances } from "../lib/instance";
+import { ringLayers } from "../lib/ring-layers";
 import { applyParams, useT } from "../i18n";
 import type { Language } from "../i18n";
 
@@ -16,14 +17,17 @@ export interface TrayMeterWindow {
   label: string;
   /** 重置时刻（ISO）；null = 未知（GLM 滚动窗口的 nextResetTime 常缺失） */
   resetsAt: string | null;
+  /** 结构化窗口周期（毫秒，ADR-0017 层序键）；null = 周期未知 */
+  periodMs: number | null;
 }
 
 export interface TrayMeterCandidate {
   instance: ProviderInstance;
   providerName: string;
-  /** 全部配额窗口，按重置时间近→远排序（柱的上→下渲染顺序） */
+  /** 全部配额窗口，按重置时间近→远排序（柱的上→下、tooltip 行序，ADR-0016 口径）；
+      缺失 resetsAt 的排在后段、保持快照相对顺序 */
   windows: TrayMeterWindow[];
-  /** 最紧窗口已用百分比（全部窗口的最大值）：环/macOS 数字展示它，也是自动排序主键 */
+  /** 最紧窗口已用百分比（全部窗口的最大值，平手取重置更近的一扇）：badge 数字（ADR-0020）与自动排序主键 */
   percent: number;
   /** 最紧窗口（设置页「当前展示」的原因标注用它） */
   tightestWindow: TrayMeterWindow;
@@ -31,12 +35,31 @@ export interface TrayMeterCandidate {
   totalPercent: number;
   /** 柱渲染对：已用%最高的两个窗口，按重置近→远排（[上条, 下条]）；单窗实例只有一个 */
   barWindows: TrayMeterWindow[];
+  /** 环层序（ADR-0017）：取最紧三扇、按窗口周期短→长排位（[外环, …, 内环]）；
+      与 windows 的 resetsAt 近→远是两个口径，互不影响 */
+  ringWindows: TrayMeterWindow[];
 }
 
 function resetTimestamp(resetsAt: string | null): number {
   if (!resetsAt) return Number.POSITIVE_INFINITY;
   const timestamp = Date.parse(resetsAt);
   return Number.isNaN(timestamp) ? Number.POSITIVE_INFINITY : timestamp;
+}
+
+/**
+ * 窗口显示顺序（ADR-0016）：带 resetsAt 的窗口按重置近→远排前；
+ * 缺失 resetsAt 的窗口（GLM 动态滚动窗 nextResetTime 常缺）保底排在其后，
+ * 彼此依赖稳定排序保持快照相对顺序——不沿用「无重置时刻 = 最紧急」的猜测。
+ */
+function compareWindowReset(a: TrayMeterWindow, b: TrayMeterWindow): number {
+  const ta = resetTimestamp(a.resetsAt);
+  const tb = resetTimestamp(b.resetsAt);
+  const knownA = Number.isFinite(ta);
+  const knownB = Number.isFinite(tb);
+  if (knownA && knownB) return ta - tb;
+  if (knownA) return -1;
+  if (knownB) return 1;
+  return 0;
 }
 
 /** 参与托盘计量的候选：刷新成功且至少一条有效配额窗口行。
@@ -60,8 +83,9 @@ export function buildTrayCandidates(
           percent: line.percentUsed,
           label: applyParams(translate(line.label), line.params),
           resetsAt: line.resetsAt ?? null,
+          periodMs: line.windowPeriodMs ?? null,
         }))
-        .sort((a, b) => resetTimestamp(a.resetsAt) - resetTimestamp(b.resetsAt));
+        .sort(compareWindowReset);
       if (windows.length === 0) return null;
       const percent = Math.max(...windows.map((window) => window.percent));
       const tightestWindow = windows.find((window) => window.percent === percent) ?? windows[0];
@@ -76,6 +100,7 @@ export function buildTrayCandidates(
         tightestWindow,
         totalPercent: windows.reduce((sum, window) => sum + window.percent, 0),
         barWindows,
+        ringWindows: ringLayers(windows),
       };
     })
     .filter((item): item is TrayMeterCandidate => item !== null);
@@ -136,6 +161,11 @@ export function useTraySync(
       alertActiveMap,
     );
     const ringPercent = chosen?.percent ?? null;
+    // 环层序百分比（ADR-0017）：外→内 = 周期短→长，前端取最紧三扇；ring_percent 保留兼容
+    const ringWindowPercents = chosen?.ringWindows.map((window) => window.percent) ?? [];
+    // badge 数字（ADR-0020）：最紧窗口已用百分比，显式字段传递——与环层序解耦，
+    // 数字正确性不依赖「最紧必入图」，外环是哪扇窗与数字读哪扇窗互不干涉
+    const badgePercent = chosen?.percent ?? null;
     const barTop = chosen?.barWindows[0]?.percent ?? null;
     const barBottom = chosen?.barWindows[1]?.percent ?? null;
     // tooltip 多行摘要：首行实例名，其后每个配额窗口一行（顺序与柱的上→下一致）
@@ -147,11 +177,13 @@ export function useTraySync(
           ...chosen.windows.map(windowText),
         ].join("\n")
       : null;
-    const key = `${ringPercent}|${barTop}|${barBottom}|${alert}|${summary}|${language}`;
+    const key = `${ringPercent}|${ringWindowPercents.join(",")}|${barTop}|${barBottom}|${alert}|${summary}|${language}`;
     if (key === lastPushRef.current) return;
     lastPushRef.current = key;
     void invoke("update_tray_meter", {
       ringPercent,
+      ringWindows: ringWindowPercents,
+      badgePercent,
       barTop,
       barBottom,
       alert,

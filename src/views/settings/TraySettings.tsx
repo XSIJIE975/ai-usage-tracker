@@ -20,7 +20,11 @@ import {
   type GlanceInstance,
 } from "../../components/glance/data";
 import type { GlanceFieldFlags } from "../../components/glance/GlanceRows";
-import { buildTrayCandidates, selectTrayMeter } from "../../hooks/use-tray-sync";
+import {
+  buildTrayCandidates,
+  selectTrayMeter,
+} from "../../hooks/use-tray-sync";
+import { multiRingLayerSpecs } from "../../lib/ring-layers";
 import { cn } from "../../lib/utils";
 import { useT } from "../../i18n";
 import { SavedHint, useSaveFlash } from "./save-flash";
@@ -111,8 +115,17 @@ export function TraySettings() {
             <SchemeCard
               selected={settings.trayIconScheme === "usage-ring"}
               title={t("环形计量")}
-              caption={chosen ? `${Math.round(chosen.percent)}%` : "—"}
-              preview={<TrayRingPreview percent={chosen?.percent ?? null} alert={anyAlert} />}
+              caption={
+                chosen && chosen.ringWindows.length > 0
+                  ? chosen.ringWindows.map((window) => `${Math.round(window.percent)}%`).join(" · ")
+                  : "—"
+              }
+              preview={
+                <TrayRingPreview
+                  percents={chosen?.ringWindows.map((window) => window.percent) ?? []}
+                  alert={anyAlert}
+                />
+              }
               onClick={() => void save({ trayIconScheme: "usage-ring" }, "tray")}
             />
             <SchemeCard
@@ -378,43 +391,61 @@ function SchemeCard({
   );
 }
 
-/** 用量环预览：与托盘端 draw_usage_ring 同构（顶部起点顺时针、15% 相对描边、留 2% 边距），
-    颜色档位复用 metricColor（与面板、托盘 Rust 端同一套阈值），数据为当前真实最紧实例 */
+/** 环层几何：单层 = 托盘端旧单环公式（15% 相对描边、留 2% 边距，与历史版本一致）；
+    多层走共享的 ADR-0017 嵌套几何（lib/ring-layers，与 Rust ring_layer_specs 同口径） */
+function ringLayerSpecs(size: number, layers: number): Array<{ radius: number; stroke: number }> {
+  if (layers <= 1) {
+    const stroke = Math.max(2, size * 0.15);
+    return [{ radius: (size - stroke) / 2 - size * 0.02, stroke }];
+  }
+  return multiRingLayerSpecs(size, layers);
+}
+
+/** 用量环预览（ADR-0017 多层化）：与托盘端 draw_usage_ring 同构（嵌套同心环、内环加粗、
+    顶部起点顺时针、单层与旧版一致），percents 为外→内层序（周期短→长，取最紧三扇），
+    空数组 = 无数据时画单层空轨道示意结构；颜色为静态品牌色（trayMeterColor） */
 function TrayRingPreview({
-  percent,
+  percents,
   alert,
   size = 34,
 }: {
-  percent: number | null;
+  percents: number[];
   alert: boolean;
   size?: number;
 }) {
-  const stroke = Math.max(2, size * 0.15);
-  const radius = (size - stroke) / 2 - size * 0.02;
-  const circumference = 2 * Math.PI * radius;
-  const clamped = Math.min(100, Math.max(percent ?? 0, 0));
+  const specs = ringLayerSpecs(size, Math.max(1, percents.length));
   return (
     <svg width={size} height={size} className="-rotate-90" aria-hidden>
-      <circle
-        cx={size / 2}
-        cy={size / 2}
-        r={radius}
-        fill="none"
-        stroke="var(--line-strong)"
-        strokeWidth={stroke}
-      />
-      {percent !== null && (
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          fill="none"
-          stroke={trayMeterColor(alert)}
-          strokeWidth={stroke}
-          strokeDasharray={circumference}
-          strokeDashoffset={circumference * (1 - clamped / 100)}
-        />
-      )}
+      {specs.map(({ radius, stroke }, index) => {
+        const percent = percents[index];
+        const clamped = Math.min(100, Math.max(percent ?? 0, 0));
+        const circumference = 2 * Math.PI * radius;
+        return (
+          <g key={index}>
+            <circle
+              cx={size / 2}
+              cy={size / 2}
+              r={radius}
+              fill="none"
+              stroke="var(--line-strong)"
+              strokeWidth={stroke}
+            />
+            {percent !== undefined && (
+              <circle
+                cx={size / 2}
+                cy={size / 2}
+                r={radius}
+                fill="none"
+                stroke={trayMeterColor(alert)}
+                strokeWidth={stroke}
+                strokeLinecap="round"
+                strokeDasharray={circumference}
+                strokeDashoffset={circumference * (1 - clamped / 100)}
+              />
+            )}
+          </g>
+        );
+      })}
     </svg>
   );
 }

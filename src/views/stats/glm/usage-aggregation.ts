@@ -1,5 +1,6 @@
 import type { StackedSeries } from "../../../components/charts/StackedBars";
 import type { GlmModelUsage } from "../../../providers/glm-stats";
+import type { Language } from "../../../i18n";
 
 /** 桶起点 → 本地自然日（"YYYY-MM-DD HH:mm" / "YYYY-MM-DD" 均取前 10 位） */
 export const bucketDay = (bucket: string): string => bucket.slice(0, 10);
@@ -85,8 +86,13 @@ export function aggregateModelUsage(usage: GlmModelUsage): GlmUsageAggregates {
   };
 }
 
-/** "YYYY-MM-DD" → "M月D日"（与 DeepSeek 统计的 x 轴一致） */
-export const formatDayLabel = (day: string): string => {
-  const [, month, date] = day.split("-");
+/** "YYYY-MM-DD" → 日标签：zh「M月D日」（与 DeepSeek 统计的 x 轴一致），en 走 Intl */
+export const formatDayLabel = (day: string, language: Language = "zh"): string => {
+  const [year, month, date] = day.split("-");
+  if (language === "en") {
+    return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(
+      new Date(Number(year), Number(month) - 1, Number(date)),
+    );
+  }
   return `${Number(month)}月${Number(date)}日`;
 };

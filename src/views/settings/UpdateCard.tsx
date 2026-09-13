@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../..
 import { Progress } from "../../components/ui/progress";
 import { cn, formatBytes } from "../../lib/utils";
 import { updateSupported, useUpdateStore } from "../../store/useUpdateStore";
-import { useT } from "../../i18n";
+import { applyParams, useT } from "../../i18n";
 
 export function UpdateCard() {
   const {
@@ -57,7 +57,9 @@ export function UpdateCard() {
         )}
 
         {supported && status === "idle" && (
-          <p className="text-[13px] text-fg-muted">启动后会自动在后台检查新版本，也可以随时手动检查。</p>
+          <p className="text-[13px] text-fg-muted">
+            {t("启动后会自动在后台检查新版本，也可以随时手动检查。")}
+          </p>
         )}
 
         {status === "up-to-date" && (
@@ -90,7 +92,7 @@ export function UpdateCard() {
               <span>
                 {contentLength
                   ? `${formatBytes(downloadedBytes)} / ${formatBytes(contentLength)}`
-                  : `已下载 ${formatBytes(downloadedBytes)}`}
+                  : applyParams(t("已下载 {downloaded}"), { downloaded: formatBytes(downloadedBytes) })}
               </span>
             </div>
             <Progress value={percent} />

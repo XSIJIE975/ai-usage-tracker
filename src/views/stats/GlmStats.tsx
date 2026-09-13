@@ -43,7 +43,7 @@ import {
   timeRangeOptions,
   type TimeRange,
 } from "./time-range";
-import { useT } from "../../i18n";
+import { useLanguage, useT } from "../../i18n";
 import type { ProviderInstance } from "../../types/ipc";
 import {
   aggregateModelUsage,
@@ -88,6 +88,7 @@ export function GlmStats({ instance }: { instance: ProviderInstance }) {
   const customError =
     range === "custom" ? customRangeError(customFrom, customTo) : null;
   const t = useT();
+  const language = useLanguage();
   // cache key 前缀 instanceId：同种类两个实例的统计互不串数据
   const cacheKey =
     rangeMs === null ? null : `${instance.id}:${rangeMs.startMs}:${rangeMs.endMs}`;
@@ -112,7 +113,7 @@ export function GlmStats({ instance }: { instance: ProviderInstance }) {
   const [accountBalance, setAccountBalance] = useState<GlmAccountBalance | null>(null);
   useEffect(() => {
     let cancelled = false;
-    setAccountBalance(null);
+    // 重取时不先置空（旧值顶住）：先卸载再挂载会让余额卡在每轮自动刷新里闪没又闪回
     fetchGlmAccountBalance(instanceId)
       .then((result) => {
         if (!cancelled && result.status === "ok") setAccountBalance(result.data);
@@ -128,7 +129,6 @@ export function GlmStats({ instance }: { instance: ProviderInstance }) {
   const [resetCards, setResetCards] = useState<GlmResetCardList | null>(null);
   useEffect(() => {
     let cancelled = false;
-    setResetCards(null);
     fetchGlmResetCards(instanceId)
       .then((result) => {
         if (!cancelled && result.status === "ok") setResetCards(result.data);
@@ -166,6 +166,12 @@ export function GlmStats({ instance }: { instance: ProviderInstance }) {
     () => (bundle ? aggregateModelUsage(bundle.models) : null),
     [bundle],
   );
+
+  // 稳定引用：内联 map 会让 Donut 的内部 memo 每次 render 失效
+  const donutSegments = useMemo(
+    () => aggregates?.perModel.map((model) => ({ name: model.name, value: model.tokens })) ?? [],
+    [aggregates],
+  );
   const chartSeries = useMemo(() => {
     if (!bundle || !totals) return [];
     return metric === "tokens"
@@ -173,8 +179,8 @@ export function GlmStats({ instance }: { instance: ProviderInstance }) {
       : buildCallsSeries(totals.calls);
   }, [bundle, totals, metric]);
   const chartLabels = useMemo(
-    () => (totals ? totals.days.map(formatDayLabel) : []),
-    [totals],
+    () => (totals ? totals.days.map((day) => formatDayLabel(day, language)) : []),
+    [totals, language],
   );
 
   const yFormat = formatCompact;
@@ -205,7 +211,7 @@ export function GlmStats({ instance }: { instance: ProviderInstance }) {
               }))}
               value={range}
               onChange={setRange}
-              aria-label="时间范围"
+              aria-label={t("时间范围")}
             />
             {range === "custom" && (
               <div className="flex items-center gap-1.5">
@@ -267,7 +273,7 @@ export function GlmStats({ instance }: { instance: ProviderInstance }) {
             <EmptyState
               icon={<CalendarRange className="h-5 w-5" />}
               title={t("时间范围无效")}
-              description={customError}
+              description={t(customError)}
             />
           </CardContent>
         </Card>
@@ -339,10 +345,7 @@ export function GlmStats({ instance }: { instance: ProviderInstance }) {
                 className="w-full"
                 centerLabel={t("总 Token")}
                 format={formatCompact}
-                segments={aggregates.perModel.map((model) => ({
-                  name: model.name,
-                  value: model.tokens,
-                }))}
+                segments={donutSegments}
               />
             ) : (
               <div className="w-full">{emptyUsageHint}</div>

@@ -86,6 +86,9 @@ pub struct Vault {
     unlocked: bool,
     key: Option<[u8; KEY_LEN]>,
     credentials: Option<Value>,
+    /// 文件是否仍是旧版本格式（needs_migration 的依据，ADR-0024 性能项）：
+    /// open/迁移时更新，vault_status 状态查询不再每次读盘解析 JSON
+    legacy_file: bool,
 }
 
 impl Vault {
@@ -96,6 +99,7 @@ impl Vault {
             unlocked: false,
             key: None,
             credentials: None,
+            legacy_file: false,
         }
     }
 
@@ -109,10 +113,7 @@ impl Vault {
 
     pub fn state(&self) -> VaultState {
         let initialized = self.exists();
-        let needs_migration = initialized
-            && read_vault_file(&self.path)
-                .map(|file| file.version == LEGACY_VAULT_VERSION)
-                .unwrap_or(false);
+        let needs_migration = initialized && self.legacy_file;
         VaultState {
             initialized,
             unlocked: self.unlocked,
@@ -127,6 +128,7 @@ impl Vault {
             return self.init_fresh();
         }
         let file = read_vault_file(&self.path)?;
+        self.legacy_file = file.version == LEGACY_VAULT_VERSION;
         match file.version {
             LEGACY_VAULT_VERSION => Ok(()),
             VAULT_VERSION => self.unlock_with_device_key(&file),
@@ -165,6 +167,7 @@ impl Vault {
         self.key = Some(key);
         self.credentials = Some(payload);
         self.unlocked = true;
+        self.legacy_file = false;
         Ok(())
     }
 
@@ -221,6 +224,7 @@ impl Vault {
         });
         self.write_vault(key, &nonce, &payload)?;
         self.credentials = Some(payload);
+        self.legacy_file = false;
         Ok(())
     }
 
@@ -238,6 +242,7 @@ impl Vault {
         self.key = Some(key);
         self.credentials = Some(payload);
         self.unlocked = true;
+        self.legacy_file = false;
         Ok(())
     }
 

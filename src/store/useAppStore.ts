@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type {
   AppSettings,
   ProviderInstance,
@@ -16,7 +17,10 @@ const DEFAULT_SETTINGS: AppSettings = {
   refreshEnabled: true,
   refreshIntervalMinutes: 5,
   alertsEnabled: true,
-  quickPanelShortcut: "Alt+KeyU",
+  // 告警冷却（ADR-0025）：同一规则两次通知的最小墙钟间隔（小时），设置页可改
+  alertCooldownHours: 6,
+  // 快捷键默认值随构建分流（ADR-0018）：开发实例 Ctrl+Shift+U，与安装版 Alt+U 错开注册位
+  quickPanelShortcut: import.meta.env.DEV ? "Control+Shift+KeyU" : "Alt+KeyU",
   quickAutoHide: true,
   resetTimeDisplay: "relative",
   interfaceLanguage: "auto",
@@ -59,8 +63,25 @@ function waitForTauriRuntime(timeoutMs = 5_000) {
   });
 }
 
+/** 当前 webview 的窗口标签（main / quick / glance）；非 Tauri 环境取不到时返回空串 */
+export function currentWindowLabel(): string {
+  try {
+    return getCurrentWindow().label;
+  } catch {
+    return "";
+  }
+}
+
+/** `refresh-completed` 的载荷：倒计时基准 + 发起方标签（发起方自己刚读过库，收敛时可跳过重读） */
+export interface RefreshCompletedPayload {
+  refreshedAt: number;
+  source: string;
+}
+
+/** 广播刷新完成：既对齐各窗口的倒计时基准，也宣告快照事实源已更新（ADR-0019 快照收敛） */
 function emitRefreshCompleted(refreshedAt: number) {
-  void emit("refresh-completed", { refreshedAt }).catch(() => undefined);
+  const payload: RefreshCompletedPayload = { refreshedAt, source: currentWindowLabel() };
+  void emit("refresh-completed", payload).catch(() => undefined);
 }
 
 async function invokeWithTimeout<T>(command: string, timeoutMs: number): Promise<T> {
@@ -69,11 +90,12 @@ async function invokeWithTimeout<T>(command: string, timeoutMs: number): Promise
     timer = window.setTimeout(() => reject(new Error(`${command} 加载超时`)), timeoutMs);
   });
 
+  const request = Promise.resolve().then(() => invoke<T>(command));
+  // 超时输掉 race 后原请求若再 reject 会成为 unhandled rejection（ADR-0024）：补一个兜底 catch
+  request.catch(() => undefined);
+
   try {
-    return await Promise.race([
-      Promise.resolve().then(() => invoke<T>(command)),
-      timeout,
-    ]);
+    return await Promise.race([request, timeout]);
   } finally {
     if (timer !== undefined) window.clearTimeout(timer);
   }
@@ -120,6 +142,8 @@ interface AppStore {
   manualRefreshTick: number;
   loadInitial: () => Promise<void>;
   reloadInstances: () => Promise<void>;
+  /** 快照收敛（ADR-0019）：只重读落库快照，不碰设置/实例 */
+  reloadSnapshots: () => Promise<void>;
   refreshAll: (options?: { auto?: boolean }) => Promise<void>;
   refreshInstance: (instanceId: string) => Promise<void>;
   addInstance: (
@@ -200,6 +224,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
         snapshots: snapshots.map(toSnapshot),
         error: null,
       });
+      // 水合告警边沿/冷却（ADR-0025）：早于任何一轮评估（评估要等刷新网络往返），
+      // F5/重启后同一状况不再重复通知；仅主窗口实际执行（ADR-0022）
+      void useAlertStore.getState().hydrate();
     } catch (error) {
       set({
         settings: DEFAULT_SETTINGS,
@@ -220,9 +247,24 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   },
 
+  // 快照收敛（ADR-0019）：任一窗口刷新落库后，其余窗口以落库结果为准重读快照。
+  // 只读快照、不重读设置与实例；读的是各实例的最新行，因此部分刷新（自动刷新只覆盖开自动的实例）
+  // 也能正确收敛——未参与本轮的实例拿到自己的上次落库值，不会被抹掉。
+  reloadSnapshots: async () => {
+    try {
+      const stored = await invoke<StoredSnapshot[]>("get_latest_snapshots");
+      set({ snapshots: stored.map(toSnapshot) });
+    } catch {
+      // 留旧值兜底，下一轮刷新/唤起会再同步
+    }
+  },
+
   // 刷新一律置 loading：手动、聚焦回填、自动定时刷新都要让顶栏与卡片按钮联动转起来，
   // 否则自动刷新全程无可见反馈，用户只能靠更新时间变化才能察觉
   refreshAll: async (options) => {
+    // in-flight 去重（ADR-0023）：刷新进行中的重入直接复用那一轮——StrictMode 双挂载、
+    // 面板唤起撞上定时器等场景不再对同一批实例发两倍请求
+    if (get().loading) return;
     set({ loading: true, error: null });
     if (!options?.auto) {
       set((state) => ({ manualRefreshTick: state.manualRefreshTick + 1 }));
@@ -236,15 +278,23 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
     const targets = options?.auto ? instances.filter((instance) => instance.autoRefresh) : instances;
     const results: ProviderSnapshot[] = [];
+    // 落库失败不冒充成功：错误留给本轮 error 字段（ADR-0024），读回路径拿旧行属预期兜底
+    let persistedError: string | null = null;
     for (const instance of targets) {
       const module = getProviderModule(instance.providerId);
       if (!module) continue;
+      let snapshot: ProviderSnapshot;
       try {
-        const snapshot = await module.fetch(instance);
-        results.push(snapshot);
+        snapshot = await module.fetch(instance);
+      } catch (error) {
+        snapshot = fallbackSnapshot(instance, error);
+      }
+      results.push(snapshot);
+      // 错误快照也落库（ADR-0023）：失败同样是事实源的一部分，跨窗口诚实显示
+      try {
         await invoke("save_snapshot", { instanceId: instance.id, payload: snapshot });
       } catch (error) {
-        results.push(fallbackSnapshot(instance, error));
+        persistedError ??= error instanceof Error ? error.message : String(error);
       }
     }
 
@@ -255,7 +305,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       set({
         snapshots: stored.map(toSnapshot),
         loading: false,
-        error: null,
+        error: persistedError,
         lastRefreshedAt: refreshedAt,
       });
     } catch (error) {
@@ -267,7 +317,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
         lastRefreshedAt: refreshedAt,
       });
     }
-    // 刷新落库后评估阈值告警（成功与失败的快照都参与，失败会解除告警态）
+    // 刷新落库后评估阈值告警。错误快照由协调器冻结（ADR-0023）：未知 ≠ 正常，
+    // 不解除已激活的告警态，网络恢复后边沿未重置、不会重复通知
     const observed = new Map(get().instances.map((instance) => [instance.id, instance]));
     for (const result of results) {
       const instance = observed.get(result.instanceId);
@@ -305,7 +356,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const stored = await invoke<StoredSnapshot[]>("get_latest_snapshots");
       refreshedAt = Date.now();
       set({
-        snapshots: stored.map((item) => item.payload),
+        // 行的 instance_id 是唯一事实（旧版 payload 无该字段），与其余读回路径同口径
+        snapshots: stored.map(toSnapshot),
         error: null,
         lastRefreshedAt: refreshedAt,
       });
@@ -339,7 +391,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   updateInstance: async (id, patch) => {
-    await invoke("update_instance", { id, patch });
+    // 更新失败必须可见（ADR-0024）：置顶/阈值改动的失败不能静默，本地保持原值
+    try {
+      await invoke("update_instance", { id, patch });
+    } catch (error) {
+      set({ error: error instanceof Error ? error.message : String(error) });
+      return;
+    }
     set((state) => ({
       instances: state.instances.map((instance) => {
         if (instance.id !== id) return instance;
@@ -357,11 +415,19 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   removeInstance: async (id) => {
-    await invoke("delete_instance", { id });
+    // 删除失败必须可见（ADR-0024）：顶部错误横幅提示，本地实例保持不动
+    try {
+      await invoke("delete_instance", { id });
+    } catch (error) {
+      set({ error: error instanceof Error ? error.message : String(error) });
+      return;
+    }
     set((state) => ({
       instances: state.instances.filter((instance) => instance.id !== id),
       snapshots: state.snapshots.filter((snapshot) => snapshot.instanceId !== id),
     }));
+    // 协调器的边沿/冷却状态不清理会随常驻运行累积（ADR-0022）
+    useAlertStore.getState().prune(id);
   },
 
   reorderInstances: async (orderedIds) => {

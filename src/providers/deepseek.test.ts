@@ -80,4 +80,40 @@ describe("deepseekProvider", () => {
     expect(snapshot.message).toBe("DeepSeek 余额接口返回 HTTP {status}{detail}");
     expect(snapshot.messageParams).toMatchObject({ status: 401, detail: "：unauthorized" });
   });
+
+  it("余额字段缺失/不可解析时报错误快照，不折算为 0（防虚假余额告警）", async () => {
+    mockInvoke
+      .mockResolvedValueOnce({ apiKey: true })
+      .mockResolvedValueOnce({
+        status: 200,
+        headers: {},
+        bodyText: JSON.stringify({
+          is_available: true,
+          balance_infos: [{ currency: "CNY", total_balance: "N/A" }],
+        }),
+      });
+
+    const snapshot = await deepseekProvider.fetch(instance);
+    expect(snapshot.status).toBe("error");
+    expect(snapshot.message).toBe("DeepSeek 余额字段无法解析：{detail}");
+    expect(snapshot.messageParams).toMatchObject({ detail: "N/A" });
+    expect(snapshot.lines).toHaveLength(0);
+  });
+
+  it("充值/赠送余额字段缺失时跳过对应行，不显示 ¥0.00", async () => {
+    mockInvoke
+      .mockResolvedValueOnce({ apiKey: true })
+      .mockResolvedValueOnce({
+        status: 200,
+        headers: {},
+        bodyText: JSON.stringify({
+          is_available: true,
+          balance_infos: [{ currency: "CNY", total_balance: "88.40" }],
+        }),
+      });
+
+    const snapshot = await deepseekProvider.fetch(instance);
+    expect(snapshot.status).toBe("ok");
+    expect(snapshot.lines.map((line) => line.label)).toEqual(["可用状态", "账户余额"]);
+  });
 });

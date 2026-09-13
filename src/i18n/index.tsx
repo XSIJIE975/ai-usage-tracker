@@ -1,26 +1,9 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { useAppStore } from "../store/useAppStore";
-import { en } from "./en";
+import { resolveLanguage, translateText, type Language } from "./translate";
 
-export type Language = "zh" | "en";
-export type LanguageSetting = "auto" | "zh" | "en";
-
-/** 英文字典：键为中文源文案 */
-type Dict = Record<string, string>;
-
-const dictionaries: Record<Language, Dict | undefined> = {
-  zh: undefined, // 源语言即兜底，无需字典
-  en,
-};
-
-function detectLanguage(): Language {
-  return navigator.language?.toLowerCase().startsWith("zh") ? "zh" : "en";
-}
-
-function resolveLanguage(setting: LanguageSetting): Language {
-  if (setting === "zh" || setting === "en") return setting;
-  return detectLanguage();
-}
+export type { Language, LanguageSetting } from "./translate";
+export { resolveLanguage, translateText } from "./translate";
 
 const LanguageContext = createContext<Language>("zh");
 
@@ -31,24 +14,15 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
   return <LanguageContext.Provider value={language}>{children}</LanguageContext.Provider>;
 }
 
-/** 翻译函数：返回当前语言的文案；en 缺失键回退中文源文案 */
+/** 翻译函数：返回当前语言的文案；en 缺失键回退中文源文案（实现见 ./translate.ts） */
 export function useT() {
   const language = useContext(LanguageContext);
-  const dict = dictionaries[language];
-  return (text: string): string => (dict ? (dict[text] ?? text) : text);
+  return (text: string): string => translateText(text, language);
 }
 
-/** 替换模板文案中的 {name} 占位符（与诊断文案的 {detail} 约定一致，中文模板同样适用） */
-export function applyParams(
-  text: string,
-  params: Record<string, string | number> | undefined,
-): string {
-  if (!params) return text;
-  return Object.entries(params).reduce(
-    (acc, [key, value]) => acc.split(`{${key}}`).join(String(value)),
-    text,
-  );
-}
+/** 纯函数从 ./apply-params 转发：保持既有导入路径不变；
+ *  处于 store 导入链上的非 React 模块请直接走纯模块，避免循环导入 */
+export { applyParams, renderTemplate } from "./apply-params";
 
 /** 当前解析后的语言（供非字典的模板格式化使用，如预测文案） */
 export function useLanguage(): Language {

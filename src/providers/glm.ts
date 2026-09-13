@@ -138,7 +138,14 @@ function toErrorText(error: unknown): string {
 interface WindowSpec {
   label: string;
   params?: Record<string, number>;
+  /** 窗口周期时长毫秒（ADR-0017 层序键）；解析时已知，禁止从 label 文本推断 */
+  periodMs: number;
 }
+
+const HOUR_MS = 3_600_000;
+const DAY_MS = 86_400_000;
+/** 月窗约定近似 30 天：层序只需量级序（小时 ≪ 周 ≪ 月），不影响排序结果 */
+const MONTH_MS = 30 * DAY_MS;
 
 /**
  * 窗口语义按实测与官方 glm-plan-usage 插件的处理约定：
@@ -150,16 +157,16 @@ function windowSpec(limit: QuotaLimit): WindowSpec | null {
   if (limit.type === "CREDIT_LIMIT") {
     if (limit.unit === 3) {
       const hours = typeof limit.number === "number" && limit.number > 0 ? limit.number : 5;
-      return { label: "{hours} 小时请求配额", params: { hours } };
+      return { label: "{hours} 小时请求配额", params: { hours }, periodMs: hours * HOUR_MS };
     }
-    if (limit.unit === 6) return { label: "每周请求配额" };
+    if (limit.unit === 6) return { label: "每周请求配额", periodMs: 7 * DAY_MS };
     return null;
   }
   if (limit.type === "TOKENS_LIMIT") {
     const hours = typeof limit.number === "number" && limit.number > 0 ? limit.number : 5;
-    return { label: "{hours} 小时 Token 配额", params: { hours } };
+    return { label: "{hours} 小时 Token 配额", params: { hours }, periodMs: hours * HOUR_MS };
   }
-  if (limit.type === "TIME_LIMIT") return { label: "MCP 月度用量" };
+  if (limit.type === "TIME_LIMIT") return { label: "MCP 月度用量", periodMs: MONTH_MS };
   return null;
 }
 
@@ -186,13 +193,19 @@ export function parseQuotaLimits(data: GlmQuotaData | undefined): MetricLine[] {
     const limitValue =
       limit.usage ??
       (limit.remaining != null && limit.currentValue != null ? limit.remaining + limit.currentValue : undefined);
-    if (limit.percentage == null && (used == null || limitValue == null)) continue;
+    // percentage 缺失时用 used/limit 折算：托盘候选与告警都要求 percentUsed 是数字，
+    // 缺了它实例会整条出局（托盘不显示、阈值告警失效）
+    const percent =
+      limit.percentage ??
+      (used != null && limitValue != null && limitValue > 0 ? (used / limitValue) * 100 : undefined);
+    if (percent == null) continue;
     lines.push({
       type: "progress",
       label: spec.label,
       ...(spec.params ? { params: spec.params } : {}),
+      windowPeriodMs: spec.periodMs,
       ...(used != null && limitValue != null ? { used, limit: limitValue } : {}),
-      ...(limit.percentage != null ? { percentUsed: limit.percentage } : {}),
+      percentUsed: percent,
       ...(limit.nextResetTime != null && limit.nextResetTime > 0
         ? { resetsAt: new Date(limit.nextResetTime).toISOString() }
         : {}),
@@ -413,12 +426,25 @@ async function fetchGlmSnapshot(instance: ProviderInstance): Promise<ProviderSna
     };
   }
 
+  // 多源错误模板拼成一条 message（渲染端统一 t+params）：各源模板共用 {detail} 等占位符，
+  // 直接合并参数会互相覆盖——第 2 段起的占位符加序号后缀，模板与参数同步改写（ADR-0022 顺带修复）
   const messages: string[] = [];
   const messageParams: Record<string, string | number> = {};
+  let segment = 0;
   for (const outcome of [quotaOutcome, balanceOutcome, resetOutcome]) {
     if (!outcome.ok && outcome.error) {
-      messages.push(outcome.error);
-      Object.assign(messageParams, outcome.errorParams);
+      segment += 1;
+      const params = outcome.errorParams ?? {};
+      let template = outcome.error;
+      if (segment > 1) {
+        for (const key of Object.keys(params)) {
+          template = template.split(`{${key}}`).join(`{${key}${segment}}`);
+        }
+      }
+      messages.push(template);
+      for (const [key, value] of Object.entries(params)) {
+        messageParams[segment === 1 ? key : `${key}${segment}`] = value;
+      }
     }
   }
 

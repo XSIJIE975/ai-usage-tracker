@@ -38,7 +38,9 @@ export function MigrationScreen({ onSkip }: MigrationScreenProps) {
           <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-iris-400 to-iris-600 text-white shadow-pop">
             <KeyRound className="h-5 w-5" />
           </div>
-          <h1 className="mt-4 text-lg font-semibold tracking-tight text-fg">AI 用量助手</h1>
+          <h1 className="mt-4 text-lg font-semibold tracking-tight text-fg">
+            {import.meta.env.DEV ? "AI 用量助手 (dev)" : "AI 用量助手"}
+          </h1>
           <p className="mt-1 text-[13px] text-fg-muted">一次性凭据库迁移</p>
         </div>
 

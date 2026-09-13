@@ -1,5 +1,6 @@
 import type { StackedSeries } from "../../../components/charts/StackedBars";
 import type { OpenCodeDailyCostPoint } from "../../../providers/opencode-stats";
+import type { Language } from "../../../i18n";
 
 /** costs 中去重后的模型列表（保持首次出现顺序）。 */
 export const dedupeModels = (costs: OpenCodeDailyCostPoint[]): string[] => [
@@ -10,9 +11,14 @@ export const dedupeModels = (costs: OpenCodeDailyCostPoint[]): string[] => [
 export const collectCostDays = (costs: OpenCodeDailyCostPoint[]): string[] =>
   [...new Set(costs.map((point) => point.date))].sort();
 
-/** "YYYY-MM-DD" → "M月D日" */
-export const formatCostDayLabel = (day: string): string => {
-  const [, month, date] = day.split("-");
+/** "YYYY-MM-DD" → 日标签：zh「M月D日」，en 走 Intl */
+export const formatCostDayLabel = (day: string, language: Language = "zh"): string => {
+  const [year, month, date] = day.split("-");
+  if (language === "en") {
+    return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(
+      new Date(Number(year), Number(month) - 1, Number(date)),
+    );
+  }
   return `${Number(month)}月${Number(date)}日`;
 };
 

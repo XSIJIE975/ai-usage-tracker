@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::sync::OnceLock;
+use std::time::Duration;
 
 use reqwest::Method;
 use serde::Deserialize;
@@ -8,6 +10,22 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::db::{self, chrono_utc_now};
 use crate::{instances, AppState};
+
+/// 共享 HTTP 客户端（ADR-0024）：进程级单例，保留连接池与 keep-alive——
+/// 之前每次调用重建 Client，自动刷新每轮都重新 TLS 握手。统一 10s 连接 / 30s 总超时：
+/// 供应商挂起时超时错误走错误快照链路（ADR-0023），可见而不是把刷新无限挂死。
+static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+fn http_client() -> &'static reqwest::Client {
+    HTTP_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .user_agent("AI Usage Tracker/0.1.0")
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
+            .build()
+            .expect("HTTP 客户端初始化失败")
+    })
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -362,59 +380,101 @@ pub fn delete_instance(app: AppHandle, state: State<'_, AppState>, id: String) -
 }
 
 /// 在默认托盘图标的右下角合成红点徽章，生成告警态托盘图标（无需额外图标资产）
+/// 开发实例标识后缀（ADR-0018）：窗口标题、托盘提示、应用名统一追加，
+/// 与安装版并存运行时可即时分辨。后缀必须内聚在本模块的命名函数里——
+/// 不要在调用侧自行拼接（refresh_tray_menu 重设窗口标题会把外部拼的后缀冲掉）。
+pub fn dev_suffix() -> &'static str {
+    if cfg!(debug_assertions) {
+        " (dev)"
+    } else {
+        ""
+    }
+}
+
 /// 托盘悬停提示文案（zh/en × 常态/告警态）
-pub fn tray_tooltip(language: &str, alert: bool) -> &'static str {
-    match (language == "en", alert) {
+pub fn tray_tooltip(language: &str, alert: bool) -> String {
+    let base = match (language == "en", alert) {
         (false, false) => "AI 用量助手",
         (false, true) => "AI 用量助手 — 有额度告警",
         (true, false) => "AI Usage Tracker",
         (true, true) => "AI Usage Tracker — quota alert",
-    }
+    };
+    format!("{base}{}", dev_suffix())
 }
 
 /// 应用名（窗口标题与托盘提示共用，随界面语言）
-pub fn app_title(language: &str) -> &'static str {
+pub fn app_title(language: &str) -> String {
     if language == "en" {
-        "AI Usage Tracker"
+        format!("AI Usage Tracker{}", dev_suffix())
     } else {
-        "AI 用量助手"
+        format!("AI 用量助手{}", dev_suffix())
     }
 }
 
 // ─── 全局快捷键 ───
 
-/// 注册快速面板全局快捷键（注销旧组合）。空字符串表示不启用。
+/// 注册快速面板全局快捷键（换绑语义）。空字符串表示不启用。
 /// 注册失败通常意味着组合被其他程序占用（无法识别具体占用者）。
 pub fn apply_quick_shortcut(app: &AppHandle, shortcut: String) -> Result<(), String> {
     use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
     let state = app.state::<AppState>();
-    {
-        let mut current = state.quick_shortcut.lock().expect("quick_shortcut lock poisoned");
-        if current.as_deref() == Some(shortcut.as_str()) {
-            return Ok(());
-        }
-        if let Some(previous) = current.take() {
-            let _ = app.global_shortcut().unregister(previous.as_str());
-        }
-        if shortcut.is_empty() {
-            return Ok(());
-        }
-        app.global_shortcut()
-            .on_shortcut(shortcut.as_str(), |app, _shortcut, event| {
-                if event.state == ShortcutState::Pressed {
-                    crate::toggle_quick(app);
-                }
-            })
-            .map_err(|error| format!("快捷键注册失败，可能与其他程序冲突：{error}"))?;
-        *current = Some(shortcut);
+    let mut current = state.quick_shortcut.lock().expect("quick_shortcut lock poisoned");
+    if current.as_deref() == Some(shortcut.as_str()) {
+        return Ok(());
     }
+    if shortcut.is_empty() {
+        // 清空快捷键：注销旧组合即可；注销失败仅记日志（状态与实际注册背离时重启自愈）
+        if let Some(previous) = current.take() {
+            if let Err(error) = app.global_shortcut().unregister(previous.as_str()) {
+                eprintln!("注销快速面板快捷键失败：{error}");
+            }
+        }
+        return Ok(());
+    }
+    // 先注册新组合成功、再注销旧组合（ADR-0024）：注册失败时旧组合仍然可用，
+    // 用户手里始终握着上一个能唤起面板的组合，不会静默丢快捷键
+    app.global_shortcut()
+        .on_shortcut(shortcut.as_str(), |app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed {
+                crate::toggle_quick(app);
+            }
+        })
+        .map_err(|error| format!("快捷键注册失败，可能已被其他程序占用，请更换组合键（{error}）"))?;
+    if let Some(previous) = current.take() {
+        if let Err(error) = app.global_shortcut().unregister(previous.as_str()) {
+            eprintln!("注销旧快速面板快捷键失败：{error}");
+        }
+    }
+    *current = Some(shortcut);
     Ok(())
 }
 
 #[tauri::command]
 pub fn register_quick_shortcut(app: AppHandle, shortcut: String) -> Result<(), String> {
     apply_quick_shortcut(&app, shortcut)
+}
+
+/// 快捷键注册失败时的系统通知（zh/en 随界面语言）。Windows 无法查询占用者身份，
+/// 只能提示用户更换；开发实例（未打包、无应用身份）上系统通知可能不弹，仅保留日志。
+pub fn notify_quick_shortcut_failure(app: &AppHandle, language: &str, shortcut: &str) {
+    use tauri_plugin_notification::NotificationExt;
+    let body = if language == "en" {
+        format!(
+            "Failed to register shortcut {shortcut}. It may be taken by another app — pick another one in Settings."
+        )
+    } else {
+        format!("快捷键 {shortcut} 注册失败，可能已被其他程序占用，可在设置中更换。")
+    };
+    if let Err(error) = app
+        .notification()
+        .builder()
+        .title(app_title(language))
+        .body(body)
+        .show()
+    {
+        eprintln!("快捷键注册失败通知发送失败：{error}");
+    }
 }
 
 // ─── 连通性诊断 ───
@@ -452,10 +512,7 @@ pub async fn diagnose_request(
     credential: Option<String>,
     expect_html: Option<bool>,
 ) -> Result<DiagnosisResult, String> {
-    let client = reqwest::Client::builder()
-        .user_agent("AI Usage Tracker/0.1.0")
-        .build()
-        .map_err(|error| error.to_string())?;
+    let client = http_client();
 
     let mut request = client.request(Method::GET, &url);
     match auth.as_deref() {
@@ -531,26 +588,69 @@ pub fn refresh_tray_menu(app: AppHandle, language: String) -> Result<(), String>
         *state.language.lock().expect("tray language lock poisoned") = language.clone();
     }
     crate::tray_scheme::apply(&app);
-    let title = app_title(&language);
-    for label in ["main", "quick", "glance"] {
-        if let Some(window) = app.get_webview_window(label) {
-            let _ = window.set_title(title);
-        }
-    }
+            let title = app_title(&language);
+            for label in ["main", "quick", "glance"] {
+                if let Some(window) = app.get_webview_window(label) {
+                    let _ = window.set_title(&title);
+                }
+            }
     Ok(())
 }
 
 // ─── 通知 ───
 
+/// 告警通知入口（ADR-0025）：带 ruleKey 时后端按墙钟冷却判重，冷却期内返回 null，
+/// 前端据此跳过系统通知。冷却时长读设置库；读失败时判重降级为放行——投递韧性优先。
 #[tauri::command]
 pub fn add_notification(
     state: State<'_, AppState>,
     instance_id: String,
+    rule_key: Option<String>,
     title: String,
     body: String,
-) -> Result<db::StoredNotification, String> {
+    params: Option<Value>,
+) -> Result<Option<db::StoredNotification>, String> {
+    let params_text = match params {
+        Some(value) => Some(serde_json::to_string(&value).map_err(|error| error.to_string())?),
+        None => None,
+    };
     let db = state.db.lock().expect("db lock poisoned");
-    db.add_notification(&instance_id, &title, &body)
+    let cooldown_ms = match db.get_settings() {
+        Ok(settings) => settings
+            .get("alertCooldownHours")
+            .and_then(|value| value.as_f64())
+            .unwrap_or(6.0) as i64
+            * 3_600_000,
+        Err(error) => {
+            eprintln!("读取告警冷却设置失败，本次判重降级为放行：{error}");
+            0
+        }
+    };
+    db.add_notification(
+        &instance_id,
+        rule_key.as_deref(),
+        cooldown_ms,
+        &title,
+        &body,
+        params_text.as_deref(),
+    )
+}
+
+/// 告警规则状态水合（ADR-0025）：评估窗口启动/重载后恢复边沿与冷却
+#[tauri::command]
+pub fn list_alert_states(state: State<'_, AppState>) -> Result<Vec<db::StoredAlertState>, String> {
+    let db = state.db.lock().expect("db lock poisoned");
+    db.list_alert_states()
+}
+
+/// 告警规则状态回写（ADR-0025）：评估产生的边沿解除等变化持久化到事实源
+#[tauri::command]
+pub fn save_alert_states(
+    state: State<'_, AppState>,
+    states: Vec<db::StoredAlertState>,
+) -> Result<(), String> {
+    let db = state.db.lock().expect("db lock poisoned");
+    db.save_alert_states(&states)
 }
 
 #[tauri::command]
@@ -558,8 +658,10 @@ pub fn list_notifications(
     state: State<'_, AppState>,
     limit: Option<i64>,
 ) -> Result<Vec<db::StoredNotification>, String> {
+    // limit 收敛到合法区间：SQLite 的 LIMIT -1 语义是「不限制」，不能把负数当全量放行
+    let limit = limit.unwrap_or(200).clamp(1, 500);
     let db = state.db.lock().expect("db lock poisoned");
-    db.list_notifications(limit.unwrap_or(200))
+    db.list_notifications(limit)
 }
 
 #[tauri::command]
@@ -624,10 +726,7 @@ pub async fn provider_request(
         )
     };
 
-    let client = reqwest::Client::builder()
-        .user_agent("AI Usage Tracker/0.1.0")
-        .build()
-        .map_err(|error| error.to_string())?;
+    let client = http_client();
 
     let method = match method.as_deref().unwrap_or("GET") {
         "POST" => Method::POST,
@@ -763,12 +862,14 @@ mod tests {
 
     #[test]
     fn tray_tooltip_and_title_follow_language_and_alert_state() {
-        assert_eq!(tray_tooltip("zh", false), "AI 用量助手");
-        assert_eq!(tray_tooltip("zh", true), "AI 用量助手 — 有额度告警");
-        assert_eq!(tray_tooltip("en", false), "AI Usage Tracker");
-        assert_eq!(tray_tooltip("en", true), "AI Usage Tracker — quota alert");
-        assert_eq!(app_title("zh"), "AI 用量助手");
-        assert_eq!(app_title("en"), "AI Usage Tracker");
+        // 展示名在 debug 构建（开发实例）携带 (dev) 后缀，随构建分流断言（ADR-0018）
+        let suffix = dev_suffix();
+        assert_eq!(tray_tooltip("zh", false), format!("AI 用量助手{suffix}"));
+        assert_eq!(tray_tooltip("zh", true), format!("AI 用量助手 — 有额度告警{suffix}"));
+        assert_eq!(tray_tooltip("en", false), format!("AI Usage Tracker{suffix}"));
+        assert_eq!(tray_tooltip("en", true), format!("AI Usage Tracker — quota alert{suffix}"));
+        assert_eq!(app_title("zh"), format!("AI 用量助手{suffix}"));
+        assert_eq!(app_title("en"), format!("AI Usage Tracker{suffix}"));
     }
 
     #[test]

@@ -19,8 +19,12 @@ import { useGlobalRefresh } from "./use-global-refresh";
 import { OverviewCards } from "./deepseek/OverviewCards";
 import { ModelUsageTable } from "./deepseek/ModelUsageTable";
 import { customRangeError, isoDate, resolveRangeMs, timeRangeOptions, type TimeRange } from "./time-range";
-import { useT } from "../../i18n";
+import { useLanguage, useT } from "../../i18n";
 import type { ProviderInstance } from "../../types/ipc";
+/** 费用量纲的坐标/悬浮格式化器（模块级稳定引用，见下方 yFormat/tooltipFormat 注释） */
+const formatYuanCompact = (value: number) => `¥${formatCompact(value)}`;
+const formatYuanPrecise = (value: number) => `¥${value.toFixed(2)}`;
+
 import {
   aggregateUsage,
   buildStackedSeries,
@@ -58,6 +62,7 @@ export function DeepSeekStats({ instance }: { instance: ProviderInstance }) {
   const rangeMs = useMemo(() => resolveRangeMs(range, customFrom, customTo), [range, customFrom, customTo]);
   const customError = range === "custom" ? customRangeError(customFrom, customTo) : null;
   const t = useT();
+  const language = useLanguage();
   // cache key 前缀 instanceId：同种类两个实例的统计互不串数据
   const cacheKey =
     rangeMs === null ? null : `${instance.id}:${rangeMs.startMs}:${rangeMs.endMs}`;
@@ -99,7 +104,7 @@ export function DeepSeekStats({ instance }: { instance: ProviderInstance }) {
     () => buildStackedSeries(filteredRows, dayLabels, metric),
     [filteredRows, dayLabels, metric],
   );
-  const chartLabels = useMemo(() => dayLabels.map(formatDayLabel), [dayLabels]);
+  const chartLabels = useMemo(() => dayLabels.map((day) => formatDayLabel(day, language)), [dayLabels, language]);
 
   const keyOptions = useMemo(
     () => [
@@ -109,8 +114,10 @@ export function DeepSeekStats({ instance }: { instance: ProviderInstance }) {
     [bundle],
   );
 
-  const yFormat = metric === "cost" ? (value: number) => `¥${formatCompact(value)}` : formatCompact;
-  const tooltipFormat = metric === "cost" ? (value: number) => `¥${value.toFixed(2)}` : formatInt;
+  // 格式化器是模块层稳定引用：内联箭头函数每次渲染都是新身份，会穿透 StackedBars 的
+  // option useMemo，导致每次渲染 setOption 重建图表（违背「hover 不 setOption」铁律）
+  const yFormat = metric === "cost" ? formatYuanCompact : formatCompact;
+  const tooltipFormat = metric === "cost" ? formatYuanPrecise : formatInt;
   const chartTitle =
     metric === "tokens" ? "Token 消耗趋势" : metric === "requests" ? "请求次数趋势" : "费用趋势";
   const hasUsage = aggregates.totalTokens > 0 || aggregates.totalRequests > 0;
@@ -134,7 +141,7 @@ export function DeepSeekStats({ instance }: { instance: ProviderInstance }) {
               options={timeRangeOptions.map((option) => ({ ...option, label: t(option.label) }))}
               value={range}
               onChange={setRange}
-              aria-label="时间范围"
+              aria-label={t("时间范围")}
             />
             {range === "custom" && (
               <div className="flex items-center gap-1.5">
@@ -169,7 +176,7 @@ export function DeepSeekStats({ instance }: { instance: ProviderInstance }) {
               options={keyOptions.map((option) => ({ ...option, label: t(option.label) }))}
               value={apiKeyId}
               onChange={setApiKeyId}
-              aria-label="API 密钥"
+              aria-label={t("API 密钥")}
             />
         </div>
 
@@ -205,7 +212,7 @@ export function DeepSeekStats({ instance }: { instance: ProviderInstance }) {
             <EmptyState
               icon={<CalendarRange className="h-5 w-5" />}
               title={t("时间范围无效")}
-              description={customError}
+              description={t(customError)}
             />
           </CardContent>
         </Card>

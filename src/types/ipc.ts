@@ -52,6 +52,9 @@ export interface MetricLine {
   suffix?: string;
   percentUsed?: number;
   resetsAt?: string;
+  /** 结构化窗口周期时长（毫秒，如 5h/周/月）；解析时已知，供环层序按周期短→长排位（ADR-0017）。
+      与 resetsAt（下一重置时刻）是两个口径；缺失 = 周期未知，层序回退快照顺序 */
+  windowPeriodMs?: number;
   color?: string;
 }
 
@@ -79,6 +82,8 @@ export interface AppSettings {
   refreshIntervalMinutes: number;
   /** 用量告警总开关 */
   alertsEnabled: boolean;
+  /** 告警冷却（ADR-0025）：同一规则两次通知的最小间隔（小时），0=关闭冷却；事实源在 Rust 端 */
+  alertCooldownHours: number;
   /** 快速面板全局快捷键（规范格式，如 "Alt+KeyU"；空字符串表示不启用） */
   quickPanelShortcut: string;
   /** 快速面板失焦自动隐藏 */
@@ -119,7 +124,19 @@ export interface StoredNotification {
   id: number;
   created_at: number;
   instance_id: string;
+  /** 中文模板（含 {占位符}），渲染层经 renderTemplate 翻译（ADR-0022）；
+   *  存量行是旧版成品文案、无 params，原样显示 */
   title: string;
   body: string;
+  params?: Record<string, string | number> | null;
   read: boolean;
+}
+
+/** 一条告警规则的持久化状态（ADR-0025）：边沿触发与冷却的事实源在 Rust 端，
+ *  评估窗口启动/重载后据此水合；字段 snake_case 与 StoredNotification 同口径 */
+export interface StoredAlertState {
+  rule_key: string;
+  instance_id: string;
+  triggered: boolean;
+  last_notified_at: number;
 }

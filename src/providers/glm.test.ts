@@ -294,12 +294,14 @@ describe("parseQuotaLimits", () => {
       used: 0,
       limit: 1200,
       percentUsed: 0,
+      windowPeriodMs: 5 * 3_600_000,
     });
     expect(lines[2]).toMatchObject({
       label: "每周请求配额",
       used: 1080,
       limit: 1200,
       percentUsed: 90,
+      windowPeriodMs: 7 * 86_400_000,
       resetsAt: new Date(1788362308998).toISOString(),
     });
   });
@@ -317,7 +319,13 @@ describe("parseQuotaLimits", () => {
     });
     expect(lines).toHaveLength(2);
     expect(lines[0]).toMatchObject({ type: "badge", value: "Pro" });
-    expect(lines[1]).toMatchObject({ label: "{hours} 小时请求配额", used: 600, limit: 1000 });
+    // percentage 缺失时按 used/limit 折算：托盘候选与告警都要求 percentUsed 是数字（600/1000 → 60%）
+    expect(lines[1]).toMatchObject({
+      label: "{hours} 小时请求配额",
+      used: 600,
+      limit: 1000,
+      percentUsed: 60,
+    });
   });
 
   it("recognizes the international TOKENS_LIMIT / TIME_LIMIT vocabulary", () => {
@@ -333,9 +341,16 @@ describe("parseQuotaLimits", () => {
       label: "{hours} 小时 Token 配额",
       params: { hours: 5 },
       percentUsed: 12,
+      windowPeriodMs: 5 * 3_600_000,
       resetsAt: new Date(1788362308998).toISOString(),
     });
-    expect(lines[2]).toMatchObject({ label: "MCP 月度用量", used: 6, limit: 100, percentUsed: 6 });
+    expect(lines[2]).toMatchObject({
+      label: "MCP 月度用量",
+      used: 6,
+      limit: 100,
+      percentUsed: 6,
+      windowPeriodMs: 30 * 86_400_000,
+    });
   });
 
   it("defaults the hour window to 5 when number is missing", () => {

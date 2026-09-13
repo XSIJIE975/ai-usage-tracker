@@ -434,11 +434,17 @@ input {
    两面必须等高，避免翻转引起布局抖动 */
 .flip-inner {
   display: grid;
+  /* 显式 minmax(0,1fr) 轨道：窄卡 + 长标题（nowrap 不可断行）时，内容的最小宽度会把
+     隐式 auto 轨道连同翻面按钮一起撑出卡片右边界，必须钳制在容器宽度内 */
+  grid-template-columns: minmax(0, 1fr);
   transform-style: preserve-3d;
 }
 
 .flip-face {
   grid-area: 1 / 1;
+  /* 覆盖 grid item 的 min-width:auto：否则面的自动最小尺寸（含标题完整宽度）拒绝收缩到
+     轨道宽度，面内容（进度条/图例/查看统计）会整体溢出卡片右边框 */
+  min-width: 0;
   backface-visibility: hidden;
 }
 

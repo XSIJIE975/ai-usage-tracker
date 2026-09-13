@@ -95,7 +95,9 @@ export const en: Record<string, string> = {
   "余额低于该值时发送系统通知；留空不告警。": "Notify when balance drops below this value; empty disables alerts.",
   "本月额度已用达到该百分比时发送系统通知；留空不告警。": "Notify when monthly usage reaches this percent; empty disables alerts.",
   "Coding Plan 配额已用达到该百分比时发送系统通知；留空不告警。": "Notify when Coding Plan quota usage reaches this percent; empty disables alerts.",
-  "各实例的阈值在其配置弹窗中设置；触发后 6 小时内不会重复通知，恢复到阈值以上会自动解除。": "Each instance's threshold is set in its config dialog; notifications repeat at most every 6 hours and clear automatically once back above the threshold.",
+  "各实例的告警阈值在其配置弹窗中设置。": "Each instance's alert threshold is set in its config dialog.",
+  "重复提醒间隔": "Repeat interval",
+  "同一情况持续期间只提醒一次；恢复正常后若再次出现，需距上一次提醒超过所选时长才会再次提醒。重启程序也不会重复提醒。": "The same condition alerts only once while it persists; if it clears and comes back, a new alert waits until at least this much time has passed since the last one. The timer also survives app restarts.",
   "保存": "Save",
   "取消": "Cancel",
   "删除「{name}」？": "Delete \"{name}\"?",
@@ -213,11 +215,22 @@ export const en: Record<string, string> = {
   "删除": "Delete",
   "关闭": "Close",
   "加载中…": "Loading…",
-  "DeepSeek 余额告警": "DeepSeek balance alert",
-  "请及时充值。": " Please top up soon.",
-  "OpenCode Go 额度告警": "OpenCode Go quota alert",
-  "注意分配剩余用量。": " Plan the remaining quota carefully.",
-  "智谱配额告警": "Zhipu quota alert",
+  // ── 告警文案（ADR-0022 模板化）：{rule} 是规则名字典键，渲染层先翻译再替换；
+  //    撞满窗名在评估时刻已按语言烘焙进 {names} ──
+  "{provider} {rule}": "{provider} {rule}",
+  "{note}（{provider}）{rule}": "{rule} — {note} ({provider})",
+  "余额告警": "balance alert",
+  "配额告警": "quota alert",
+  "额度告警": "quota alert",
+  "额度耗尽": "quota exhausted",
+  "当前余额 {balance} 元，已低于 {threshold} 元，请及时充值。":
+    "Balance is {balance} CNY, below the {threshold} CNY threshold. Please top up soon.",
+  "本月额度已用 {percent}%，达到 {threshold}%，注意分配剩余用量。":
+    "Monthly quota usage at {percent}% has reached the {threshold}% threshold. Plan the remaining quota carefully.",
+  "Coding Plan 配额已用 {percent}%，达到 {threshold}%，注意分配剩余用量。":
+    "Coding Plan quota usage at {percent}% has reached the {threshold}% threshold. Plan the remaining quota carefully.",
+  "{names}已用尽（100%），等待重置恢复。":
+    "{names} used up (100%). Waiting for the window to reset.",
 
   // ── 设置 ──
   "自动刷新": "Auto refresh",
@@ -291,8 +304,8 @@ export const en: Record<string, string> = {
     "How to get: open the bigmodel.cn console → Coding Plan page → \"Generate API Key\", then copy the generated API Key and paste it above.",
   "凭据已配置": "Credentials set",
   "凭据未配置": "Credentials not set",
-  "凭据库待迁移，请先完成上方的一次性迁移，再保存凭据。":
-    "Credential vault needs migration — finish the one-time migration above before saving credentials.",
+  "凭据库待迁移，请先完成一次性迁移，再保存凭据。":
+    "Credential vault needs migration — finish the one-time migration before saving credentials.",
   "显示": "Show",
   "清除": "Clear",
   "已保存": "Saved",
@@ -393,12 +406,12 @@ export const en: Record<string, string> = {
   "发现新版本": "New version available",
   "已配置": "Set",
   "未配置": "Not set",
-  "快捷键可能与其他程序冲突，请更换": "Shortcut registration failed — it may conflict with another app. Please pick another.",
   "个月": "month",
   "启动": "Startup",
   "登录时自动运行与启动窗口行为。": "Automatic launch and startup window behavior.",
   "开机自启": "Launch at login",
   "登录系统后自动运行程序，驻留系统托盘。": "Run the app automatically after signing in and keep it in the system tray.",
+  "开发实例不注册开机自启，安装版的自启设置不受影响。": "Dev builds never register autostart; the installed app's settings are unaffected.",
   "静默启动": "Silent start",
   "开机自启启动时不显示主窗口，仅在系统托盘运行。": "When launched at login, start without showing the main window and stay in the system tray only.",
   "托盘与速览": "Tray & glance",
@@ -463,4 +476,19 @@ export const en: Record<string, string> = {
     "The panel hides automatically when you click outside it.",
   "可在设置的「速览面板」中勾选要在此展示的实例":
     "Pick which instances to show here in Settings → Glance panel.",
+  // ── 2026-09 i18n 清剿补键 ──
+  "凭据库迁移": "Credential vault migration",
+  "凭据加密方式已升级为本机设备密钥。最后一次输入旧主密码完成迁移，之后启动不再需要密码。":
+    "Credential encryption has been upgraded to the local device key. Enter your old master password one last time to migrate; afterwards startup needs no password.",
+  "旧主密码": "Old master password",
+  "迁移中...": "Migrating…",
+  "完成迁移": "Finish migration",
+  "已下载 {downloaded}": "{downloaded} downloaded",
+  "点击隐藏该系列": "Click to hide this series",
+  "点击显示该系列": "Click to show this series",
+  "模型筛选": "Model filter",
+  "密钥筛选": "Key filter",
+  "通知中心（{count} 条未读）": "Notification center ({count} unread)",
+  "新版本 v{version} 可用，前往设置安装":
+    "Version v{version} is available — go to Settings to install",
 };

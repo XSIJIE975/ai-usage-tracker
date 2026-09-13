@@ -64,11 +64,41 @@ pub fn run() {
 
             // 注册设置中配置的快速面板全局快捷键；失败不阻断启动
             let app_state = app.state::<AppState>();
-            if let Ok(settings) = app_state.db.lock().expect("db lock poisoned").get_settings() {
+            // 读设置失败必须可见（ADR-0024）：静默跳过会让快捷键/自启重放/窗口标题
+            // 全部失效且无任何痕迹，用户只会觉得「设置丢了」
+            let settings = match app_state.db.lock().expect("db lock poisoned").get_settings() {
+                Ok(settings) => Some(settings),
+                Err(error) => {
+                    eprintln!("启动读取设置失败，跳过窗口标题/快捷键注册/自启重放：{error}");
+                    None
+                }
+            };
+            // 托盘初始语言取落库设置（ADR-0024）：en 用户启动即见英文托盘菜单，
+            // 不必等 webview 加载后的 refresh_tray_menu 来纠正
+            let language = settings
+                .as_ref()
+                .and_then(|value| value.get("interfaceLanguage").and_then(Value::as_str))
+                .unwrap_or("")
+                .to_string();
+            *app.state::<tray_scheme::TrayState>()
+                .language
+                .lock()
+                .expect("tray language lock poisoned") = language.clone();
+            if let Some(settings) = settings {
+                // 窗口标题统一走 app_title（内含开发实例 (dev) 后缀，ADR-0018）；
+                // 语言切换后 refresh_tray_menu 会用同一函数重放，两处不可再各写一套
+                let title = commands::app_title(&language);
+                for label in ["main", "quick", "glance"] {
+                    if let Some(window) = app.get_webview_window(label) {
+                        let _ = window.set_title(&title);
+                    }
+                }
                 if let Some(shortcut) = settings.get("quickPanelShortcut").and_then(Value::as_str) {
                     if !shortcut.is_empty() {
                         if let Err(error) = commands::apply_quick_shortcut(app.handle(), shortcut.to_string()) {
                             eprintln!("注册快速面板快捷键失败：{error}");
+                            // 占用/冲突在启动期无内联界面可提示（ADR-0018）：发系统通知告知用户
+                            commands::notify_quick_shortcut_failure(app.handle(), &language, shortcut);
                         }
                     }
                 }
@@ -89,14 +119,27 @@ pub fn run() {
                 }
             }
 
+            // 隐藏工具窗口是纯优化性操作（两个窗口本就默认隐藏），失败记日志后继续（ADR-0024）：
+            // 不该让一次窗口操作失败阻断 setup、连托盘都建不起来
             if let Some(quick) = app.get_webview_window("quick") {
-                quick.hide()?;
+                if let Err(error) = quick.hide() {
+                    eprintln!("隐藏快速面板窗口失败：{error}");
+                }
             }
             if let Some(glance) = app.get_webview_window("glance") {
-                glance.hide()?;
+                if let Err(error) = glance.hide() {
+                    eprintln!("隐藏速览面板窗口失败：{error}");
+                }
             }
 
-            setup_tray(app.handle())?;
+            // release 加固（ADR-0026）：发布版关闭页面重载加速键、右键菜单与 devtools；
+            // dev 构建保留（HMR 与调试依赖）。Windows 在 WebView2 设置层权威关闭，
+            // macOS/Linux 的右键菜单由前端 PROD 拦截兜底（src/main.tsx）
+            if !cfg!(debug_assertions) {
+                harden_release_webviews(app.handle());
+            }
+
+            setup_tray(app.handle(), &language)?;
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -107,9 +150,13 @@ pub fn run() {
                         let _ = window.hide();
                     }
                 }
-                // DPI 变化后用量环需按新档位重绘（ADR-0016）
+                // DPI 变化后用量环需按新档位重绘（ADR-0016）。
+                // 只认主窗口：图标尺寸取自主窗口的缩放档位（tray_scheme::apply 内读 main 的
+                // scale_factor），面板窗口的缩放变化对托盘没有意义，不该触发重绘（ADR-0019）
                 tauri::WindowEvent::ScaleFactorChanged { .. } => {
-                    tray_scheme::apply(window.app_handle());
+                    if window.label() == "main" {
+                        tray_scheme::apply(window.app_handle());
+                    }
                 }
                 _ => {}
             }
@@ -132,6 +179,8 @@ pub fn run() {
             tray_scheme::set_tray_icon_scheme,
             tray_scheme::update_tray_meter,
             commands::add_notification,
+            commands::list_alert_states,
+            commands::save_alert_states,
             commands::list_notifications,
             commands::unread_notification_count,
             commands::mark_all_notifications_read,
@@ -160,12 +209,54 @@ fn build_tray_menu(app: &AppHandle, lang: &str) -> tauri::Result<Menu<tauri::Wry
     Menu::with_items(app, &[&open, &quick, &quit])
 }
 
-fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
-    let menu = build_tray_menu(app, "zh")?;
+/// release 加固（ADR-0026）：对全部 webview 关闭 WebView2 的浏览器级加速键
+/// （F5/Ctrl+R 重载、F12 devtools）与默认右键菜单。仅 Windows 有该设置层；
+/// 失败只记日志——加固失败回退到 WebView2 默认行为，不该崩掉启动。
+#[cfg(windows)]
+fn harden_release_webviews(app: &AppHandle) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
+    use windows::core::Interface;
+
+    for (label, window) in app.webview_windows() {
+        let closure_label = label.clone();
+        let result = window.with_webview(move |webview| unsafe {
+            let label = &closure_label;
+            let controller = webview.controller();
+            let core = match controller.CoreWebView2() {
+                Ok(core) => core,
+                Err(error) => {
+                    eprintln!("窗口 {label} 获取 WebView2 句柄失败：{error}");
+                    return;
+                }
+            };
+            if let Err(error) = core.Settings().and_then(|settings| {
+                // 加速键开关在 Settings3（WebView2 SDK 1.0.774+），基础接口没有；cast 失败 = 运行时过旧，跳过该项
+                settings
+                    .cast::<ICoreWebView2Settings3>()?
+                    .SetAreBrowserAcceleratorKeysEnabled(false.into())?;
+                settings.SetAreDefaultContextMenusEnabled(false.into())?;
+                settings.SetAreDevToolsEnabled(false.into())?;
+                Ok(())
+            }) {
+                eprintln!("窗口 {label} 的 release 加固失败：{error}");
+            }
+        });
+        if let Err(error) = result {
+            eprintln!("窗口 {label} 调度加固任务失败：{error}");
+        }
+    }
+}
+
+/// 非 Windows 无 WebView2 设置层：右键菜单等由前端 PROD 拦截兜底（ADR-0026）
+#[cfg(not(windows))]
+fn harden_release_webviews(_app: &AppHandle) {}
+
+fn setup_tray(app: &AppHandle, language: &str) -> tauri::Result<()> {
+    let menu = build_tray_menu(app, language)?;
 
     let mut builder = TrayIconBuilder::with_id("main-tray")
         .menu(&menu)
-        .tooltip(commands::tray_tooltip("zh", false))
+        .tooltip(commands::tray_tooltip(language, false))
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open" => open_main(app),
@@ -186,11 +277,23 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
             } = event
             {
                 let app = tray.app_handle();
+                // 光标位置本就是物理像素；图标矩形是 tauri::Position/Size 枚举，需转物理值。
+                // 换算取「光标所在显示器」的 scale（ADR-0027）：托盘固定在主屏而主窗口
+                // 驻留异 DPI 副屏时，拿主窗口 scale 会把矩形换算错位
                 let scale = app
-                    .get_webview_window("main")
-                    .and_then(|window| window.scale_factor().ok())
+                    .available_monitors()
+                    .ok()
+                    .and_then(|monitors| {
+                        monitors
+                            .iter()
+                            .find(|monitor| tray_scheme::monitor_contains(monitor, (position.x, position.y)))
+                            .map(|monitor| monitor.scale_factor())
+                    })
+                    .or_else(|| {
+                        app.get_webview_window("main")
+                            .and_then(|window| window.scale_factor().ok())
+                    })
                     .unwrap_or(1.0);
-                // 光标位置本就是物理像素；图标矩形是 tauri::Position/Size 枚举，需转物理值
                 let icon = rect.position.to_physical(scale);
                 let icon_size = rect.size.to_physical(scale);
                 toggle_glance(

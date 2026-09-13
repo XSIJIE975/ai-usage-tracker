@@ -27,6 +27,10 @@ import { useAutoRefresh } from "./use-auto-refresh";
 import { useGlobalRefresh } from "./use-global-refresh";
 import type { ProviderInstance } from "../../types/ipc";
 
+/** 美元格式化器（模块级稳定引用，避免穿透 StackedBars 的 option memo） */
+const formatUsdInt = (value: number) => `$${formatInt(value)}`;
+const formatUsdPrecise = (value: number) => `$${value.toFixed(2)}`;
+
 const monthlyCache = createUsageCache();
 
 const currentMonth = () => {
@@ -92,6 +96,11 @@ export function OpenCodeStats({ instance }: { instance: ProviderInstance }) {
   const series = useMemo(
     () => buildCostSeries(filteredCosts, costDays, chartModels),
     [filteredCosts, costDays, chartModels],
+  );
+  // 稳定引用：内联 map/箭头会让 StackedBars 的 option memo 每次 render 失效 → 每渲染重建图表
+  const costLabels = useMemo(
+    () => costDays.map((day) => formatCostDayLabel(day, language)),
+    [costDays, language],
   );
   const monthTotal = useMemo(
     () => sumCostUsd(model === "all" ? filteredCosts : filteredCosts.filter((p) => p.model === model)),
@@ -165,13 +174,13 @@ export function OpenCodeStats({ instance }: { instance: ProviderInstance }) {
               options={modelOptions.map((option) => ({ ...option, label: t(option.label) }))}
               value={model}
               onChange={setModel}
-              aria-label="模型筛选"
+              aria-label={t("模型筛选")}
             />
             <Select
               options={keyOptions.map((option) => ({ ...option, label: t(option.label) }))}
               value={keyId}
               onChange={setKeyId}
-              aria-label="密钥筛选"
+              aria-label={t("密钥筛选")}
             />
             <IconButton
               onClick={refresh}
@@ -184,10 +193,10 @@ export function OpenCodeStats({ instance }: { instance: ProviderInstance }) {
           </div>
 
           <StackedBars
-            labels={costDays.map(formatCostDayLabel)}
+            labels={costLabels}
             series={series}
-            yFormat={(v) => `$${formatInt(v)}`}
-            tooltipFormat={(v) => `$${v.toFixed(2)}`}
+            yFormat={formatUsdInt}
+            tooltipFormat={formatUsdPrecise}
             height={280}
           />
         </CardContent>
@@ -225,16 +234,23 @@ export function OpenCodeStats({ instance }: { instance: ProviderInstance }) {
                     {t("重试")}
                   </Button>
                 </div>
-              ) : visibleRecords.length === 0 && !history.loading ? (
-                <p className="text-center text-xs text-fg-muted">{t("当前筛选条件下暂无使用记录。")}</p>
               ) : (
-                <Pagination
-                  currentPage={history.currentPage}
-                  hasPrev={history.hasPrev}
-                  hasNext={history.hasNext && visibleRecords.length > 0}
-                  loading={history.loading}
-                  onPageChange={history.goToPage}
-                />
+                <>
+                  {/* 筛选拦不住翻页：当前页被滤空时下一页可能有匹配数据，
+                      空态文案与分页器并存，hasNext 只绑定历史分页本身 */}
+                  {visibleRecords.length === 0 && !history.loading && (
+                    <p className="text-center text-xs text-fg-muted">
+                      {t("当前筛选条件下暂无使用记录。")}
+                    </p>
+                  )}
+                  <Pagination
+                    currentPage={history.currentPage}
+                    hasPrev={history.hasPrev}
+                    hasNext={history.hasNext}
+                    loading={history.loading}
+                    onPageChange={history.goToPage}
+                  />
+                </>
               )}
             </>
           )}

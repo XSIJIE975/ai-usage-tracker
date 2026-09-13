@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Activity } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../../components/ui/card";
 import { LineChartView } from "../../../components/charts/LineChart";
@@ -6,6 +6,9 @@ import { EmptyState } from "../../../components/ui/empty-state";
 import { formatCompact, formatInt, cn } from "../../../lib/utils";
 import { fetchGlmPerformance, type GlmPerformance } from "../../../providers/glm-stats";
 import { useT } from "../../../i18n";
+
+/** tokens/s 悬浮格式化器（模块级稳定引用，避免穿透 LineChartView 的 option memo） */
+const formatTokensPerSec = (value: number) => `${formatInt(value)} tokens/s`;
 
 /** 系统健康度（官网同款）：Max&Pro 与 Lite 高峰期平均 Decode 速度（tokens/s），按日粒度 */
 export function GlmPerformanceCard({
@@ -24,6 +27,14 @@ export function GlmPerformanceCard({
     kind: "loading" | "ready" | "hidden";
     data?: GlmPerformance;
   }>({ kind: "loading" });
+  // 稳定引用：内联数组每次渲染都是新身份，会让 LineChartView 的 option memo 失效 → 图表重建
+  const perfSeries = useMemo(
+    () => [
+      { name: t("Max&Pro 高峰期平均 Decode 速度"), values: state.data?.proMaxDecodeSpeed ?? [] },
+      { name: t("Lite 高峰期平均 Decode 速度"), values: state.data?.liteDecodeSpeed ?? [] },
+    ],
+    [state.data, t],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -65,12 +76,9 @@ export function GlmPerformanceCard({
         {hasData ? (
           <LineChartView
             labels={perf!.buckets}
-            series={[
-              { name: t("Max&Pro 高峰期平均 Decode 速度"), values: perf!.proMaxDecodeSpeed },
-              { name: t("Lite 高峰期平均 Decode 速度"), values: perf!.liteDecodeSpeed },
-            ]}
+            series={perfSeries}
             yFormat={formatCompact}
-            tooltipFormat={(v) => `${formatInt(v)} tokens/s`}
+            tooltipFormat={formatTokensPerSec}
             height={220}
             className={cn(state.kind === "loading" && "opacity-40")}
           />

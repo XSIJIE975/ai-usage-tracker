@@ -52,6 +52,24 @@ describe("extractMetric", () => {
     expect(result).toEqual({ value: 88.4 });
   });
 
+  it("resetsAt 缺失的窗口按结构化周期外推，不落空到短窗（主指标口径修正）", () => {
+    // GLM 周窗无消耗时不下发 nextResetTime；按旧口径（空串=最近）主指标会错落到 5h 窗。
+    // 5h 窗的重置时刻取过去值（parse < now 恒成立），周窗外推距离 = now + 7 天必然更远
+    const result = extractMetric(
+      snapshot([
+        {
+          type: "progress",
+          label: "{hours} 小时请求配额",
+          percentUsed: 20,
+          resetsAt: "2020-01-01T00:00:00Z",
+          windowPeriodMs: 5 * 3_600_000,
+        },
+        { type: "progress", label: "每周请求配额", percentUsed: 90, windowPeriodMs: 7 * 86_400_000 },
+      ]),
+    );
+    expect(result?.value).toBe(90);
+  });
+
   it("无可用行 → null", () => {
     expect(extractMetric(snapshot([]))).toBeNull();
     expect(extractMetric(snapshot([{ type: "badge", label: "状态", value: "错误" }]))).toBeNull();
