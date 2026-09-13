@@ -2,6 +2,7 @@ import { useEffect, type RefObject } from "react";
 import { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
 import { currentMonitor, getCurrentWindow, type Monitor } from "@tauri-apps/api/window";
 import type { UnlistenFn } from "@tauri-apps/api/event";
+import { snappedEdge } from "../lib/anchor-edge";
 
 const DEFAULT_MIN_HEIGHT = 240;
 const DEBOUNCE_MS = 120;
@@ -17,8 +18,10 @@ const TWEEN_MS = 220;
 export interface FitWindowHeightOptions {
   /** 高度下限（逻辑像素），默认 240 */
   minHeight?: number;
-  /** 底边锚定：高度变化后平移窗口顶边，保持底边贴住托盘（速览面板由托盘向上弹出时用） */
-  keepBottom?: boolean;
+  /** 贴边锚定（ADR-0027）：高度变化时保持贴着工作区的那条边——贴顶（macOS 菜单栏 /
+   *  Windows 顶部任务栏）顶边不动，贴底（底部任务栏，含 Win11 flyout 回退右下角）底边不动，
+   *  都不贴（Linux 左右栏、被移动过）只改尺寸不动坐标。快速面板不启用：可拖动、左上角固定。 */
+  anchorEdge?: "auto";
 }
 
 /**
@@ -32,7 +35,7 @@ export function useFitWindowHeight(
   options?: FitWindowHeightOptions,
 ) {
   const minHeight = options?.minHeight ?? DEFAULT_MIN_HEIGHT;
-  const keepBottom = options?.keepBottom ?? false;
+  const anchorMode = options?.anchorEdge === "auto";
 
   useEffect(() => {
     const panel = getCurrentWindow();
@@ -45,7 +48,8 @@ export function useFitWindowHeight(
     let animToken = 0;
     let rafId: number | undefined;
 
-    /** 高度补间：宽度不变，内层物理高度缓动到目标值；keepBottom 时底边保持不动。
+    /** 高度补间：宽度不变，内层物理高度缓动到目标值；贴边锚定时贴着的那条边保持不动
+        （贴底平移顶边，贴顶只改尺寸、仅越界时钳制——macOS 顶栏从此不再逐帧 setPosition）。
         新目标到来时 token 失配即中止旧补间，从当前实际高度续走，不会来回跳。
         隐藏窗口中 rAF 暂停，重新显示后 t 超时一帧内落到终值，不会停在半途 */
     const animateHeight = async (targetLogical: number, monitor: Monitor) => {
@@ -57,6 +61,19 @@ export function useFitWindowHeight(
         panel.outerPosition().catch(() => null),
       ]);
       if (disposed || token !== animToken || !inner || !outer || !position) return;
+      // 贴哪条边在补间开始时判定一次（用补间前的静止位置），不逐帧判定：
+      // 底边锚定的逐帧 setPosition 会让判定输入本身动起来
+      const edge = anchorMode
+        ? snappedEdge(
+            { x: position.x, y: position.y, width: outer.width, height: outer.height },
+            {
+              x: monitor.workArea.position.x,
+              y: monitor.workArea.position.y,
+              width: monitor.workArea.size.width,
+              height: monitor.workArea.size.height,
+            },
+          )
+        : null;
       const targetInner = Math.round(targetLogical * scale);
       const startInner = inner.height;
       const delta = targetInner - startInner;
@@ -65,6 +82,7 @@ export function useFitWindowHeight(
       const x = position.x;
       const bottom = position.y + outer.height;
       const minY = monitor.workArea.position.y;
+      const maxY = monitor.workArea.position.y + monitor.workArea.size.height;
       const start = performance.now();
       const easeOut = (t: number) => 1 - Math.pow(1 - t, 3);
       const step = (now: number) => {
@@ -72,9 +90,17 @@ export function useFitWindowHeight(
         const t = Math.min(1, (now - start) / TWEEN_MS);
         const height = Math.round(startInner + delta * easeOut(t));
         void panel.setSize(new PhysicalSize(inner.width, height)).catch(() => undefined);
-        if (keepBottom) {
+        if (edge === "bottom") {
           const y = Math.max(minY, bottom - height - frameChrome);
           void panel.setPosition(new PhysicalPosition(x, y)).catch(() => undefined);
+        } else if (edge === "top") {
+          // 顶边不动；仅在长高越出工作区底部时上移钳制
+          const y = Math.min(position.y, maxY - height - frameChrome);
+          if (y < position.y - 0.5) {
+            void panel
+              .setPosition(new PhysicalPosition(x, Math.max(minY, Math.round(y))))
+              .catch(() => undefined);
+          }
         }
         if (t < 1) rafId = requestAnimationFrame(step);
       };
@@ -152,5 +178,5 @@ export function useFitWindowHeight(
       document.removeEventListener("mousedown", onHeaderMouseDown);
       document.removeEventListener("mouseup", onMouseUp);
     };
-  }, [rootRef, contentRef, minHeight, keepBottom]);
+  }, [rootRef, contentRef, minHeight, anchorMode]);
 }

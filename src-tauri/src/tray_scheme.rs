@@ -507,50 +507,124 @@ fn pixmap_to_image(pixmap: &Pixmap) -> tauri::image::Image<'static> {
     tauri::image::Image::new_owned(rgba, pixmap.width(), pixmap.height())
 }
 
-// ─── 速览面板锚定 ───
+// ─── 速览面板锚定（ADR-0027 四方位） ───
 
-/// 由托盘图标位置推导 glance 窗口摆放位置（物理像素）。
-/// 图标位于工作区顶部（macOS 菜单栏）→ 面板置于其下；否则（Windows/Linux 托盘常在底部）
-/// → 置于其上；水平方向以图标中心对齐并钳制在工作区内。坐标不可靠（如部分 Linux DE）时返回 None。
+/// 状态栏相对显示器的方位。判定是纯几何的、与操作系统无关（ADR-0027）：
+/// Windows 顶部任务栏与 macOS 菜单栏同走 Top 分支；OS 只参与图标坐标不可靠时的兜底。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum BarSide {
+    Top,
+    Bottom,
+    Left,
+    Right,
+}
+
+/// 边缘带宽度（占该边垂直方向尺寸的比例）：图标中心离某条边最近且落在带内才判为该侧
+const BAR_EDGE_BAND: f64 = 0.25;
+/// 面板与屏幕边缘的物理像素留白，也是与状态栏的间距
+const ANCHOR_MARGIN: f64 = 8.0;
+
+/// 图标坐标完全不可靠（如部分 Linux DE 的垃圾值）时的兜底方位
+fn fallback_bar_side() -> BarSide {
+    if cfg!(target_os = "macos") {
+        BarSide::Top
+    } else {
+        BarSide::Bottom
+    }
+}
+
+/// 状态栏方位判定：图标中心离显示器完整 bounds 哪条边最近、且落在该边的边缘带内即为该侧。
+/// 用完整 bounds 而非工作区——X11 下多数 DE 的工作区本就不可靠（ADR-0016 的教训）。
+/// 平局按 Top > Bottom > Left > Right，与旧版「顶部 25% 判下方」的行为兼容。
+fn detect_bar_side(icon_center: (f64, f64), monitor_bounds: (f64, f64, f64, f64)) -> BarSide {
+    let (mx, my, mw, mh) = monitor_bounds;
+    let distances = [
+        (BarSide::Top, (icon_center.1 - my).abs(), mh * BAR_EDGE_BAND),
+        (
+            BarSide::Bottom,
+            (my + mh - icon_center.1).abs(),
+            mh * BAR_EDGE_BAND,
+        ),
+        (BarSide::Left, (icon_center.0 - mx).abs(), mw * BAR_EDGE_BAND),
+        (
+            BarSide::Right,
+            (mx + mw - icon_center.0).abs(),
+            mw * BAR_EDGE_BAND,
+        ),
+    ];
+    let (side, distance, band) = distances
+        .into_iter()
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .expect("四条边非空");
+    if distance <= band {
+        side
+    } else {
+        fallback_bar_side()
+    }
+}
+
+/// 锚定核心（纯函数，四方位行为靠单测锁定，ADR-0027）：贴系统栏的那条边不动、
+/// 面板朝屏幕中心伸缩、沿栏方向以图标中心对齐，整体钳制在工作区内。
+/// 图标尺寸非正（坐标不可靠）返回 None，调用方保持窗口上次位置（Linux 兜底语义）。
+fn compute_anchor(
+    win_size: (f64, f64),
+    icon: (f64, f64, f64, f64),
+    monitor_bounds: (f64, f64, f64, f64),
+    work: (f64, f64, f64, f64),
+) -> Option<(f64, f64)> {
+    let (icon_x, icon_y, icon_w, icon_h) = icon;
+    if icon_w <= 0.0 || icon_h <= 0.0 {
+        return None;
+    }
+    let (win_w, win_h) = win_size;
+    let (work_x, work_y, work_w, work_h) = work;
+    let icon_center = (icon_x + icon_w / 2.0, icon_y + icon_h / 2.0);
+    let side = detect_bar_side(icon_center, monitor_bounds);
+    let (x, y) = match side {
+        // 顶/底栏：水平以图标中心对齐；垂直贴栏边（顶栏下方 / 底栏上方）
+        BarSide::Top => (icon_center.0 - win_w / 2.0, icon_y + icon_h + ANCHOR_MARGIN),
+        BarSide::Bottom => (icon_center.0 - win_w / 2.0, icon_y - win_h - ANCHOR_MARGIN),
+        // 左/右栏：垂直以图标中心对齐；水平贴栏边（左栏右侧 / 右栏左侧）
+        BarSide::Left => (icon_x + icon_w + ANCHOR_MARGIN, icon_center.1 - win_h / 2.0),
+        BarSide::Right => (icon_x - win_w - ANCHOR_MARGIN, icon_center.1 - win_h / 2.0),
+    };
+    // 两轴都钳进工作区（面板比工作区还宽/高时贴工作区左/上缘）
+    let x = x.clamp(
+        work_x + ANCHOR_MARGIN,
+        (work_x + work_w - win_w - ANCHOR_MARGIN).max(work_x + ANCHOR_MARGIN),
+    );
+    let y = y.clamp(
+        work_y + ANCHOR_MARGIN,
+        (work_y + work_h - win_h - ANCHOR_MARGIN).max(work_y + ANCHOR_MARGIN),
+    );
+    Some((x, y))
+}
+
+/// 由托盘图标位置推导 glance 窗口摆放位置（物理像素，ADR-0027 四方位锚定）。
+/// 状态栏方位按图标相对显示器完整 bounds 的最近边缘带判定，与操作系统无关。
 pub fn anchor_position(
     window: &tauri::WebviewWindow,
     cursor: (f64, f64),
     icon: (f64, f64, f64, f64),
 ) -> Option<tauri::PhysicalPosition<i32>> {
-    let (icon_x, icon_y, icon_w, icon_h) = icon;
-    if icon_w <= 0.0 || icon_h <= 0.0 {
-        return None;
-    }
     let monitors = window.available_monitors().ok()?;
-    let work = monitors
+    let current = window.current_monitor().ok().flatten();
+    let monitor = monitors
         .iter()
         .find(|monitor| monitor_contains(monitor, cursor))
-        .map(work_rect)
-        .or_else(|| window.current_monitor().ok().flatten().map(|monitor| work_rect(&monitor)))?;
+        .or(current.as_ref())?;
     let win_size = window.outer_size().ok()?;
-    let margin = 8.0;
-    let (win_w, win_h) = (win_size.width as f64, win_size.height as f64);
-    let (work_x, work_y, work_w, work_h) = work;
-
-    let icon_center_x = icon_x + icon_w / 2.0;
-    let below = icon_y < work_y + work_h * 0.25;
-    let x = (icon_center_x - win_w / 2.0).clamp(
-        work_x + margin,
-        (work_x + work_w - win_w - margin).max(work_x + margin),
-    );
-    let y = if below {
-        icon_y + icon_h + margin
-    } else {
-        icon_y - win_h - margin
-    };
-    let y = y.clamp(
-        work_y + margin,
-        (work_y + work_h - win_h - margin).max(work_y + margin),
-    );
+    let (x, y) = compute_anchor(
+        (win_size.width as f64, win_size.height as f64),
+        icon,
+        monitor_rect(monitor),
+        work_rect(monitor),
+    )?;
     Some(tauri::PhysicalPosition::new(x.round() as i32, y.round() as i32))
 }
 
-fn monitor_contains(monitor: &tauri::Monitor, cursor: (f64, f64)) -> bool {
+/// 光标（物理像素）落在哪个显示器内；lib.rs 的托盘事件换算 scale 也会复用
+pub(crate) fn monitor_contains(monitor: &tauri::Monitor, cursor: (f64, f64)) -> bool {
     let (mx, my) = (monitor.position().x as f64, monitor.position().y as f64);
     let (mw, mh) = (monitor.size().width as f64, monitor.size().height as f64);
     cursor.0 >= mx && cursor.0 < mx + mw && cursor.1 >= my && cursor.1 < my + mh
@@ -563,6 +637,16 @@ fn work_rect(monitor: &tauri::Monitor) -> (f64, f64, f64, f64) {
         work.position.y as f64,
         work.size.width as f64,
         work.size.height as f64,
+    )
+}
+
+/// 显示器完整 bounds（方位判定用，区别于钳制用的工作区）
+fn monitor_rect(monitor: &tauri::Monitor) -> (f64, f64, f64, f64) {
+    (
+        monitor.position().x as f64,
+        monitor.position().y as f64,
+        monitor.size().width as f64,
+        monitor.size().height as f64,
     )
 }
 
@@ -1227,5 +1311,76 @@ mod tests {
                     .expect("保存 PNG 失败");
             }
         }
+    }
+
+    // ─── ADR-0027 锚定纯函数 ───
+
+    /// 2560×1440 主屏；工作区按用例各自去掉顶栏/底栏/侧栏
+    const FULL: (f64, f64, f64, f64) = (0.0, 0.0, 2560.0, 1440.0);
+
+    #[test]
+    fn detect_bar_side_covers_four_edges_and_fallback() {
+        assert_eq!(detect_bar_side((1280.0, 16.0), FULL), BarSide::Top);
+        assert_eq!(detect_bar_side((1280.0, 1424.0), FULL), BarSide::Bottom);
+        assert_eq!(detect_bar_side((16.0, 720.0), FULL), BarSide::Left);
+        assert_eq!(detect_bar_side((2544.0, 720.0), FULL), BarSide::Right);
+        // 屏幕正中不在任何边缘带：走目标 OS 兜底（测试在哪个平台跑都自洽）
+        assert_eq!(detect_bar_side((1280.0, 720.0), FULL), fallback_bar_side());
+        // 左上角离顶/离左等距：平局取 Top，与旧版「顶部 25% 判下方」的行为兼容
+        assert_eq!(detect_bar_side((8.0, 8.0), FULL), BarSide::Top);
+    }
+
+    #[test]
+    fn anchor_below_top_bar_centered_on_icon() {
+        // macOS / Windows 顶部任务栏：25px 顶栏，面板出现在图标下方、水平居中对齐
+        let work = (0.0, 25.0, 2560.0, 1415.0);
+        let icon = (1200.0, 0.0, 24.0, 24.0);
+        let (x, y) = compute_anchor((320.0, 420.0), icon, FULL, work).unwrap();
+        assert_eq!((x, y), (1212.0 - 160.0, 25.0 + ANCHOR_MARGIN));
+        // 面板高过工作区：顶边钳到工作区顶
+        let (_, y) = compute_anchor((320.0, 1600.0), icon, FULL, work).unwrap();
+        assert_eq!(y, 25.0 + ANCHOR_MARGIN);
+    }
+
+    #[test]
+    fn anchor_above_bottom_bar_keeps_bottom_edge() {
+        // Windows 底部任务栏：下方 32px，面板底边 = 图标所在任务栏上缘 - margin
+        let work = (0.0, 0.0, 2560.0, 1408.0);
+        let icon = (1200.0, 1408.0, 24.0, 24.0);
+        let (x, y) = compute_anchor((320.0, 420.0), icon, FULL, work).unwrap();
+        assert_eq!((x, y), (1212.0 - 160.0, 1408.0 - 420.0 - ANCHOR_MARGIN));
+    }
+
+    #[test]
+    fn anchor_beside_left_and_right_bars() {
+        // Linux 左侧竖栏（48px 宽）：面板在图标右侧、垂直居中对齐图标中心；
+        // 贴栏原值 44 会越过工作区左缘，被钳制到 work_x + margin
+        let work = (48.0, 0.0, 2512.0, 1440.0);
+        let icon = (12.0, 700.0, 24.0, 24.0);
+        let (x, y) = compute_anchor((320.0, 420.0), icon, FULL, work).unwrap();
+        assert_eq!((x, y), (48.0 + ANCHOR_MARGIN, 712.0 - 210.0));
+        // 右侧竖栏（图标栏占最右 48px）：面板在图标左侧，同样被钳回工作区内
+        let work = (0.0, 0.0, 2512.0, 1440.0);
+        let icon = (2524.0, 700.0, 24.0, 24.0);
+        let (x, y) = compute_anchor((320.0, 420.0), icon, FULL, work).unwrap();
+        assert_eq!((x, y), (2512.0 - 320.0 - ANCHOR_MARGIN, 712.0 - 210.0));
+    }
+
+    #[test]
+    fn anchor_on_secondary_monitor_with_negative_origin() {
+        // 左侧副屏 (-1920,0,1920,1080) + 底部任务栏：负坐标不影响判定与钳制
+        let full = (-1920.0, 0.0, 1920.0, 1080.0);
+        let work = (-1920.0, 0.0, 1920.0, 1048.0);
+        let icon = (-972.0, 1048.0, 24.0, 24.0);
+        let (x, y) = compute_anchor((320.0, 420.0), icon, full, work).unwrap();
+        assert_eq!(x, -960.0 - 160.0);
+        assert_eq!(y, 1048.0 - 420.0 - ANCHOR_MARGIN);
+    }
+
+    #[test]
+    fn anchor_returns_none_for_unreliable_icon_rect() {
+        let work = (0.0, 25.0, 2560.0, 1415.0);
+        assert!(compute_anchor((320.0, 420.0), (10.0, 10.0, 0.0, 24.0), FULL, work).is_none());
+        assert!(compute_anchor((320.0, 420.0), (10.0, 10.0, 24.0, -1.0), FULL, work).is_none());
     }
 }

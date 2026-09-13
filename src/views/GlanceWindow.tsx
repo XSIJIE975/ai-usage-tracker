@@ -70,7 +70,7 @@ export function GlanceWindow() {
 
   const rootRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
-  useFitWindowHeight(rootRef, contentRef, { minHeight: 180, keepBottom: true });
+  useFitWindowHeight(rootRef, contentRef, { minHeight: 180, anchorEdge: "auto" });
 
   return (
     <div

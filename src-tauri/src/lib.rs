@@ -277,11 +277,23 @@ fn setup_tray(app: &AppHandle, language: &str) -> tauri::Result<()> {
             } = event
             {
                 let app = tray.app_handle();
+                // 光标位置本就是物理像素；图标矩形是 tauri::Position/Size 枚举，需转物理值。
+                // 换算取「光标所在显示器」的 scale（ADR-0027）：托盘固定在主屏而主窗口
+                // 驻留异 DPI 副屏时，拿主窗口 scale 会把矩形换算错位
                 let scale = app
-                    .get_webview_window("main")
-                    .and_then(|window| window.scale_factor().ok())
+                    .available_monitors()
+                    .ok()
+                    .and_then(|monitors| {
+                        monitors
+                            .iter()
+                            .find(|monitor| tray_scheme::monitor_contains(monitor, (position.x, position.y)))
+                            .map(|monitor| monitor.scale_factor())
+                    })
+                    .or_else(|| {
+                        app.get_webview_window("main")
+                            .and_then(|window| window.scale_factor().ok())
+                    })
                     .unwrap_or(1.0);
-                // 光标位置本就是物理像素；图标矩形是 tauri::Position/Size 枚举，需转物理值
                 let icon = rect.position.to_physical(scale);
                 let icon_size = rect.size.to_physical(scale);
                 toggle_glance(
