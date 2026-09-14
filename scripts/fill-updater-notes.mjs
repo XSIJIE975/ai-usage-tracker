@@ -29,27 +29,6 @@ const PLATFORM_MAP = [
   { pattern: /_arm64\.deb\.sig$/, keys: ["linux-aarch64-deb"] },
 ];
 
-function toPlainText(markdown) {
-  return markdown
-    .split(/\r?\n/)
-    .map((line) => {
-      // 提交哈希链接（如 [f0607eb](url)）对应用内更新说明没有意义，直接去掉
-      let text = line.replace(/\s*\[[0-9a-f]{7,40}\]\([^)]*\)/g, "");
-      // PR 链接保留编号（[#12](url) -> #12）
-      text = text.replace(/\s*\[#(\d+)\]\([^)]*\)/g, " #$1");
-      text = text.replace(/\*\*/g, "");
-      text = text.replace(/^###\s*/, "");
-      return text.trimEnd();
-    })
-    .filter((line, index, lines) => {
-      if (/^##\s/.test(line)) return false;
-      if (line === "" && (index === 0 || lines[index - 1] === "")) return false;
-      return true;
-    })
-    .join("\n")
-    .trim();
-}
-
 function headers(extra = {}) {
   return {
     Authorization: `Bearer ${token}`,
@@ -100,7 +79,12 @@ for (const asset of signatureAssets) {
 }
 
 const version = release.tag_name.replace(/^v/, "");
-const notes = toPlainText(readFileSync("release-body.md", "utf8"));
+// release-body.md 恒以 `## <version>` 开头，那是给 GitHub Release 标题用的；
+// 应用内说明区自己已经显示了版本号，这里去掉这一层包装行，其余**原样保留为 Markdown**
+// ——解析与安全收窄（协议白名单、丢弃原始 HTML）全部前移到渲染侧，见 ADR-0028
+const notes = readFileSync("release-body.md", "utf8")
+  .replace(/^##\s+[^\n]*\n+/, "")
+  .trim();
 
 const manifest = {
   version,

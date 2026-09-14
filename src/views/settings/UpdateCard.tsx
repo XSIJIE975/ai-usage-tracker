@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { ArrowUpCircle, Download, RefreshCw } from "lucide-react";
+import { ReleaseNotes } from "../../components/ReleaseNotes";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import { Progress } from "../../components/ui/progress";
@@ -77,11 +78,7 @@ export function UpdateCard() {
                 <Download className="h-3.5 w-3.5" /> {t("下载并安装")}
               </Button>
             </div>
-            {notes && (
-              <p className="max-h-40 overflow-y-auto whitespace-pre-wrap text-[13px] leading-relaxed text-fg-secondary">
-                {notes}
-              </p>
-            )}
+            {notes && <ReleaseNotes markdown={notes} />}
           </div>
         )}
 
