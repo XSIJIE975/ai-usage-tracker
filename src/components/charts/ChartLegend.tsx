@@ -1,4 +1,6 @@
+import { useMemo } from "react";
 import { useT } from "../../i18n";
+import { useResizeObserver } from "../../hooks/use-resize-observer";
 import { cn } from "../../lib/utils";
 
 export interface ChartLegendItem {
@@ -8,6 +10,22 @@ export interface ChartLegendItem {
   share?: number;
   /** 可选的数值后缀，用于展示原始数值 */
   value?: number;
+}
+
+/** 图例标签截断的下限：图例较多时每项至多这么宽（维持紧凑换行的既有样式） */
+const LEGEND_LABEL_MIN_PX = 160;
+/** 单个图例项的固定开销估算：色块 + 内边距 + 项间距 */
+const LEGEND_ITEM_CHROME_PX = 40;
+
+/**
+ * 图例标签的截断预算：容器宽均摊到每项再扣固定开销，钳到不低于下限。
+ * 写死 160px 会在图例很少时把明明放得下的长名截断（如「Max&Pro 高峰期平均
+ * Decode 速度」只有两项也被截）——数量少时预算大、展示全名，数量多时预算
+ * 回落到下限、维持现状。纯函数便于单测。
+ */
+export function legendLabelMaxWidth(containerWidth: number, itemCount: number): number {
+  if (containerWidth <= 0 || itemCount <= 0) return LEGEND_LABEL_MIN_PX;
+  return Math.max(LEGEND_LABEL_MIN_PX, containerWidth / itemCount - LEGEND_ITEM_CHROME_PX);
 }
 
 export interface ChartLegendProps {
@@ -33,10 +51,16 @@ export interface ChartLegendProps {
  */
 export function ChartLegend({ items, selected, activeName, onToggle, onMouseEnter, onMouseLeave, className }: ChartLegendProps) {
   const t = useT();
+  const [legendRef, legendSize] = useResizeObserver<HTMLElement>();
+  const labelMaxWidth = useMemo(
+    () => legendLabelMaxWidth(legendSize.width, items.length),
+    [legendSize.width, items.length],
+  );
   if (items.length === 0) return null;
 
   return (
     <figcaption
+      ref={legendRef}
       className={cn("mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 px-1", className)}
       onMouseLeave={() => onMouseLeave?.()}
     >
@@ -64,7 +88,7 @@ export function ChartLegend({ items, selected, activeName, onToggle, onMouseEnte
               )}
               style={{ backgroundColor: item.color }}
             />
-            <span className="truncate max-w-[160px]" title={item.name}>
+            <span className="truncate" style={{ maxWidth: labelMaxWidth }} title={item.name}>
               {item.name}
             </span>
             {typeof item.share === "number" && (
