@@ -3,6 +3,7 @@ import type { HttpResult, InstanceCredentialStatus, ProviderInstance } from "../
 import type { StatsResult } from "./stats-result";
 import {
   countAvailableResets,
+  isNoCodingPlanEnvelope,
   parseGlmBalance,
   toAmount,
   type GlmBalanceData,
@@ -151,6 +152,9 @@ export interface GlmToolUsage {
 export interface GlmUsageBundle {
   models: GlmModelUsage;
   tools: GlmToolUsage;
+  /** 未订阅 Coding Plan（账号正常状态，monitor 族对用量接口返回「不存在coding plan」错误封套）：
+      用量序列为空值，统计页据此换专属空态文案而非报错；缺省 = 已订阅或未知 */
+  notSubscribed?: boolean;
 }
 
 /** model-performance-day 响应 data（控制台「系统健康度」，2026-09-05 实测固化） */
@@ -364,6 +368,14 @@ export const fetchGlmUsage = async (
       return { status: "error", message: "智谱用量接口返回 HTTP {status}", params: { status: modelHttp.status } };
     }
     const modelJson = JSON.parse(modelHttp.bodyText) as GlmStatsEnvelope<GlmModelUsageRaw>;
+    if (isNoCodingPlanEnvelope(modelJson)) {
+      // 未订阅 Coding Plan：账号正常状态而非故障，返回空用量数据让统计页照常渲染
+      // （余额/重置卡不受影响，用量区走专属空态），不整页报错
+      return {
+        status: "ok",
+        data: { models: parseModelUsage(undefined), tools: emptyToolUsage(), notSubscribed: true },
+      };
+    }
     if (modelJson.success === false) {
       return {
         status: "error",

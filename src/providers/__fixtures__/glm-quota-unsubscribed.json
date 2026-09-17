@@ -1,5 +1,5 @@
 {
-  "code": 403,
-  "msg": "未开通 Coding Plan",
+  "code": 500,
+  "msg": "当前用户不存在coding plan",
   "success": false
 }

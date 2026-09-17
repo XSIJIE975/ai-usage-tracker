@@ -7,7 +7,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 import { invoke } from "@tauri-apps/api/core";
 import type { HttpResult } from "../types/ipc";
-import { glmProvider, countAvailableResets, parseBalanceLine, parseGlmBalance, parseQuotaLimits, parseResetLine } from "./glm";
+import { glmProvider, countAvailableResets, isNoCodingPlanEnvelope, parseBalanceLine, parseGlmBalance, parseQuotaLimits, parseResetLine } from "./glm";
 import type { GlmBalanceData, GlmQuotaData } from "./glm";
 import type { ProviderInstance } from "../types/ipc";
 
@@ -19,8 +19,10 @@ const readFixture = (name: string): string =>
 const loadQuotaFixture = () => JSON.parse(readFixture("glm-quota.json"));
 const loadBalanceFixture = () => JSON.parse(readFixture("glm-balance.json"));
 const loadResetFixture = () => JSON.parse(readFixture("glm-package-reset.json"));
-// 注意：未订阅形态未实测（测试账号已订阅 Lite），此 fixture 按代码容错分支构造
+// 2026-09-17 用户实测（非 Coding Plan 账号）：monitor 族对未订阅账号返回 code=500 错误封套
 const loadUnsubscribedFixture = () => JSON.parse(readFixture("glm-quota-unsubscribed.json"));
+// 措辞与 code 均与实测不同（此前按容错分支构造的形态），同样必须被识别为未订阅
+const legacyUnsubscribedPayload = () => ({ code: 403, msg: "未开通 Coding Plan", success: false });
 
 const httpResult = (body: unknown, status = 200): HttpResult => ({
   status,
@@ -239,7 +241,7 @@ describe("glmProvider.fetch", () => {
     expect(snapshot.message).toContain("重置卡查询失败：network down");
   });
 
-  it("keeps ok and reports the quota unsubscribed reason when the balance source still works", async () => {
+  it("maps an unsubscribed quota response to a neutral line while the balance source still works", async () => {
     mockInvoke
       .mockResolvedValueOnce(credentialStatus({ planKey: true }))
       .mockResolvedValueOnce(httpResult(loadUnsubscribedFixture()))
@@ -247,11 +249,39 @@ describe("glmProvider.fetch", () => {
       .mockResolvedValueOnce(httpResult(emptyResetPayload()));
 
     const snapshot = await glmProvider.fetch(glmInstance);
+    // 未订阅是正常状态：快照保持 ok、无错误 message（不弹「获取用量失败」黄条），
+    // 配额源降级为「Coding Plan：未订阅」中性文本行，余额行照常
     expect(snapshot.status).toBe("ok");
-    expect(snapshot.lines).toHaveLength(1);
-    expect(snapshot.message).toBe("Coding Plan 配额查询失败：{detail}");
-    expect(snapshot.messageParams?.detail).toContain("403");
-    expect(snapshot.messageParams?.detail).toContain("未开通 Coding Plan");
+    expect(snapshot.message).toBeUndefined();
+    expect(snapshot.lines).toHaveLength(2);
+    expect(snapshot.lines[0]).toEqual({ type: "text", label: "Coding Plan", value: "未订阅" });
+    expect(snapshot.lines[1].label).toBe("账户余额");
+  });
+
+  it("recognizes the legacy unsubscribed wording with a different code", async () => {
+    mockInvoke
+      .mockResolvedValueOnce(credentialStatus({ planKey: true }))
+      .mockResolvedValueOnce(httpResult(legacyUnsubscribedPayload()))
+      .mockResolvedValueOnce(httpResult(loadBalanceFixture()))
+      .mockResolvedValueOnce(httpResult(emptyResetPayload()));
+
+    const snapshot = await glmProvider.fetch(glmInstance);
+    expect(snapshot.status).toBe("ok");
+    expect(snapshot.message).toBeUndefined();
+    expect(snapshot.lines[0]).toEqual({ type: "text", label: "Coding Plan", value: "未订阅" });
+  });
+
+  it("still reports unrelated business errors from the quota source", async () => {
+    mockInvoke
+      .mockResolvedValueOnce(credentialStatus({ planKey: true }))
+      .mockResolvedValueOnce(httpResult({ code: 500, msg: "系统繁忙，请稍后再试", success: false }))
+      .mockResolvedValueOnce(httpResult(loadBalanceFixture()))
+      .mockResolvedValueOnce(httpResult(emptyResetPayload()));
+
+    const snapshot = await glmProvider.fetch(glmInstance);
+    expect(snapshot.status).toBe("ok");
+    expect(snapshot.message).toContain("Coding Plan 配额查询失败");
+    expect(snapshot.messageParams?.detail).toContain("系统繁忙");
   });
 
   it("reports unrecognized quota window types instead of claiming the plan is unsubscribed", async () => {
@@ -279,6 +309,19 @@ describe("glmProvider.fetch", () => {
     expect(snapshot.status).toBe("error");
     expect(snapshot.message).toContain("Coding Plan 配额查询失败：network down");
     expect(snapshot.message).toContain("重置卡查询失败：dns failure");
+  });
+});
+
+describe("isNoCodingPlanEnvelope", () => {
+  it("matches both observed wordings regardless of code", () => {
+    expect(isNoCodingPlanEnvelope({ code: 500, msg: "当前用户不存在coding plan", success: false })).toBe(true);
+    expect(isNoCodingPlanEnvelope({ code: 403, msg: "未开通 Coding Plan", success: false })).toBe(true);
+  });
+
+  it("does not match success envelopes or unrelated errors", () => {
+    expect(isNoCodingPlanEnvelope({ code: 200, success: true, data: {} })).toBe(false);
+    expect(isNoCodingPlanEnvelope({ code: 500, msg: "系统繁忙，请稍后再试", success: false })).toBe(false);
+    expect(isNoCodingPlanEnvelope({ code: 500, msg: undefined, success: false })).toBe(false);
   });
 });
 

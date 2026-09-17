@@ -214,13 +214,19 @@ export function parseQuotaLimits(data: GlmQuotaData | undefined): MetricLine[] {
   return lines;
 }
 
+/**
+ * 智谱对未订阅 Coding Plan 的账号，monitor 族接口（配额/用量统计）统一返回 success=false
+ * 的错误封套而非空数据。实测两种措辞（2026-09-17 用户截图 / 此前 fixture 构造）：
+ * code=500「当前用户不存在coding plan」、code=403「未开通 Coding Plan」——
+ * 按 msg 含 coding plan（大小写不敏感）识别，不绑死 code；措辞再变时识别失效、
+ * 退回普通错误可见（ADR-0024 的 fail-visible 默认）。
+ */
+export function isNoCodingPlanEnvelope(json: GlmEnvelope<unknown>): boolean {
+  return json.success === false && /coding\s*plan/i.test(json.msg ?? "");
+}
+
 /** 配额响应整体处理：区分「未订阅/无数据」与「返回了未识别的类型」两种空结果 */
-function processQuota(result: HttpResult): {
-  ok: boolean;
-  lines: MetricLine[];
-  error?: string;
-  errorParams?: Record<string, string | number>;
-} {
+function processQuota(result: HttpResult): SourceOutcome {
   if (result.status !== 200) {
     const detail = result.bodyText?.trim() || "";
     return {
@@ -232,6 +238,14 @@ function processQuota(result: HttpResult): {
   }
   try {
     const json = JSON.parse(result.bodyText) as GlmEnvelope<GlmQuotaData>;
+    if (isNoCodingPlanEnvelope(json)) {
+      // 未订阅 Coding Plan 是账号的正常状态而非故障（ADR-0024 的可见性靠这条中性事实行，
+      // 不靠错误横幅）：与订阅者的「套餐档位」徽章行同位，余额/重置卡源不受影响
+      return {
+        ok: true,
+        lines: [{ type: "text", label: "Coding Plan", value: "未订阅" }],
+      };
+    }
     if (json.success === false) {
       return {
         ok: false,
