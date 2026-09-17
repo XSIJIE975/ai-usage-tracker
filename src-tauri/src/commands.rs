@@ -27,6 +27,43 @@ fn http_client() -> &'static reqwest::Client {
     })
 }
 
+/// 网络失败的类别摘要：reqwest 外层 Display 只有 "error sending request for url (…)"，
+/// 真实原因（超时/连接失败/传输中断）在错误链里被吞掉，用户无从判断该等服务还是查自己网络。
+/// reqwest::Error 无公开构造器，类别判定抽成纯函数便于单测。
+fn network_error_summary(is_timeout: bool, is_connect: bool, is_transfer: bool) -> &'static str {
+    match (is_timeout, is_connect, is_transfer) {
+        (true, true, _) => "连接超时（10 秒内未能建立连接）",
+        (true, false, _) => "请求超时（30 秒内服务端未完成响应）",
+        (false, true, _) => "连接失败（DNS 解析、TLS 或网络不可达）",
+        (false, false, true) => "传输中断（连接被服务端或网络中途断开）",
+        _ => "网络请求失败",
+    }
+}
+
+/// 供应商网络请求失败 → 可读文案：类别摘要 + 底层原因链全文——摘要给人读，
+/// 原因链留证据，分类失准时有链兜底，信息不被吞（ADR-0024 可见性）。
+fn network_error_text(error: &reqwest::Error) -> String {
+    let summary = network_error_summary(
+        error.is_timeout(),
+        error.is_connect(),
+        error.is_body() || error.is_decode() || error.is_request(),
+    );
+    let mut chain = String::new();
+    let mut source = std::error::Error::source(error);
+    while let Some(cause) = source {
+        if !chain.is_empty() {
+            chain.push_str(" ← ");
+        }
+        chain.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    if chain.is_empty() {
+        format!("{summary}：{error}")
+    } else {
+        format!("{summary}：{chain}")
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VaultStatusResponse {
@@ -769,7 +806,7 @@ pub async fn provider_request(
         request = request.body(body);
     }
 
-    let response = request.send().await.map_err(|error| error.to_string())?;
+    let response = request.send().await.map_err(|error| network_error_text(&error))?;
     let status = response.status().as_u16();
     let response_headers = response
         .headers()
@@ -781,7 +818,7 @@ pub async fn provider_request(
             )
         })
         .collect::<HashMap<_, _>>();
-    let body_text = response.text().await.map_err(|error| error.to_string())?;
+    let body_text = response.text().await.map_err(|error| network_error_text(&error))?;
 
     Ok(ProviderResponse {
         status,
@@ -870,6 +907,29 @@ mod tests {
         assert_eq!(tray_tooltip("en", true), format!("AI Usage Tracker — quota alert{suffix}"));
         assert_eq!(app_title("zh"), format!("AI 用量助手{suffix}"));
         assert_eq!(app_title("en"), format!("AI Usage Tracker{suffix}"));
+    }
+
+    /// 网络失败文案按类别取摘要：连接超时优先于请求超时（两个谓词同时为真是连接阶段超时），
+    /// 传输中断兜底在前两类之外；reqwest::Error 无公开构造器，只测纯函数映射
+    #[test]
+    fn network_error_summary_classifies_by_flags() {
+        assert_eq!(
+            network_error_summary(true, true, false),
+            "连接超时（10 秒内未能建立连接）"
+        );
+        assert_eq!(
+            network_error_summary(true, false, false),
+            "请求超时（30 秒内服务端未完成响应）"
+        );
+        assert_eq!(
+            network_error_summary(false, true, false),
+            "连接失败（DNS 解析、TLS 或网络不可达）"
+        );
+        assert_eq!(
+            network_error_summary(false, false, true),
+            "传输中断（连接被服务端或网络中途断开）"
+        );
+        assert_eq!(network_error_summary(false, false, false), "网络请求失败");
     }
 
     #[test]
