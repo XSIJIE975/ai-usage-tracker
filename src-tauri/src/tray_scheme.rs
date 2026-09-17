@@ -140,20 +140,33 @@ impl TrayState {
     }
 }
 
-/// 动态 tooltip：告警态沿用现有后缀；常态拼最紧（或钉选）实例摘要
+/// 动态 tooltip：标题行 = 应用名（告警时沿用「— 有额度告警」后缀），实例摘要整块另起一段
+/// 挂在下方。两种状态共用同一结构——告警出现/消失只在标题行增删后缀，实例名与窗口行的
+/// 行位不跳动；摘要含各配额窗口的已用百分比，告警态下照样可见。
 pub fn tooltip_text(language: &str, meter: Option<&TrayMeter>) -> String {
-    if meter.is_some_and(|meter| meter.alert) {
-        return tray_tooltip(language, true);
+    let alert = meter.is_some_and(|meter| meter.alert);
+    let title = tray_tooltip(language, alert);
+    let text = match meter.and_then(|meter| meter.summary.as_deref()) {
+        Some(summary) if !summary.is_empty() => format!("{title}\n{summary}"),
+        _ => return title,
+    };
+    // Windows 托盘 tooltip 仅识别 CRLF 换行，多行摘要（每条配额窗口一行）需转换
+    #[cfg(target_os = "windows")]
+    let text = text.replace('\n', "\r\n");
+    text
+}
+
+/// 摘要裁剪：Windows tooltip 上限 127 字符，标题行（应用名 + dev/告警后缀）最多占 40 余字符，
+/// 摘要压到 80 字符内；裁断点回退到最后一个换行——半行（如「已用 3」）悬在末尾比少一行更难看
+fn clip_summary(text: &str) -> String {
+    const SUMMARY_MAX_CHARS: usize = 80;
+    if text.chars().count() <= SUMMARY_MAX_CHARS {
+        return text.to_string();
     }
-    let title = tray_tooltip(language, false);
-    match meter.and_then(|meter| meter.summary.as_deref()) {
-        Some(summary) if !summary.is_empty() => {
-            // Windows 托盘 tooltip 仅识别 CRLF 换行，多行摘要（每条配额窗口一行）需转换
-            #[cfg(target_os = "windows")]
-            let summary = summary.replace('\n', "\r\n");
-            format!("{title} — {summary}")
-        }
-        _ => title,
+    let clipped: String = text.chars().take(SUMMARY_MAX_CHARS).collect();
+    match clipped.rfind('\n') {
+        Some(boundary) => clipped[..boundary].to_string(),
+        None => clipped,
     }
 }
 
@@ -699,8 +712,7 @@ pub fn update_tray_meter(
             bar_top: finite(bar_top),
             bar_bottom: finite(bar_bottom),
             alert,
-            // tooltip Windows 上限 127 字符，摘要超长直接丢弃（前端通常已截断）
-            summary: summary.filter(|text| !text.is_empty()).map(|text| text.chars().take(80).collect()),
+            summary: summary.filter(|text| !text.is_empty()).map(|text| clip_summary(&text)),
         });
     }
     if let Some(language) = language {
@@ -1232,6 +1244,63 @@ mod tests {
         assert_eq!(badge_text(TrayScheme::UsageRing, None), "");
         assert_eq!(badge_text(TrayScheme::Default, Some(4.4)), "");
         assert_eq!(badge_text(TrayScheme::UsageBars, Some(4.4)), "");
+    }
+
+    /// tooltip 布局：标题行独立成行，摘要（实例名 + 各窗口行）整块挂在下方；
+    /// 告警态也保留摘要，且只改标题行后缀——实例与窗口的行位不因告警增减而跳动
+    #[test]
+    fn tooltip_text_keeps_summary_in_alert_with_stable_layout() {
+        // Windows 构建下 CRLF 转换是 tooltip_text 的一部分，期望值同步转换
+        #[cfg(target_os = "windows")]
+        let expect = |text: String| text.replace('\n', "\r\n");
+        #[cfg(not(target_os = "windows"))]
+        let expect = |text: String| text;
+
+        let summary = "Claude 官方\n5 小时请求配额（已用 88%）\n本周额度（已用 32%）";
+        let alerting = TrayMeter {
+            alert: true,
+            summary: Some(summary.to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            tooltip_text("zh", Some(&alerting)),
+            expect(format!("{}\n{summary}", tray_tooltip("zh", true))),
+        );
+
+        let calm = TrayMeter {
+            alert: false,
+            summary: Some(summary.to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            tooltip_text("zh", Some(&calm)),
+            expect(format!("{}\n{summary}", tray_tooltip("zh", false))),
+        );
+
+        // 无计量 / 无摘要 / 空摘要：仅标题行
+        assert_eq!(tooltip_text("zh", None), tray_tooltip("zh", false));
+        assert_eq!(
+            tooltip_text("zh", Some(&TrayMeter::default())),
+            tray_tooltip("zh", false),
+        );
+        assert_eq!(
+            tooltip_text("zh", Some(&TrayMeter { summary: Some(String::new()), ..Default::default() })),
+            tray_tooltip("zh", false),
+        );
+    }
+
+    /// 摘要裁剪：未超限原样保留；超限时回退到最后一个行边界，不悬半行；
+    /// 首行自身超长（无行边界可退）才按字符硬裁
+    #[test]
+    fn clip_summary_cuts_at_line_boundary() {
+        let short = "Claude 官方\n5 小时请求配额（已用 4%）";
+        assert_eq!(clip_summary(short), short);
+
+        let long = format!("{}\n{}", "A".repeat(60), "B".repeat(60));
+        assert_eq!(clip_summary(&long), "A".repeat(60));
+
+        let no_boundary = format!("{}{}", "C".repeat(90), "\nD");
+        assert_eq!(clip_summary(&no_boundary), "C".repeat(80));
     }
 
     /// 手工预览工具：把「修复前 vs 修复后」的用量柱渲染成放大 PNG（ADR-0016 修复留档）。
