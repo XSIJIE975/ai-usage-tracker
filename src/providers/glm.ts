@@ -112,6 +112,16 @@ export function countAvailableResets(cards: GlmResetCardRaw[] | undefined): numb
   return (cards ?? []).filter((card) => card.available === true).length;
 }
 
+/** 可用重置卡的 recordId 明细（到账检测差集用）；无 id 的卡跳过——绝不误报 */
+export function extractAvailableResetIds(
+  data: GlmPackageResetData | undefined,
+): { fiveHour: number[]; week: number[] } {
+  const ids = (cards: GlmResetCardRaw[] | undefined) =>
+    (cards ?? []).filter((card) => card.available === true && typeof card.recordId === "number")
+      .map((card) => card.recordId as number);
+  return { fiveHour: ids(data?.fiveHourResets), week: ids(data?.weekResets) };
+}
+
 /**
  * 卡片上的「可用重置卡」文本行：仅在有可用卡时渲染（与 DeepSeek 充值/赠送行的按需展示一致），
  * 无卡是常态，不显示「0 张」。
@@ -285,6 +295,8 @@ interface SourceOutcome {
   lines: MetricLine[];
   error?: string;
   errorParams?: Record<string, string | number>;
+  /** 重置卡源成功时的可用卡 recordId 明细（availableResetIds 透传，见 ProviderSnapshot） */
+  availableResetIds?: { fiveHour: number[]; week: number[] };
 }
 
 /** 余额响应整体处理：解析不出金额（如纯订阅账户无现金数据）按失败处理，仅丢余额行不拖垮快照 */
@@ -349,7 +361,11 @@ function processReset(result: HttpResult): SourceOutcome {
       };
     }
     const line = parseResetLine(json.data);
-    return { ok: true, lines: line ? [line] : [] };
+    return {
+      ok: true,
+      lines: line ? [line] : [],
+      availableResetIds: extractAvailableResetIds(json.data),
+    };
   } catch (error) {
     return {
       ok: false,
@@ -475,6 +491,8 @@ async function fetchGlmSnapshot(instance: ProviderInstance): Promise<ProviderSna
         }
       : {}),
     lines: [...quotaOutcome.lines, ...balanceOutcome.lines, ...resetOutcome.lines],
+    // 重置卡源失败时不带该字段：到账检测按「冻结」处理，不播种也不判定（ADR-0023 同语义）
+    ...(resetOutcome.availableResetIds ? { availableResetIds: resetOutcome.availableResetIds } : {}),
   };
 }
 

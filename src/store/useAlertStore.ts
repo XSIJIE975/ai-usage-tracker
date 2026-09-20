@@ -4,9 +4,10 @@ import { emit } from "@tauri-apps/api/event";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { AlertCoordinator, type AlertCoordinatorDeps } from "../alerts/coordinator";
 import type { AlertFire } from "../alerts/evaluate";
+import { ResetCardDetector, type ResetCardArrival, type ResetCardDetectorDeps } from "../alerts/reset-card-detector";
 import { renderTemplate } from "../i18n/apply-params";
 import { resolveLanguage, translateText } from "../i18n/translate";
-import type { AppSettings, ProviderInstance, ProviderSnapshot, StoredAlertState, StoredNotification } from "../types/ipc";
+import type { AppSettings, ProviderInstance, ProviderSnapshot, StoredAlertState, StoredNotification, StoredSeenResetCards } from "../types/ipc";
 import { currentWindowLabel, useAppStore } from "./useAppStore";
 import { useNotificationStore } from "./useNotificationStore";
 
@@ -32,8 +33,9 @@ function currentTranslator(): (text: string) => string {
   return (text) => translateText(text, language);
 }
 
-/** 系统通知：权限未授予时静默请求一次，失败不影响主流程（通知仍会进入通知中心） */
-async function sendSystemNotification(fire: AlertFire): Promise<void> {
+/** 系统通知：权限未授予时静默请求一次，失败不影响主流程（通知仍会进入通知中心）。
+ *  告警与重置卡到账共用（AlertFire 与 ResetCardArrival 的文案字段同构） */
+async function sendSystemNotification(fire: Pick<AlertFire, "title" | "body" | "params">): Promise<void> {
   if (!isTauri()) return;
   try {
     const t = currentTranslator();
@@ -89,13 +91,49 @@ function createCoordinator(): AlertCoordinator {
   return new AlertCoordinator(deps);
 }
 
+function createResetCardDetector(): ResetCardDetector {
+  const deps: ResetCardDetectorDeps = {
+    notify: (arrival: ResetCardArrival) => {
+      // ruleKey 传 null：到账不走告警冷却判重（ADR-0025），落库即进通知中心；
+      // 判重权威是已见集合本身（同一张卡合并后不再出现在差集）
+      void invoke<StoredNotification | null>("add_notification", {
+        instanceId: arrival.instanceId,
+        ruleKey: null,
+        title: arrival.title,
+        body: arrival.body,
+        params: arrival.params,
+      })
+        .then((stored) => {
+          if (!stored) return;
+          useNotificationStore.getState().onAdded(stored);
+          void sendSystemNotification(arrival);
+        })
+        .catch(() => {
+          void sendSystemNotification(arrival);
+        });
+    },
+    onStateChange: (seen: StoredSeenResetCards) => {
+      // 已见集合回写后端事实源；失败只留痕——重启后最坏同一批卡重报一次
+      // （投递韧性优先于判重，与告警守卫错误同口径）
+      void invoke("save_seen_reset_cards", { seen }).catch((error) => {
+        console.warn("重置卡已见集合回写失败", error);
+      });
+    },
+  };
+  return new ResetCardDetector(deps);
+}
+
 const coordinator = createCoordinator();
+const resetCardDetector = createResetCardDetector();
 
 export const useAlertStore = create<AlertStore>(() => ({
   active: {},
   observe: (instance, snapshot, settings) => {
     if (currentWindowLabel() !== "main") return;
     coordinator.observe(instance, snapshot, settings.alertsEnabled, settings.alertCooldownHours * 3_600_000);
+    // 到账检测与告警同窗口策略（ADR-0022）：只主窗口评估，面板刷出的快照由
+    // reevaluate 重跑，多 webview 副本互不知晓也不会重复通知（已见集合判定）
+    resetCardDetector.observe(instance, snapshot);
   },
   reevaluate: () => {
     if (currentWindowLabel() !== "main") return;
@@ -104,6 +142,7 @@ export const useAlertStore = create<AlertStore>(() => ({
     for (const instance of instances) {
       const snapshot = latest.get(instance.id);
       if (snapshot) coordinator.observe(instance, snapshot, settings.alertsEnabled, settings.alertCooldownHours * 3_600_000);
+      if (snapshot) resetCardDetector.observe(instance, snapshot);
     }
   },
   hydrate: async () => {
@@ -115,8 +154,22 @@ export const useAlertStore = create<AlertStore>(() => ({
       // 水合失败不阻断：本轮按未水合评估，最坏重报一次（与守卫错误同口径，ADR-0025）
       console.warn("告警状态水合失败");
     }
+    // 到账已见集合按实例逐个水合（后端是单行设计）；失败不阻断——最坏首刷把
+    // 新到账的卡当基线播种吞掉一次通知，下一轮刷新恢复正常
+    const glmIds = useAppStore
+      .getState()
+      .instances.filter((instance) => instance.providerId === "glm")
+      .map((instance) => instance.id);
+    const results = await Promise.allSettled(
+      glmIds.map((instanceId) => invoke<StoredSeenResetCards | null>("get_seen_reset_cards", { instanceId })),
+    );
+    const seen = results
+      .map((result) => (result.status === "fulfilled" ? result.value : null))
+      .filter((item): item is StoredSeenResetCards => item !== null);
+    resetCardDetector.hydrate(seen);
   },
   prune: (instanceId) => {
     coordinator.prune(instanceId);
+    resetCardDetector.prune(instanceId);
   },
 }));

@@ -15,8 +15,9 @@ export interface AlertFire {
 }
 
 /** 备注存在时标题带上备注，同名种类的两个实例告警才能分得清。
- *  返回模板与参数：{rule} 是字典键（渲染层翻译），{provider} 是专名（无字典键原样保留） */
-function alertTitle(
+ *  返回模板与参数：{rule} 是字典键（渲染层翻译），{provider} 是专名（无字典键原样保留）。
+ *  重置卡到账提醒（detector）复用同一标题框架，保持通知中心里的标题风格一致 */
+export function alertTitle(
   instance: ProviderInstance,
   snapshot: ProviderSnapshot,
   ruleName: string,

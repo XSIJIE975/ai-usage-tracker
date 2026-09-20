@@ -226,6 +226,7 @@ export const en: Record<string, string> = {
   "配额告警": "quota alert",
   "额度告警": "quota alert",
   "额度耗尽": "quota exhausted",
+  "重置卡到账": "reset cards arrived",
   "当前余额 {balance} 元，已低于 {threshold} 元，请及时充值。":
     "Balance is {balance} CNY, below the {threshold} CNY threshold. Please top up soon.",
   "本月额度已用 {percent}%，达到 {threshold}%，注意分配剩余用量。":
@@ -234,6 +235,13 @@ export const en: Record<string, string> = {
     "Coding Plan quota usage at {percent}% has reached the {threshold}% threshold. Plan the remaining quota carefully.",
   "{names}已用尽（100%），等待重置恢复。":
     "{names} used up (100%). Waiting for the window to reset.",
+  // 重置卡到账正文按组组合选模板（两组都有 / 仅 5 小时 / 仅周），数值在评估时定格
+  "新增 {count} 张可用重置卡（5 小时 ×{fiveHour} · 周 ×{week}）":
+    "{count} new reset card(s) available (5-hour ×{fiveHour} · weekly ×{week})",
+  "新增 {count} 张可用重置卡（5 小时 ×{fiveHour}）":
+    "{count} new reset card(s) available (5-hour ×{fiveHour})",
+  "新增 {count} 张可用重置卡（周 ×{week}）":
+    "{count} new reset card(s) available (weekly ×{week})",
 
   // ── 设置 ──
   "自动刷新": "Auto refresh",

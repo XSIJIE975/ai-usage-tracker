@@ -7,7 +7,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 import { invoke } from "@tauri-apps/api/core";
 import type { HttpResult } from "../types/ipc";
-import { glmProvider, countAvailableResets, isNoCodingPlanEnvelope, parseBalanceLine, parseGlmBalance, parseQuotaLimits, parseResetLine } from "./glm";
+import { glmProvider, countAvailableResets, extractAvailableResetIds, isNoCodingPlanEnvelope, parseBalanceLine, parseGlmBalance, parseQuotaLimits, parseResetLine } from "./glm";
 import type { GlmBalanceData, GlmQuotaData } from "./glm";
 import type { ProviderInstance } from "../types/ipc";
 
@@ -154,6 +154,25 @@ describe("glmProvider.fetch", () => {
     expect(snapshot.message).toBeUndefined();
     expect(snapshot.lines).toHaveLength(4);
     expect(snapshot.lines.some((line) => line.label === "可用重置卡")).toBe(false);
+    // 0 张可用也是一次成功的重置卡采样：空集透传（与「源失败缺省=冻结」区分开）
+    expect(snapshot.availableResetIds).toEqual({ fiveHour: [], week: [] });
+  });
+
+  it("passes available reset card ids through for arrival detection; omits them when the source fails", async () => {
+    mockHappyPath();
+    const ok = await glmProvider.fetch(glmInstance);
+    expect(ok.availableResetIds).toEqual({ fiveHour: [1], week: [2] });
+
+    // 重置卡源失败但其余两源可用：快照仍 ok，但不带明细 → 到账检测按冻结处理
+    mockInvoke
+      .mockReset()
+      .mockResolvedValueOnce(credentialStatus({ planKey: true }))
+      .mockResolvedValueOnce(httpResult(loadQuotaFixture()))
+      .mockResolvedValueOnce(httpResult(loadBalanceFixture()))
+      .mockResolvedValueOnce(httpResult({ code: 500, msg: "boom", success: false }));
+    const degraded = await glmProvider.fetch(glmInstance);
+    expect(degraded.status).toBe("ok");
+    expect(degraded.availableResetIds).toBeUndefined();
   });
 
   it("degrades to ok with a message when only the balance source fails", async () => {
@@ -460,5 +479,21 @@ describe("parseResetLine / countAvailableResets", () => {
     expect(line?.value).toBe("周 ×1");
     expect(parseResetLine(undefined)).toBeNull();
     expect(parseResetLine({})).toBeNull();
+  });
+});
+
+describe("extractAvailableResetIds", () => {
+  it("collects only available cards with a recordId; id-less cards are skipped", () => {
+    expect(
+      extractAvailableResetIds({
+        fiveHourResets: [
+          { recordId: 1, available: true },
+          { available: true },
+          { recordId: 3, available: false },
+        ],
+        weekResets: [{ recordId: 4, available: true }],
+      }),
+    ).toEqual({ fiveHour: [1], week: [4] });
+    expect(extractAvailableResetIds(undefined)).toEqual({ fiveHour: [], week: [] });
   });
 });

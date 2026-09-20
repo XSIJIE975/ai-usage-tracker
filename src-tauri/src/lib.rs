@@ -181,6 +181,8 @@ pub fn run() {
             commands::add_notification,
             commands::list_alert_states,
             commands::save_alert_states,
+            commands::get_seen_reset_cards,
+            commands::save_seen_reset_cards,
             commands::list_notifications,
             commands::unread_notification_count,
             commands::mark_all_notifications_read,

@@ -40,6 +40,18 @@ pub struct StoredAlertState {
     pub last_notified_at: i64,
 }
 
+/// 重置卡到账检测的已见集合：每实例一行，record_ids 是最近一轮在线的可用卡 recordId 全集
+/// （历史已用/过期 id 不保留——差集方向是「本轮可用 − 已见」，旧 id 留着无意义）。
+/// seeded 区分「播种过但 0 张」（record_ids 为空）与「从未播种」（无行）：后者首次成功
+/// 刷新时把存量卡整体播种、不发通知，避免功能上线/重建实例首刷误报。字段 snake_case
+/// 与 StoredAlertState 同口径
+#[derive(Serialize, Deserialize)]
+pub struct StoredSeenResetCards {
+    pub instance_id: String,
+    pub record_ids: Vec<i64>,
+    pub seeded: bool,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StoredInstance {
@@ -105,6 +117,13 @@ impl Db {
                 instance_id TEXT NOT NULL,
                 triggered INTEGER NOT NULL DEFAULT 0,
                 last_notified_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS seen_reset_cards (
+                instance_id TEXT PRIMARY KEY,
+                record_ids TEXT NOT NULL,
+                seeded INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL
             );
             "#,
         )
@@ -435,6 +454,8 @@ impl Db {
             .map_err(|error| error.to_string())?;
         tx.execute("DELETE FROM alert_states WHERE instance_id = ?1", [id])
             .map_err(|error| error.to_string())?;
+        tx.execute("DELETE FROM seen_reset_cards WHERE instance_id = ?1", [id])
+            .map_err(|error| error.to_string())?;
         tx.commit().map_err(|error| error.to_string())?;
         Ok(())
     }
@@ -648,6 +669,50 @@ impl Db {
         Ok(())
     }
 
+    /// 读某实例的重置卡已见集合；None = 从未播种（与「播种过但 0 张」是两种状态）
+    pub fn get_seen_reset_cards(&self, instance_id: &str) -> Result<Option<StoredSeenResetCards>, String> {
+        let row = self.conn.query_row(
+            "SELECT record_ids, seeded FROM seen_reset_cards WHERE instance_id = ?1",
+            [instance_id],
+            |row| {
+                let ids_text: String = row.get(0)?;
+                Ok((
+                    serde_json::from_str::<Vec<i64>>(&ids_text).unwrap_or_default(),
+                    row.get::<_, i64>(1)? != 0,
+                ))
+            },
+        );
+        match row {
+            Ok((record_ids, seeded)) => Ok(Some(StoredSeenResetCards {
+                instance_id: instance_id.to_string(),
+                record_ids,
+                seeded,
+            })),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    /// 回写某实例的重置卡已见集合（UPSERT 幂等）：前端检测器的内存投影是判定者，
+    /// 这里只是重启恢复用的事实源（与 alert_states 的回写分工同构）
+    pub fn save_seen_reset_cards(&self, seen: &StoredSeenResetCards) -> Result<(), String> {
+        let ids_text = serde_json::to_string(&seen.record_ids).map_err(|error| error.to_string())?;
+        self.conn
+            .execute(
+                r#"
+                INSERT INTO seen_reset_cards(instance_id, record_ids, seeded, updated_at)
+                VALUES(?1, ?2, ?3, ?4)
+                ON CONFLICT(instance_id) DO UPDATE SET
+                    record_ids = excluded.record_ids,
+                    seeded = excluded.seeded,
+                    updated_at = excluded.updated_at
+                "#,
+                rusqlite::params![seen.instance_id, ids_text, seen.seeded as i64, chrono_utc_now()],
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
     pub fn list_notifications(&self, limit: i64) -> Result<Vec<StoredNotification>, String> {
         let mut statement = self
             .conn
@@ -815,6 +880,56 @@ mod tests {
         let remaining = db.list_alert_states().unwrap();
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].instance_id, "inst-2");
+    }
+
+    #[test]
+    fn seen_reset_cards_distinguish_unseeded_from_empty() {
+        let db = temp_db();
+        // 从未播种 = None，这是「首刷播种不通知」的判定依据
+        assert!(db.get_seen_reset_cards("inst-1").unwrap().is_none());
+        // 播种过但 0 张：无行与空集是两种状态，重启水合后不得混淆
+        db.save_seen_reset_cards(&super::StoredSeenResetCards {
+            instance_id: "inst-1".into(),
+            record_ids: vec![],
+            seeded: true,
+        })
+        .unwrap();
+        let seen = db.get_seen_reset_cards("inst-1").unwrap().unwrap();
+        assert!(seen.record_ids.is_empty());
+        assert!(seen.seeded);
+    }
+
+    #[test]
+    fn seen_reset_cards_upsert_and_cascade() {
+        let db = temp_db();
+        db.save_seen_reset_cards(&super::StoredSeenResetCards {
+            instance_id: "inst-1".into(),
+            record_ids: vec![7, 3],
+            seeded: true,
+        })
+        .unwrap();
+        // UPSERT 覆盖旧集合
+        db.save_seen_reset_cards(&super::StoredSeenResetCards {
+            instance_id: "inst-1".into(),
+            record_ids: vec![7, 3, 12],
+            seeded: true,
+        })
+        .unwrap();
+        let seen = db.get_seen_reset_cards("inst-1").unwrap().unwrap();
+        assert_eq!(seen.record_ids, vec![7, 3, 12]);
+        // 删实例级联清理已见集合
+        db.save_seen_reset_cards(&super::StoredSeenResetCards {
+            instance_id: "inst-2".into(),
+            record_ids: vec![9],
+            seeded: true,
+        })
+        .unwrap();
+        db.delete_instance("inst-1").unwrap();
+        assert!(db.get_seen_reset_cards("inst-1").unwrap().is_none());
+        assert_eq!(
+            db.get_seen_reset_cards("inst-2").unwrap().unwrap().record_ids,
+            vec![9]
+        );
     }
 
     #[test]

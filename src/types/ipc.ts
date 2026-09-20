@@ -69,12 +69,23 @@ export interface ProviderSnapshot {
   /** message 模板的占位符实参 */
   messageParams?: Record<string, string | number>;
   lines: MetricLine[];
+  /** 本轮在线的可用重置卡 recordId（仅智谱 fetch 填充；重置卡源失败时缺省=到账检测冻结）。
+   *  供到账检测差集用，落库属瞬时冗余，历史读回不参与检测 */
+  availableResetIds?: { fiveHour: number[]; week: number[] };
 }
 
 export interface StoredSnapshot {
   instance_id: string;
   captured_at: number;
   payload: ProviderSnapshot;
+}
+
+/** 重置卡已见集合（Rust 端 seen_reset_cards 行，字段 snake_case 与 StoredAlertState 同口径）；
+ *  record_ids 是最近一轮在线的可用卡全集，seeded=false 表示从未播种（首刷播种不通知） */
+export interface StoredSeenResetCards {
+  instance_id: string;
+  record_ids: number[];
+  seeded: boolean;
 }
 
 export interface AppSettings {

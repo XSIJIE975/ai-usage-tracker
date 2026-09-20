@@ -690,6 +690,26 @@ pub fn save_alert_states(
     db.save_alert_states(&states)
 }
 
+/// 重置卡已见集合水合：None = 该实例从未播种（首刷播种不通知）
+#[tauri::command]
+pub fn get_seen_reset_cards(
+    state: State<'_, AppState>,
+    instance_id: String,
+) -> Result<Option<db::StoredSeenResetCards>, String> {
+    let db = state.db.lock().expect("db lock poisoned");
+    db.get_seen_reset_cards(&instance_id)
+}
+
+/// 重置卡已见集合回写：重启/F5 后据此恢复「同一张卡只提醒一次」
+#[tauri::command]
+pub fn save_seen_reset_cards(
+    state: State<'_, AppState>,
+    seen: db::StoredSeenResetCards,
+) -> Result<(), String> {
+    let db = state.db.lock().expect("db lock poisoned");
+    db.save_seen_reset_cards(&seen)
+}
+
 #[tauri::command]
 pub fn list_notifications(
     state: State<'_, AppState>,
