@@ -10,7 +10,6 @@ import { Label } from "../../components/ui/label";
 import { Segmented } from "../../components/ui/segmented";
 import { Select } from "../../components/ui/select";
 import { Separator } from "../../components/ui/separator";
-import { Switch } from "../../components/ui/switch";
 import { BrandIcon } from "../../components/BrandIcon";
 import { GlanceCards } from "../../components/glance/GlanceCards";
 import { GlanceRows } from "../../components/glance/GlanceRows";
@@ -19,14 +18,13 @@ import {
   statusDotColor,
   type GlanceInstance,
 } from "../../components/glance/data";
-import type { GlanceFieldFlags } from "../../components/glance/GlanceRows";
 import {
   buildTrayCandidates,
   selectTrayMeter,
 } from "../../hooks/use-tray-sync";
 import { multiRingLayerSpecs } from "../../lib/ring-layers";
 import { cn } from "../../lib/utils";
-import { useT } from "../../i18n";
+import { useLanguage, useT } from "../../i18n";
 import { SavedHint, useSaveFlash } from "./save-flash";
 
 /** 托盘计量图标（环/柱）的静态色：品牌色不随用量档位变化，仅告警强制红。
@@ -38,7 +36,7 @@ function trayMeterColor(alert: boolean): string {
 /**
  * 托盘与速览设置（ADR-0016），拆为两张卡：
  * 「托盘图标」——方案选择做成预览卡（用量环按真实最紧实例数据渲染）+ 钉选实例（含实时最紧提示）；
- * 「速览面板」——迷你实时预览（复用面板本体组件）+ 展示形态/范围/字段。
+ * 「速览面板」——迷你实时预览（复用面板本体组件）+ 展示形态/范围。
  * 保存即生效：托盘经 useTraySync 推送 Rust 重绘，面板经 settings-changed 广播同步。
  */
 export function TraySettings() {
@@ -52,6 +50,7 @@ export function TraySettings() {
   const trayFlash = useSaveFlash();
   const glanceFlash = useSaveFlash();
   const t = useT();
+  const language = useLanguage();
 
   async function save(patch: Partial<AppSettings>, target: "tray" | "glance") {
     const current = useAppStore.getState().settings;
@@ -85,13 +84,8 @@ export function TraySettings() {
     refreshing: refreshingInstances,
     loading,
     translate: t,
+    language,
   });
-  const glanceFields: GlanceFieldFlags = {
-    showAlerts: settings.glanceShowAlerts,
-    showBalance: settings.glanceShowBalance,
-    showReset: settings.glanceShowReset,
-    showWindows: settings.glanceShowWindows,
-  };
 
   return (
     <>
@@ -160,7 +154,7 @@ export function TraySettings() {
                   </div>
                   <p className="mt-1 text-[13px] text-fg-muted">
                     {chosen
-                      ? `${t("当前展示")}：${displayName(chosen.instance, chosen.providerName)}（${chosen.tightestWindow.label} ${Math.round(chosen.tightestWindow.percent)}%）`
+                      ? `${t("当前展示")}：${displayName(chosen.instance, t(chosen.providerName))}（${chosen.tightestWindow.label} ${Math.round(chosen.tightestWindow.percent)}%）`
                       : t("暂无用量数据")}
                   </p>
                 </div>
@@ -171,7 +165,7 @@ export function TraySettings() {
                   options={[
                     { value: "", label: t("自动（用量最高的实例）") },
                     ...instances.map((instance) => {
-                      const name = displayName(instance, providerName(instance.providerId));
+                      const name = displayName(instance, t(providerName(instance.providerId)));
                       const percent = percentById.get(instance.id);
                       return {
                         value: instance.id,
@@ -199,7 +193,6 @@ export function TraySettings() {
         <CardContent className="space-y-5">
           <GlancePreview
             layout={settings.glanceLayout}
-            fields={glanceFields}
             items={glanceItems}
             translate={t}
           />
@@ -282,7 +275,7 @@ export function TraySettings() {
                           aria-hidden
                         />
                         <span className="min-w-0 truncate text-fg">
-                          {displayName(instance, providerName(instance.providerId))}
+                          {displayName(instance, t(providerName(instance.providerId)))}
                         </span>
                         <span className="tnum ml-auto shrink-0 text-fg-muted">
                           {percent !== undefined ? `${Math.round(percent)}%` : "—"}
@@ -294,59 +287,6 @@ export function TraySettings() {
               )}
             </div>
           )}
-
-          <Separator />
-
-          <div className="space-y-3">
-            <div className="flex items-center gap-1.5">
-              <Label>{t("展示字段")}</Label>
-              <HintTooltip tip={t("控制每个实例上显示哪些信息。")} />
-            </div>
-            <FieldSwitch
-              label={t("账户余额")}
-              checked={settings.glanceShowBalance}
-              onChange={(value) => void save({ glanceShowBalance: value }, "glance")}
-            />
-            <FieldSwitch
-              label={t("重置倒计时")}
-              checked={settings.glanceShowReset}
-              onChange={(value) => void save({ glanceShowReset: value }, "glance")}
-            />
-            <FieldSwitch
-              label={t("多窗口明细")}
-              tip={t("同时显示 5 小时窗口、周配额等多个配额窗口各自的用量。")}
-              checked={settings.glanceShowWindows}
-              onChange={(value) => void save({ glanceShowWindows: value }, "glance")}
-            />
-            <FieldSwitch
-              label={t("告警标记")}
-              tip={t("触发告警的实例会加黄色边框和警示图标。")}
-              checked={settings.glanceShowAlerts}
-              onChange={(value) => void save({ glanceShowAlerts: value }, "glance")}
-            />
-          </div>
-
-          <Separator />
-
-          <FieldSwitch
-            label={t("底部操作条")}
-            tip={t("显示面板底部的通知中心和「打开主窗口」按钮。")}
-            checked={settings.glanceShowFooter}
-            onChange={(value) => void save({ glanceShowFooter: value }, "glance")}
-          />
-
-          <Separator />
-
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-1.5">
-              <Label>{t("失焦自动隐藏")}</Label>
-              <HintTooltip tip={t("点击面板以外的区域时，面板会自动收起。")} />
-            </div>
-            <Switch
-              checked={settings.glanceAutoHide}
-              onCheckedChange={(value) => void save({ glanceAutoHide: value }, "glance")}
-            />
-          </div>
         </CardContent>
       </Card>
     </>
@@ -510,15 +450,13 @@ function TrayBarsPreview({
 }
 
 /** 迷你实时预览：复用速览面板本体组件灌真数据，只读展示（不可滚动不可交互），
-    固定高度 + 底部渐隐示意内容延续。字段/范围/形态开关的效果即时可见 */
+    固定高度 + 底部渐隐示意内容延续。形态/范围开关的效果即时可见 */
 function GlancePreview({
   layout,
-  fields,
   items,
   translate,
 }: {
   layout: "list" | "cards";
-  fields: GlanceFieldFlags;
   items: GlanceInstance[];
   translate: (text: string) => string;
 }) {
@@ -534,34 +472,12 @@ function GlancePreview({
             {translate("暂无展示内容")}
           </div>
         ) : layout === "cards" ? (
-          <GlanceCards items={items} fields={fields} translate={translate} />
+          <GlanceCards items={items} translate={translate} />
         ) : (
-          <GlanceRows items={items} fields={fields} translate={translate} />
+          <GlanceRows items={items} translate={translate} />
         )}
       </div>
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-canvas to-transparent" />
-    </div>
-  );
-}
-
-function FieldSwitch({
-  label,
-  tip,
-  checked,
-  onChange,
-}: {
-  label: string;
-  tip?: string;
-  checked: boolean;
-  onChange: (value: boolean) => void;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-4">
-      <div className="flex items-center gap-1.5">
-        <Label>{label}</Label>
-        {tip && <HintTooltip tip={tip} />}
-      </div>
-      <Switch checked={checked} onCheckedChange={onChange} />
     </div>
   );
 }

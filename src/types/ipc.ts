@@ -1,4 +1,4 @@
-export type ProviderKind = "deepseek" | "opencode-go" | "glm";
+export type ProviderKind = "deepseek" | "opencode-go" | "glm" | "workbuddy";
 
 export interface ProviderInstance {
   id: string;
@@ -36,8 +36,9 @@ export interface ProviderRequestOptions {
   method?: "GET" | "POST";
   headers?: Record<string, string>;
   bodyText?: string;
-  auth?: "bearer" | "cookie" | "none";
-  /** bearer 时的凭据槽；缺省用该种类的主鉴权键 */
+  /** "session_cookie"：从 vault 槽位读 session 的 Value，校验后拼作 Cookie: session=<值>（workbuddy） */
+  auth?: "bearer" | "cookie" | "none" | "session_cookie";
+  /** bearer/session_cookie 时的凭据槽；bearer 缺省用该种类的主鉴权键 */
   credentialSlot?: string;
 }
 
@@ -47,6 +48,12 @@ export interface MetricLine {
   /** label 模板的 {name} 占位符实参（如 "{hours} 小时请求配额" 的 hours），渲染端替换 */
   params?: Record<string, string | number>;
   value?: string;
+  /** value 模板的 {name} 占位符实参（ADR-0022 同款通道，渲染端 renderLineValue 替换）。
+      ISO 时刻串（YYYY-MM-DDT…）形态的参数值按界面语言格式化日期后替换（如到期日） */
+  valueParams?: Record<string, string | number>;
+  /** 账户余额/主数值行的结构化标记（速览余额位与 extractBalanceValue 按标记选行，
+      不做文案数字启发式——模板化后文本解析不可靠，2026-09-21 曾把「1 天」连登行当余额） */
+  balance?: boolean;
   used?: number;
   limit?: number;
   suffix?: string;
@@ -69,12 +76,54 @@ export interface ProviderSnapshot {
   /** message 模板的占位符实参 */
   messageParams?: Record<string, string | number>;
   lines: MetricLine[];
+  /** 本轮在线的可用重置卡 recordId（仅智谱 fetch 填充；重置卡源失败时缺省=到账检测冻结）。
+   *  供到账检测差集用，落库属瞬时冗余，历史读回不参与检测 */
+  availableResetIds?: { fiveHour: number[]; week: number[] };
+  /** 本轮刷新实际执行且成功的签到（仅 WorkBuddy fetch 在本轮真的调了签到接口并拿到
+   *  成功响应时填充）。落库属瞬时冗余、会随快照重放，通知判重权威在 Rust 端
+   *  workbuddy_checkins 行（按 date 每天、按实例各一次）；错误快照也携带——签到与
+   *  取数是两个源，取数失败不吞掉已发生的签到事件 */
+  checkin?: { /** 签到当日（CST，YYYY-MM-DD），检测器据此判重 */
+    date: string;
+    /** 到账积分（接口未返回时为 0） */
+    credited: number;
+  };
+  /** 本轮刷新真实领到的喵喵旅行奖励（仅 WorkBuddy fetch 本轮调 claim 拿到成功响应时填充）。
+   *  同 checkin 属瞬时冗余，通知判重权威在 Rust 端 workbuddy_travel_claims 行（按行程
+   *  depart_at 判重——一天可有多趟旅行）；错误快照也携带 */
+  travel?: { /** 行程标识（depart_at，秒级 epoch 字符串化），检测器据此判重 */
+    tripKey: string;
+    /** 到账积分（接口未返回时为 0） */
+    credited: number;
+  };
 }
 
 export interface StoredSnapshot {
   instance_id: string;
   captured_at: number;
   payload: ProviderSnapshot;
+}
+
+/** 重置卡已见集合（Rust 端 seen_reset_cards 行，字段 snake_case 与 StoredAlertState 同口径）；
+ *  record_ids 是最近一轮在线的可用卡全集，seeded=false 表示从未播种（首刷播种不通知） */
+export interface StoredSeenResetCards {
+  instance_id: string;
+  record_ids: number[];
+  seeded: boolean;
+}
+
+/** WorkBuddy 签到通知判重行（Rust 端 workbuddy_checkins 表，字段 snake_case 同口径）；
+ *  notified_date 是最近一次发出「签到成功」通知的日期（CST YYYY-MM-DD） */
+export interface StoredWorkbuddyCheckin {
+  instance_id: string;
+  notified_date: string;
+}
+
+/** WorkBuddy 旅行领奖通知判重行（Rust 端 workbuddy_travel_claims 表）；claimed_key 是
+ *  最近一次发出「旅行到账」通知的行程标识（depart_at）——按行程而非日期，一天多趟各判各的 */
+export interface StoredWorkbuddyTravelClaim {
+  instance_id: string;
+  claimed_key: string;
 }
 
 export interface AppSettings {
@@ -106,18 +155,6 @@ export interface AppSettings {
   glanceInstanceScope: "all" | "custom";
   /** 自选实例列表（scope 为 custom 时生效） */
   glanceInstanceIds: string[];
-  /** 速览面板字段：账户余额 */
-  glanceShowBalance: boolean;
-  /** 速览面板字段：重置倒计时 */
-  glanceShowReset: boolean;
-  /** 速览面板字段：多窗口明细（5 小时窗口 + 周配额等） */
-  glanceShowWindows: boolean;
-  /** 速览面板字段：告警标记 */
-  glanceShowAlerts: boolean;
-  /** 速览面板底部操作条（未读通知 + 打开主窗口） */
-  glanceShowFooter: boolean;
-  /** 速览面板失焦自动隐藏 */
-  glanceAutoHide: boolean;
 }
 
 export interface StoredNotification {

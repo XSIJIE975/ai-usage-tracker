@@ -27,6 +27,27 @@ export function normalizeOpenCodeAuthCookie(value: string): string {
   return cookie;
 }
 
+/** WorkBuddy session Cookie Value 校验（只判合法性、不改写内容）：
+ *  白名单为 RFC 6265 cookie-value 字符集（可见 ASCII，排除空白/引号/逗号/分号），
+ *  挡住 CRLF 头注入与畸形粘贴；`Cookie: session=<值>` 的拼装统一在 Rust 端做 */
+export const WORKBUDDY_SESSION_MAX_LENGTH = 16_384;
+
+export function validateWorkbuddySessionValue(value: string): string | null {
+  if (!value) return "请填写 WorkBuddy session Cookie 的 Value";
+  if (value.length > WORKBUDDY_SESSION_MAX_LENGTH)
+    return `WorkBuddy session 值过长（超过 ${WORKBUDDY_SESSION_MAX_LENGTH} 字符），请确认只粘贴了 session 的 Value`;
+  for (const ch of value) {
+    const legal =
+      ch === "!" ||
+      (ch >= "#" && ch <= "+") ||
+      (ch >= "-" && ch <= ":") ||
+      (ch >= "<" && ch <= "~");
+    if (!legal)
+      return "WorkBuddy session 值包含非法字符（不能带空格、引号、分号或整串 Cookie），请只粘贴 Value 本体";
+  }
+  return null;
+}
+
 export function formatRefreshLabel(minutes: number, translate?: (s: string) => string) {
   const t = translate ?? ((s: string) => s);
   if (minutes < 1) return t("已禁用");
@@ -59,6 +80,13 @@ export function formatCompact(value: number) {
 export function formatInt(value: number) {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
 }
+
+/**
+ * 图表格式化器兜底（数字原样转字符串）。必须是模块级稳定引用：
+ * 写成组件参数默认值 `format = (v) => String(v)` 时每次渲染都是新函数身份，
+ * 会穿透图表 option 的 useMemo，让 echarts-for-react 每渲染 setOption(notMerge) 重建图形。
+ */
+export const formatPlain = (value: number) => String(value);
 
 /** 字节数可读化：1536 → 1.5 KB；5242880 → 5 MB */
 export function formatBytes(value: number) {

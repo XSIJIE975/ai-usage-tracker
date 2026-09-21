@@ -1,7 +1,8 @@
-import type { MetricLine, ProviderInstance, ProviderSnapshot } from "../../types/ipc";
+import type { MetricLine, ProviderInstance, ProviderKind, ProviderSnapshot } from "../../types/ipc";
 import { displayName, selectOrderedInstances } from "../../lib/instance";
 import { firstBalanceLine, primaryProgressLine } from "../../alerts/metric";
-import { applyParams } from "../../i18n";
+import { applyParams, renderLineValue } from "../../i18n";
+import type { Language } from "../../i18n/translate";
 
 type Translate = (text: string) => string;
 
@@ -18,6 +19,8 @@ export interface GlanceWindowItem {
 /** 速览面板单实例的展示数据（新布局，与快速面板的卡片无共享） */
 export interface GlanceInstance {
   id: string;
+  /** 供应商类型，用于取官方标识（ProviderKind 是封闭联合，四家都有现成 logo） */
+  providerId: ProviderKind;
   label: string;
   status: ProviderSnapshot["status"] | "no_data";
   refreshing: boolean;
@@ -40,9 +43,11 @@ export function buildGlanceInstances(
     refreshing: Record<string, boolean>;
     loading: boolean;
     translate: Translate;
+    /** 界面语言：余额行 value 里的 ISO 日期参数按语言格式化 */
+    language: Language;
   },
 ): GlanceInstance[] {
-  const { alertActive, refreshing, loading, translate } = options;
+  const { alertActive, refreshing, loading, translate, language } = options;
   const lineLabel = (line: MetricLine) => applyParams(translate(line.label), line.params);
   return selectOrderedInstances(instances).map((instance) => {
     const snapshot = snapshots.find((item) => item.instanceId === instance.id) ?? null;
@@ -54,7 +59,8 @@ export function buildGlanceInstances(
     const balance = snapshot ? firstBalanceLine(snapshot.lines) : null;
     return {
       id: instance.id,
-      label: displayName(instance, snapshot?.providerName ?? ""),
+      providerId: instance.providerId,
+      label: displayName(instance, snapshot ? translate(snapshot.providerName) : ""),
       status: snapshot ? snapshot.status : "no_data",
       refreshing: loading || refreshing[instance.id] === true,
       alertActive: alertActive[instance.id] ?? false,
@@ -67,7 +73,7 @@ export function buildGlanceInstances(
         resetsAt: line.resetsAt,
         primary: line === primary,
       })),
-      balanceText: balance?.value ?? null,
+      balanceText: balance ? (renderLineValue(balance, translate, language) ?? null) : null,
     };
   });
 }

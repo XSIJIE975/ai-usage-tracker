@@ -22,6 +22,7 @@ pub const PROVIDER_KINDS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     ("glm", &[("glmCodingPlanKey", "planKey")]),
+    ("workbuddy", &[("workbuddyCookie", "cookie")]),
 ];
 
 /// (kind, slot) 组合的人类可读凭据名，用于缺凭据时的报错文案
@@ -33,6 +34,7 @@ pub fn credential_label(kind: &str, slot: &str) -> Option<&'static str> {
         ("opencode-go", "cookie") => Some("OpenCode Auth Cookie"),
         ("opencode-go", "apiKey") => Some("OpenCode Go API Key"),
         ("glm", "planKey") => Some("智谱 Coding Plan API Key"),
+        ("workbuddy", "cookie") => Some("WorkBuddy 登录 Cookie"),
         _ => None,
     }
 }

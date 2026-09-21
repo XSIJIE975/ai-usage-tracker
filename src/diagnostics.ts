@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { buildUsageQuery } from "./providers/deepseek-stats";
+import { validateWorkbuddySessionValue } from "./lib/utils";
 
 /** 机器可读的诊断结果码，与 src-tauri/src/commands.rs 的 diagnose_request 保持一致 */
 export type DiagnosisCode =
@@ -67,6 +68,14 @@ async function diagnose(
   });
 }
 
+/** WorkBuddy session Value 探测：只传原文，Cookie 头由 Rust 端校验并拼装（与刷新链路同款） */
+async function diagnoseWithSessionValue(url: string, sessionValue: string): Promise<DiagnosisResult> {
+  return invoke<DiagnosisResult>("diagnose_request", {
+    url,
+    sessionValue: sessionValue.trim(),
+  });
+}
+
 const oneDayQuery = (): { start: number; end: number; tz: number } => {
   const end = Date.now();
   return buildUsageQuery(end - 86_400_000, end);
@@ -114,4 +123,17 @@ export function testGlmCodingPlanKey(key: string): Promise<DiagnosisResult> {
   if (!key.trim())
     return Promise.resolve({ ok: false, status: 0, latencyMs: 0, code: "missing-api-key" });
   return diagnose("https://open.bigmodel.cn/api/monitor/usage/quota/limit", "bearer", key);
+}
+
+/** WorkBuddy 登录凭据：连登接口探测（activity 族只读端点，Cookie 会话）。
+ *  输入就是 session 的 Value，原文透传；合法性校验后由 Rust 端拼 `Cookie: session=<值>`，
+ *  与保存后的刷新链路完全同款，保证「测得过 ≒ 存得过」 */
+export function testWorkbuddyCookie(sessionValue: string): Promise<DiagnosisResult> {
+  const value = sessionValue.trim();
+  if (!value)
+    return Promise.resolve({ ok: false, status: 0, latencyMs: 0, code: "missing-credential" });
+  const invalid = validateWorkbuddySessionValue(value);
+  if (invalid)
+    return Promise.resolve({ ok: false, status: 0, latencyMs: 0, code: "unknown", detail: invalid });
+  return diagnoseWithSessionValue("https://www.workbuddy.cn/activity/growth/streak", value);
 }

@@ -188,7 +188,14 @@ export function GlmStats({ instance }: { instance: ProviderInstance }) {
   const chartTitle = metric === "tokens" ? "Token 消耗趋势" : "请求次数趋势";
   const hasUsage =
     (aggregates?.totalTokens ?? 0) > 0 || (aggregates?.totalCalls ?? 0) > 0;
-  const emptyUsageHint = (
+  // 未订阅（glm-stats 已映射为成功空数据）给专属空态，避免引导用户去白白排查时间范围与 API Key
+  const usageEmptyHint = bundle?.notSubscribed ? (
+    <EmptyState
+      icon={<Activity className="h-5 w-5" />}
+      title={t("未订阅 Coding Plan")}
+      description={t("订阅 Coding Plan 后即可查看用量统计。")}
+    />
+  ) : (
     <EmptyState
       icon={<Activity className="h-5 w-5" />}
       title={t("所选时间范围内暂无用量数据")}
@@ -328,7 +335,7 @@ export function GlmStats({ instance }: { instance: ProviderInstance }) {
                 tooltipFormat={tooltipFormat}
               />
             ) : (
-              emptyUsageHint
+              usageEmptyHint
             )}
           </CardContent>
         </Card>
@@ -348,7 +355,7 @@ export function GlmStats({ instance }: { instance: ProviderInstance }) {
                 segments={donutSegments}
               />
             ) : (
-              <div className="w-full">{emptyUsageHint}</div>
+              <div className="w-full">{usageEmptyHint}</div>
             )}
           </CardContent>
         </Card>
@@ -365,7 +372,7 @@ export function GlmStats({ instance }: { instance: ProviderInstance }) {
           {hasUsage ? (
             <GlmModelUsageTable models={aggregates.perModel} />
           ) : (
-            emptyUsageHint
+            usageEmptyHint
           )}
         </CardContent>
       </Card>

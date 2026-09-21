@@ -1,4 +1,4 @@
-import { extractBalanceValue, extractMetric } from "./metric";
+import { extractBalanceValue, extractMetric, primaryProgressLine } from "./metric";
 import { applyParams } from "../i18n/apply-params";
 import type { MetricLine, ProviderInstance, ProviderSnapshot } from "../types/ipc";
 
@@ -15,8 +15,9 @@ export interface AlertFire {
 }
 
 /** 备注存在时标题带上备注，同名种类的两个实例告警才能分得清。
- *  返回模板与参数：{rule} 是字典键（渲染层翻译），{provider} 是专名（无字典键原样保留） */
-function alertTitle(
+ *  返回模板与参数：{rule} 是字典键（渲染层翻译），{provider} 是专名（无字典键原样保留）。
+ *  重置卡到账提醒（detector）复用同一标题框架，保持通知中心里的标题风格一致 */
+export function alertTitle(
   instance: ProviderInstance,
   snapshot: ProviderSnapshot,
   ruleName: string,
@@ -76,6 +77,21 @@ export function evaluateRules(
         title: title.title,
         body: "本月额度已用 {percent}%，达到 {threshold}%，注意分配剩余用量。",
         params: { ...title.params, percent: metric!.value.toFixed(1), threshold: threshold! },
+      });
+    }
+  } else if (instance.providerId === "workbuddy") {
+    // 积分阈值只认进度行的百分比，不能用 extractMetric 的文本行数值兜底——
+    // 「余 42」是 42 积分不是 42%，兜底会把余额数值误当百分比（无总量套餐的残缺快照才走到这）
+    const primary = primaryProgressLine(snapshot.lines);
+    const percent = primary?.percentUsed;
+    if (usable(threshold) && typeof percent === "number" && percent >= threshold!) {
+      const title = alertTitle(instance, snapshot, "积分告警");
+      fires.push({
+        ruleKey: `${instance.id}:quota`,
+        instanceId: instance.id,
+        title: title.title,
+        body: "积分已用 {percent}%，达到 {threshold}%，注意分配剩余用量。",
+        params: { ...title.params, percent: percent.toFixed(1), threshold: threshold! },
       });
     }
   } else if (instance.providerId === "glm") {

@@ -10,7 +10,7 @@ import { useEffectiveTheme } from "../../lib/theme";
 import { useResizeObserver } from "../../hooks/use-resize-observer";
 import { useChartLegend } from "../../hooks/use-chart-legend";
 import { ChartLegend } from "./ChartLegend";
-import { cn } from "../../lib/utils";
+import { cn, formatPlain } from "../../lib/utils";
 
 echarts.use([BarChart, TooltipComponent, GridComponent, DataZoomComponent, CanvasRenderer]);
 
@@ -46,14 +46,18 @@ interface TooltipParam {
  *   2. option 的 useMemo 依赖中绝不能包含 legend.activeName（hover 态）；
  *      tooltip formatter 通过 activeNameRef 在运行时读取最新 activeName（formatter 是
  *      tooltip 显示时才被调用，闭包读 ref 永远拿最新值）。
+ *   3. option 的 useMemo 依赖项必须跨渲染同引用。echarts-for-react 用 fast-deep-equal
+ *      比较 option，而它对函数只比 ===，所以 memo 一旦重算（tooltip.formatter 变成新闭包）
+ *      就必然触发一次 setOption。内联箭头函数（含参数默认值）与未缓存的 hook 返回值
+ *      都不满足：格式化器用 lib/utils 的 formatPlain，t 由 useT 按 language 缓存。
  *   最终效果：数据/图例显隐/主题变化才 setOption；hover 仅更新 React state 与 ref，
  *   ECharts 自主管理 emphasis 与 mouseout，与官方示例行为一致。
  */
 export function StackedBars({
   labels,
   series,
-  yFormat = (v) => String(v),
-  tooltipFormat = (v) => String(v),
+  yFormat = formatPlain,
+  tooltipFormat = formatPlain,
   height = 240,
   className,
 }: {

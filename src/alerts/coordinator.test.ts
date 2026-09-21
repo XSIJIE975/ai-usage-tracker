@@ -27,7 +27,7 @@ const deepseekSnapshot = (balance: number): ProviderSnapshot => ({
   providerName: "DeepSeek",
   status: "ok",
   updatedAt: 0,
-  lines: [{ type: "text", label: "账户余额", value: `¥${balance.toFixed(2)}` }],
+  lines: [{ type: "text", label: "账户余额", value: `¥${balance.toFixed(2)}`, balance: true }],
 });
 
 const extractFrom = (snapshot: ProviderSnapshot) => extractMetric(snapshot)!;
@@ -358,7 +358,7 @@ describe("GLM 配额与余额双规则", () => {
       { type: "badge", label: "套餐档位", value: "Lite" },
       { type: "progress", label: "每周请求配额", percentUsed: quotaPercent, resetsAt: "2026-09-08T00:00:00Z" },
       ...(balance !== null
-        ? [{ type: "text" as const, label: "账户余额", value: `¥${balance.toFixed(2)}` }]
+        ? [{ type: "text" as const, label: "账户余额", value: `¥${balance.toFixed(2)}`, balance: true }]
         : []),
     ],
   });
@@ -413,6 +413,43 @@ describe("GLM 配额与余额双规则", () => {
     now.value = 3 * HOUR;
     coordinator.observe(glm, glmSnapshot(50, 20), true);
     expect(onActiveChange).toHaveBeenLastCalledWith("glm-1", false);
+  });
+});
+
+describe("WorkBuddy 积分阈值规则", () => {
+  const wbInstance = (overrides: Partial<ProviderInstance> = {}): ProviderInstance => ({
+    ...instance({ id: "wb-1", providerId: "workbuddy", threshold: 80, balanceThreshold: null }),
+    ...overrides,
+  });
+  /** WorkBuddy 快照：积分余量 progress 行 + 套餐明细 text 行（与真实快照结构一致） */
+  const wbSnapshot = (percent: number | null, remainText?: string): ProviderSnapshot => ({
+    instanceId: "wb-1",
+    providerId: "workbuddy",
+    providerName: "腾讯 WorkBuddy / CodeBuddy",
+    status: "ok",
+    updatedAt: 0,
+    lines: [
+      ...(percent !== null
+        ? [{ type: "progress" as const, label: "积分余量", used: 100 - percent!, limit: 100, percentUsed: percent! }]
+        : [{ type: "text" as const, label: "积分余量", value: remainText ?? "暂无有效套餐" }]),
+    ],
+  });
+
+  it("积分已用达到阈值时触发 quota fire，语义为百分比", () => {
+    const fires = evaluateRules(wbInstance({ threshold: 80 }), wbSnapshot(85));
+    expect(fires).toHaveLength(1);
+    expect(fires[0]!.ruleKey).toBe("wb-1:quota");
+    expect(fires[0]!.params.percent).toBe("85.0");
+    expect(fires[0]!.params.threshold).toBe(80);
+  });
+
+  it("未达阈值不触发", () => {
+    expect(evaluateRules(wbInstance({ threshold: 80 }), wbSnapshot(50))).toEqual([]);
+  });
+
+  it("无进度行的残缺快照不把文本行数值误当百分比（「余 42」是 42 积分）", () => {
+    expect(evaluateRules(wbInstance({ threshold: 40 }), wbSnapshot(null, "余 42"))).toEqual([]);
+    expect(evaluateRules(wbInstance({ threshold: 40 }), wbSnapshot(null))).toEqual([]);
   });
 });
 

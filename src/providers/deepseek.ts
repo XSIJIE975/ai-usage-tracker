@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   HttpResult,
   InstanceCredentialStatus,
+  MetricLine,
   ProviderInstance,
   ProviderSnapshot,
 } from "../types/ipc";
@@ -96,17 +97,18 @@ async function fetchBalance(instance: ProviderInstance): Promise<ProviderSnapsho
       };
     }
     const formatter = new Intl.NumberFormat("zh-CN", { style: "currency", currency });
-    const lines = [
+    const lines: MetricLine[] = [
       {
-        type: "badge" as const,
+        type: "badge",
         label: "可用状态",
         value: data.is_available === false ? "不可用" : "可用",
         color: data.is_available === false ? "#dc2626" : "#16a34a",
       },
       {
-        type: "text" as const,
+        type: "text",
         label: "账户余额",
         value: formatter.format(total),
+        balance: true,
       },
     ];
 
@@ -114,10 +116,10 @@ async function fetchBalance(instance: ProviderInstance): Promise<ProviderSnapsho
     const toppedUp = toAmount(infos[0].topped_up_balance);
     const granted = toAmount(infos[0].granted_balance);
     if (toppedUp !== null && toppedUp > 0) {
-      lines.push({ type: "text" as const, label: "充值余额", value: formatter.format(toppedUp) });
+      lines.push({ type: "text", label: "充值余额", value: formatter.format(toppedUp) });
     }
     if (granted !== null && granted > 0) {
-      lines.push({ type: "text" as const, label: "赠送余额", value: formatter.format(granted) });
+      lines.push({ type: "text", label: "赠送余额", value: formatter.format(granted) });
     }
 
     return {

@@ -24,6 +24,7 @@ import {
   testGlmCodingPlanKey,
   testOpenCodeApiKey,
   testOpenCodeConnection,
+  testWorkbuddyCookie,
 } from "../../diagnostics";
 import { useAppStore } from "../../store/useAppStore";
 import { normalizeOpenCodeAuthCookie } from "../../lib/utils";
@@ -98,6 +99,17 @@ const KIND_CONFIGS: Record<ProviderKind, KindConfig> = {
     threshold: { label: "Coding Plan 配额告警阈值（%）", hint: "Coding Plan 配额已用达到该百分比时发送系统通知；留空不告警。", min: 1, max: 100 },
     balanceThreshold: { label: "余额告警阈值（元）", hint: "账户余额低于该值时发送系统通知；留空不告警。", min: 0, max: 1_000_000 },
   },
+  workbuddy: {
+    fields: [
+      {
+        slot: "cookie",
+        label: "WorkBuddy 登录 Cookie",
+        placeholder: "只粘贴 session 的 Value",
+        help: "获取方式：登录 workbuddy.cn → F12 开发者工具 → Application(应用) → Cookies → 选 workbuddy.cn → 复制名为 session 项的 Value 粘贴到上方（不带 session= 前缀）。退出登录或会话轮换后失效，重新复制即可。",
+      },
+    ],
+    threshold: { label: "积分已用告警阈值（%）", hint: "积分已用达到该百分比时发送系统通知；留空不告警。", min: 1, max: 100 },
+  },
 };
 
 /** 连通性诊断在表单层组队：workspaceId+cookie 成对探测，其余单字段探测刚输入的值 */
@@ -119,6 +131,8 @@ function diagnosisFor(kind: ProviderKind, slot: string, values: Record<string, s
       return { test: () => testOpenCodeApiKey(value), disabled: !value.trim() };
     case "glm/planKey":
       return { test: () => testGlmCodingPlanKey(value), disabled: !value.trim() };
+    case "workbuddy/cookie":
+      return { test: () => testWorkbuddyCookie(value), disabled: !value.trim() };
     default:
       return null;
   }
@@ -191,7 +205,7 @@ export function InstanceDialog({
     });
   }, [open, editing, credentials, config.fields]);
 
-  const kindTitle = providerName(kind);
+  const kindTitle = t(providerName(kind));
 
   const notice = !vaultStatus
     ? undefined

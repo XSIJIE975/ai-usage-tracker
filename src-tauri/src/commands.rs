@@ -27,6 +27,43 @@ fn http_client() -> &'static reqwest::Client {
     })
 }
 
+/// 网络失败的类别摘要：reqwest 外层 Display 只有 "error sending request for url (…)"，
+/// 真实原因（超时/连接失败/传输中断）在错误链里被吞掉，用户无从判断该等服务还是查自己网络。
+/// reqwest::Error 无公开构造器，类别判定抽成纯函数便于单测。
+fn network_error_summary(is_timeout: bool, is_connect: bool, is_transfer: bool) -> &'static str {
+    match (is_timeout, is_connect, is_transfer) {
+        (true, true, _) => "连接超时（10 秒内未能建立连接）",
+        (true, false, _) => "请求超时（30 秒内服务端未完成响应）",
+        (false, true, _) => "连接失败（DNS 解析、TLS 或网络不可达）",
+        (false, false, true) => "传输中断（连接被服务端或网络中途断开）",
+        _ => "网络请求失败",
+    }
+}
+
+/// 供应商网络请求失败 → 可读文案：类别摘要 + 底层原因链全文——摘要给人读，
+/// 原因链留证据，分类失准时有链兜底，信息不被吞（ADR-0024 可见性）。
+fn network_error_text(error: &reqwest::Error) -> String {
+    let summary = network_error_summary(
+        error.is_timeout(),
+        error.is_connect(),
+        error.is_body() || error.is_decode() || error.is_request(),
+    );
+    let mut chain = String::new();
+    let mut source = std::error::Error::source(error);
+    while let Some(cause) = source {
+        if !chain.is_empty() {
+            chain.push_str(" ← ");
+        }
+        chain.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    if chain.is_empty() {
+        format!("{summary}：{error}")
+    } else {
+        format!("{summary}：{chain}")
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VaultStatusResponse {
@@ -207,6 +244,30 @@ fn normalize_auth_cookie(value: &str) -> String {
     }
 
     cookie.to_string()
+}
+
+/// WorkBuddy session Cookie Value 合法性校验（只判定、不改写）：限定 RFC 6265
+/// cookie-value 字符集（可见 ASCII，排除空白/引号/逗号/分号/控制符），
+/// 挡住 CRLF 头注入与整串 Cookie 误粘；上限 16384 字符（实测真实 session 近 4000 字符）
+fn validate_session_value(value: &str) -> Result<(), String> {
+    if value.is_empty() {
+        return Err("请填写 WorkBuddy session Cookie 的 Value".to_string());
+    }
+    if value.len() > 16_384 {
+        return Err("WorkBuddy session 值过长，请确认只粘贴了 session 的 Value".to_string());
+    }
+    if !value.chars().all(|c| {
+        c == '!'
+            || ('\u{23}'..='\u{2b}').contains(&c)
+            || ('\u{2d}'..='\u{3a}').contains(&c)
+            || ('\u{3c}'..='\u{7e}').contains(&c)
+    }) {
+        return Err(
+            "WorkBuddy session 值包含非法字符（不能带空格、引号、分号或整串 Cookie），请只粘贴 Value 本体"
+                .to_string(),
+        );
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -505,38 +566,53 @@ impl DiagnosisResult {
 
 /// 用"刚输入、尚未保存"的凭据值发起一次真实探测请求，验证连通性。
 /// auth: "bearer"（携带 credential 作为 Bearer token）| "cookie"（auth=<normalized credential>）
+/// session_value：WorkBuddy session Cookie 的 Value 原文——校验字符集后拼
+/// Cookie: session=<值>（与 provider_request 的 session_cookie 通道同款）；给出时忽略 auth/credential
 #[tauri::command]
 pub async fn diagnose_request(
     url: String,
     auth: Option<String>,
     credential: Option<String>,
     expect_html: Option<bool>,
+    session_value: Option<String>,
 ) -> Result<DiagnosisResult, String> {
     let client = http_client();
 
     let mut request = client.request(Method::GET, &url);
-    match auth.as_deref() {
-        Some("bearer") => {
-            let key = match credential.filter(|value| !value.trim().is_empty()) {
-                Some(key) => key,
-                None => return Ok(DiagnosisResult::new(false, 0, 0, "missing-credential", None)),
-            };
-            let key = key.trim();
-            request = request.header("Authorization", format!("Bearer {key}"));
+    if let Some(session) = session_value.filter(|value| !value.trim().is_empty()) {
+        let session = session.trim();
+        validate_session_value(session)?;
+        // UA 必须带 Edg/ 后缀：EdgeOne WAF 对非 Edge UA 一律 401（2026-09-21 实测，
+        // 与 Cookie 有效性无关），与前端 providers/workbuddy.ts 的取值保持一致
+        request = request.header("Cookie", format!("session={session}"));
+        request = request.header(
+            "User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36 Edg/153.0.0.0",
+        );
+    } else {
+        match auth.as_deref() {
+            Some("bearer") => {
+                let key = match credential.filter(|value| !value.trim().is_empty()) {
+                    Some(key) => key,
+                    None => return Ok(DiagnosisResult::new(false, 0, 0, "missing-credential", None)),
+                };
+                let key = key.trim();
+                request = request.header("Authorization", format!("Bearer {key}"));
+            }
+            Some("cookie") => {
+                let cookie = match credential.filter(|value| !value.trim().is_empty()) {
+                    Some(cookie) => cookie,
+                    None => return Ok(DiagnosisResult::new(false, 0, 0, "missing-credential", None)),
+                };
+                let normalized = normalize_auth_cookie(&cookie);
+                request = request.header("Cookie", format!("auth={normalized}"));
+                request = request.header(
+                    "User-Agent",
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Gecko/20100101 Firefox/148.0",
+                );
+            }
+            _ => {}
         }
-        Some("cookie") => {
-            let cookie = match credential.filter(|value| !value.trim().is_empty()) {
-                Some(cookie) => cookie,
-                None => return Ok(DiagnosisResult::new(false, 0, 0, "missing-credential", None)),
-            };
-            let normalized = normalize_auth_cookie(&cookie);
-            request = request.header("Cookie", format!("auth={normalized}"));
-            request = request.header(
-                "User-Agent",
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Gecko/20100101 Firefox/148.0",
-            );
-        }
-        _ => {}
     }
 
     let started = std::time::Instant::now();
@@ -653,6 +729,66 @@ pub fn save_alert_states(
     db.save_alert_states(&states)
 }
 
+/// 重置卡已见集合水合：None = 该实例从未播种（首刷播种不通知）
+#[tauri::command]
+pub fn get_seen_reset_cards(
+    state: State<'_, AppState>,
+    instance_id: String,
+) -> Result<Option<db::StoredSeenResetCards>, String> {
+    let db = state.db.lock().expect("db lock poisoned");
+    db.get_seen_reset_cards(&instance_id)
+}
+
+/// 重置卡已见集合回写：重启/F5 后据此恢复「同一张卡只提醒一次」
+#[tauri::command]
+pub fn save_seen_reset_cards(
+    state: State<'_, AppState>,
+    seen: db::StoredSeenResetCards,
+) -> Result<(), String> {
+    let db = state.db.lock().expect("db lock poisoned");
+    db.save_seen_reset_cards(&seen)
+}
+
+/// WorkBuddy 签到通知判重水合：None = 该实例从未通知过签到
+#[tauri::command]
+pub fn get_workbuddy_checkin(
+    state: State<'_, AppState>,
+    instance_id: String,
+) -> Result<Option<db::StoredWorkbuddyCheckin>, String> {
+    let db = state.db.lock().expect("db lock poisoned");
+    db.get_workbuddy_checkin(&instance_id)
+}
+
+/// WorkBuddy 签到通知判重回写：重启/F5 后据此恢复「每天只通知一次」
+#[tauri::command]
+pub fn save_workbuddy_checkin(
+    state: State<'_, AppState>,
+    checkin: db::StoredWorkbuddyCheckin,
+) -> Result<(), String> {
+    let db = state.db.lock().expect("db lock poisoned");
+    db.save_workbuddy_checkin(&checkin)
+}
+
+/// WorkBuddy 旅行领奖通知判重水合：None = 该实例从未通知过领奖
+#[tauri::command]
+pub fn get_workbuddy_travel_claim(
+    state: State<'_, AppState>,
+    instance_id: String,
+) -> Result<Option<db::StoredWorkbuddyTravelClaim>, String> {
+    let db = state.db.lock().expect("db lock poisoned");
+    db.get_workbuddy_travel_claim(&instance_id)
+}
+
+/// WorkBuddy 旅行领奖通知判重回写：按行程键判重，重启/F5 后不重复通知同一趟到账
+#[tauri::command]
+pub fn save_workbuddy_travel_claim(
+    state: State<'_, AppState>,
+    claim: db::StoredWorkbuddyTravelClaim,
+) -> Result<(), String> {
+    let db = state.db.lock().expect("db lock poisoned");
+    db.save_workbuddy_travel_claim(&claim)
+}
+
 #[tauri::command]
 pub fn list_notifications(
     state: State<'_, AppState>,
@@ -758,6 +894,16 @@ pub async fn provider_request(
                         .to_string()
                 });
         }
+        Some("session_cookie") => {
+            // vault 槽位存 session Cookie 的 Value 原文（前端不做任何改写），这里校验
+            // 字符集（防头注入）后统一拼 Cookie: session=<值>，与探测链路同款
+            let slot = credential_slot
+                .clone()
+                .ok_or_else(|| "session_cookie auth 需要 credential_slot".to_string())?;
+            let value = resolve_bearer_key(&kind, &slot, &instance_credentials)?;
+            validate_session_value(value)?;
+            headers.insert("Cookie".to_string(), format!("session={value}"));
+        }
         Some("cookie") => return Err("不支持的 provider cookie auth".to_string()),
         _ => {}
     }
@@ -769,7 +915,7 @@ pub async fn provider_request(
         request = request.body(body);
     }
 
-    let response = request.send().await.map_err(|error| error.to_string())?;
+    let response = request.send().await.map_err(|error| network_error_text(&error))?;
     let status = response.status().as_u16();
     let response_headers = response
         .headers()
@@ -781,7 +927,7 @@ pub async fn provider_request(
             )
         })
         .collect::<HashMap<_, _>>();
-    let body_text = response.text().await.map_err(|error| error.to_string())?;
+    let body_text = response.text().await.map_err(|error| network_error_text(&error))?;
 
     Ok(ProviderResponse {
         status,
@@ -872,6 +1018,29 @@ mod tests {
         assert_eq!(app_title("en"), format!("AI Usage Tracker{suffix}"));
     }
 
+    /// 网络失败文案按类别取摘要：连接超时优先于请求超时（两个谓词同时为真是连接阶段超时），
+    /// 传输中断兜底在前两类之外；reqwest::Error 无公开构造器，只测纯函数映射
+    #[test]
+    fn network_error_summary_classifies_by_flags() {
+        assert_eq!(
+            network_error_summary(true, true, false),
+            "连接超时（10 秒内未能建立连接）"
+        );
+        assert_eq!(
+            network_error_summary(true, false, false),
+            "请求超时（30 秒内服务端未完成响应）"
+        );
+        assert_eq!(
+            network_error_summary(false, true, false),
+            "连接失败（DNS 解析、TLS 或网络不可达）"
+        );
+        assert_eq!(
+            network_error_summary(false, false, true),
+            "传输中断（连接被服务端或网络中途断开）"
+        );
+        assert_eq!(network_error_summary(false, false, false), "网络请求失败");
+    }
+
     #[test]
     fn normalizes_opencode_go_auth_cookie_inputs() {
         assert_eq!(normalize_auth_cookie(" abc "), "abc");
@@ -879,6 +1048,23 @@ mod tests {
         assert_eq!(normalize_auth_cookie("AUTH=abc"), "abc");
         assert_eq!(normalize_auth_cookie("Cookie: auth=abc"), "abc");
         assert_eq!(normalize_auth_cookie("foo=1; auth=abc; bar=2"), "abc");
+    }
+
+    #[test]
+    fn validates_workbuddy_session_values_verbatim() {
+        // 合法：opaque token 原样通过（含 = 填充与 : - _ 等 cookie 字符集内符号）
+        assert!(validate_session_value("abc123-_=:").is_ok());
+        assert!(validate_session_value("YWJj==").is_ok());
+        assert!(validate_session_value("Ref4V2b0nyljz|1790576618|c3y14nl-u_X|kuv4NDBI1Fuu").is_ok());
+        // 非法：空白/换行（头注入）、引号、分号（整串 Cookie 误粘）、非 ASCII
+        assert!(validate_session_value("").is_err());
+        assert!(validate_session_value("a b").is_err());
+        assert!(validate_session_value("a\r\nX: 1").is_err());
+        assert!(validate_session_value("\"abc\"").is_err());
+        assert!(validate_session_value("session=abc; session_2=def").is_err());
+        assert!(validate_session_value("会话值").is_err());
+        assert!(validate_session_value(&"a".repeat(16_384)).is_ok());
+        assert!(validate_session_value(&"a".repeat(16_385)).is_err());
     }
 
     #[test]

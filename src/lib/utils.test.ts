@@ -4,6 +4,7 @@ import {
   formatReset,
   formatResetAt,
   normalizeOpenCodeAuthCookie,
+  validateWorkbuddySessionValue,
 } from "./utils";
 
 describe("normalizeOpenCodeAuthCookie", () => {
@@ -22,6 +23,33 @@ describe("normalizeOpenCodeAuthCookie", () => {
 
   it("extracts the auth cookie from a full cookie list", () => {
     expect(normalizeOpenCodeAuthCookie("foo=1; auth=abc; bar=2")).toBe("abc");
+  });
+});
+
+describe("validateWorkbuddySessionValue", () => {
+  it("accepts an opaque session value verbatim", () => {
+    expect(validateWorkbuddySessionValue("abc123-_=:")).toBeNull();
+    expect(validateWorkbuddySessionValue("YWJj==")).toBeNull();
+    // 真实 session 形态：id|ts|hmac|id 三段式，约 4000 字符
+    expect(validateWorkbuddySessionValue("Ref4V2b0nyljz|1790576618|c3y14nl-u_X|kuv4NDBI1Fuu")).toBeNull();
+  });
+
+  it("rejects empty input", () => {
+    expect(validateWorkbuddySessionValue("")).toMatch(/请填写/);
+  });
+
+  it("rejects header-injection and malformed paste characters", () => {
+    expect(validateWorkbuddySessionValue("a b")).toMatch(/非法字符/);
+    expect(validateWorkbuddySessionValue("a\r\nSet-Cookie: x=1")).toMatch(/非法字符/);
+    expect(validateWorkbuddySessionValue('a"b')).toMatch(/非法字符/);
+    expect(validateWorkbuddySessionValue("session=abc; session_2=def")).toMatch(/非法字符/);
+    expect(validateWorkbuddySessionValue("<script src=x onerror=1>")).toMatch(/非法字符/);
+    expect(validateWorkbuddySessionValue("值")).toMatch(/非法字符/);
+  });
+
+  it("rejects oversized values", () => {
+    expect(validateWorkbuddySessionValue("a".repeat(16_385))).toMatch(/过长/);
+    expect(validateWorkbuddySessionValue("a".repeat(16_384))).toBeNull();
   });
 });
 

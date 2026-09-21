@@ -71,6 +71,26 @@ export const en: Record<string, string> = {
   "智谱余额响应无法解析": "Zhipu balance response could not be parsed",
   "网络连接失败": "Network connection failed",
   "获取用量失败": "Failed to fetch usage",
+  "积分套餐接口返回 HTTP {status}{detail}": "Packages API returned HTTP {status}{detail}",
+  "积分套餐查询失败：{detail}": "Package query failed: {detail}",
+  "积分套餐返回数据解析失败：{detail}": "Failed to parse packages response: {detail}",
+  "WorkBuddy 登录已过期，请重新复制 Cookie": "WorkBuddy session expired — copy the Cookie again",
+  "请在设置中填写 WorkBuddy 登录 Cookie": "Fill in the WorkBuddy login Cookie in Settings",
+  "DeepSeek 余额字段无法解析：{detail}": "Failed to parse the DeepSeek balance field: {detail}",
+  "字段缺失": "field missing",
+  "积分余量": "Credits",
+  "暂无有效套餐": "No active packages",
+  "余 {remain}": "{remain} left",
+  "余 {remain} · {expiresAt}到期": "{remain} left · expires {expiresAt}",
+  "{days} 天": "{days} days",
+  "旅行中": "Traveling",
+  "旅行中 · {place}": "Traveling · {place}",
+  "旅行中 · {backAt} 回来": "Back at {backAt}",
+  "旅行中 · {place} · {backAt} 回来": "Traveling · {place} · back at {backAt}",
+  "其余 {count} 个套餐": "{count} more package(s)",
+  "连登": "Daily streak",
+  "喵喵旅行": "Buddy travel",
+  "套餐": "Package",
   "详情": "Details",
   "点击切换重置时间显示": "Click to switch reset time display",
   "{time} 重置": "resets {time}",
@@ -115,6 +135,9 @@ export const en: Record<string, string> = {
   "充值余额": "Top-up balance",
   "赠送余额": "Bonus balance",
   "可用重置卡": "Reset cards",
+  "5 小时 ×{fiveHour} · 周 ×{week}": "5-hour ×{fiveHour} · weekly ×{week}",
+  "5 小时 ×{fiveHour}": "5-hour ×{fiveHour}",
+  "周 ×{week}": "weekly ×{week}",
   "重置卡": "Reset cards",
   "重置管理": "Manage resets",
   "重置额度": "Reset quotas",
@@ -154,6 +177,9 @@ export const en: Record<string, string> = {
   "5 小时额度": "5-hour quota",
   "本周额度": "Weekly quota",
   "套餐档位": "Plan tier",
+  "未订阅": "Not subscribed",
+  "未订阅 Coding Plan": "Coding Plan not subscribed",
+  "订阅 Coding Plan 后即可查看用量统计。": "Subscribe to Coding Plan to see usage stats.",
   "{hours} 小时请求配额": "{hours}-hour request quota",
   "{hours} 小时 Token 配额": "{hours}-hour token quota",
   "MCP 月度用量": "Monthly MCP usage",
@@ -194,7 +220,7 @@ export const en: Record<string, string> = {
 
   // ── 快速面板 ──
   "打开主窗口": "Open main window",
-  "通知中心": "Notification center",
+  "通知中心": "Notifications",
   "条未读": " unread",
   "隐藏": "Hide",
   "自动刷新已关闭": "Auto refresh off",
@@ -223,6 +249,15 @@ export const en: Record<string, string> = {
   "配额告警": "quota alert",
   "额度告警": "quota alert",
   "额度耗尽": "quota exhausted",
+  "重置卡到账": "reset cards arrived",
+  "签到成功": "check-in succeeded",
+  "喵喵旅行到账": "buddy travel credited",
+  "积分告警": "credits alert",
+  "积分已用 {percent}%，达到 {threshold}%，注意分配剩余用量。":
+    "Credits usage at {percent}% has reached the {threshold}% threshold. Plan the remaining credits carefully.",
+  "积分 +{credit} 已到账": "+{credit} credits credited to your account",
+  "旅行积分 +{credit} 已到账": "+{credit} travel credits credited to your account",
+  "旅行积分已到账": "Travel credits credited to your account",
   "当前余额 {balance} 元，已低于 {threshold} 元，请及时充值。":
     "Balance is {balance} CNY, below the {threshold} CNY threshold. Please top up soon.",
   "本月额度已用 {percent}%，达到 {threshold}%，注意分配剩余用量。":
@@ -231,6 +266,13 @@ export const en: Record<string, string> = {
     "Coding Plan quota usage at {percent}% has reached the {threshold}% threshold. Plan the remaining quota carefully.",
   "{names}已用尽（100%），等待重置恢复。":
     "{names} used up (100%). Waiting for the window to reset.",
+  // 重置卡到账正文按组组合选模板（两组都有 / 仅 5 小时 / 仅周），数值在评估时定格
+  "新增 {count} 张可用重置卡（5 小时 ×{fiveHour} · 周 ×{week}）":
+    "{count} new reset card(s) available (5-hour ×{fiveHour} · weekly ×{week})",
+  "新增 {count} 张可用重置卡（5 小时 ×{fiveHour}）":
+    "{count} new reset card(s) available (5-hour ×{fiveHour})",
+  "新增 {count} 张可用重置卡（周 ×{week}）":
+    "{count} new reset card(s) available (weekly ×{week})",
 
   // ── 设置 ──
   "自动刷新": "Auto refresh",
@@ -302,6 +344,15 @@ export const en: Record<string, string> = {
   "粘贴 API Key": "Paste API key",
   "获取方式：打开 bigmodel.cn 控制台 → Coding Plan 页 → 「生成 API Key」，复制生成的 API Key 粘贴到上方。":
     "How to get: open the bigmodel.cn console → Coding Plan page → \"Generate API Key\", then copy the generated API Key and paste it above.",
+  "WorkBuddy 登录 Cookie": "WorkBuddy login Cookie",
+  "只粘贴 session 的 Value": "Paste only the session cookie's Value",
+  "获取方式：登录 workbuddy.cn → F12 开发者工具 → Application(应用) → Cookies → 选 workbuddy.cn → 复制名为 session 项的 Value 粘贴到上方（不带 session= 前缀）。退出登录或会话轮换后失效，重新复制即可。":
+    "How to get: sign in to workbuddy.cn → F12 dev tools → Application → Cookies → workbuddy.cn → copy the Value of the session item and paste it above (no \"session=\" prefix). It expires on sign-out or session rotation — copy it again.",
+  "积分已用告警阈值（%）": "Credits usage alert threshold (%)",
+  "积分已用达到该百分比时发送系统通知；留空不告警。":
+    "Notify when credits usage reaches this percent; leave empty to disable alerts.",
+  "账户余额低于该值时发送系统通知；留空不告警。":
+    "Notify when the account balance falls below this value; leave empty to disable alerts.",
   "凭据已配置": "Credentials set",
   "凭据未配置": "Credentials not set",
   "凭据库待迁移，请先完成一次性迁移，再保存凭据。":
@@ -325,7 +376,36 @@ export const en: Record<string, string> = {
   "DeepSeek 官方": "DeepSeek",
   "OpenCode Go": "OpenCode Go",
   "智谱 GLM": "Zhipu GLM",
+  "腾讯 WorkBuddy / CodeBuddy": "Tencent WorkBuddy / CodeBuddy",
   "查询智谱 Coding Plan 配额、用量与账户余额": "Zhipu Coding Plan quota, usage and account balance",
+  "查询 WorkBuddy 积分余量、套餐明细、连登天数、签到与喵喵旅行": "WorkBuddy credits, package details, daily streak, check-in and buddy travel",
+  "查询 DeepSeek 官方 API 余额和可用状态": "Query balance and availability via the official DeepSeek API",
+  "读取 OpenCode Go 订阅的 5 小时/周/月额度": "Read OpenCode Go subscription 5-hour/weekly/monthly quotas",
+  "积分明细接口返回 HTTP {status}": "Usage log API returned HTTP {status}",
+  "积分明细查询失败：{detail}": "Usage log query failed: {detail}",
+  "积分明细返回数据解析失败：{detail}": "Failed to parse the usage log response: {detail}",
+  "积分消耗": "Credits used",
+  "积分消耗趋势": "Credits usage trend",
+  "用途分布": "By purpose",
+  "按积分消耗占比展示请求用途。": "Request purposes by share of credits used.",
+  "消耗明细": "Usage log",
+  "逐条请求的积分消耗；摘要为官网截断版原文。": "Per-request credit usage; summaries are the official truncated text.",
+  "各模型的请求次数与积分消耗。": "Requests and credits used per model.",
+  "调整时间范围，或确认 WorkBuddy 登录 Cookie 有效。": "Adjust the time range, or make sure the WorkBuddy login Cookie is valid.",
+  "总积分消耗": "Total credits used",
+  "日均积分消耗": "Daily credits used",
+  "单次平均消耗": "Avg. per request",
+  "最常用模型": "Top model",
+  "含 0 积分内部调用": "Includes free internal calls",
+  "时间": "Time",
+  "请求": "Request",
+  "用途": "Purpose",
+  "共 {count} 条": "{count} records in total",
+  "对话": "Chat",
+  "提示词增强": "Prompt enhancement",
+  "会话摘要": "Session summary",
+  "子代理": "Subagent",
+  "未知用途": "Unknown purpose",
   "时间范围": "Time range",
   "近 7 天": "Last 7 days",
   "近 30 天": "Last 30 days",
@@ -423,19 +503,10 @@ export const en: Record<string, string> = {
   "用量环展示的实例": "Instance shown in the ring",
   "默认展示用量百分比最高的实例；也可固定展示某个实例。": "Shows the instance with the highest usage percentage by default; you can also pin a specific one.",
   "自动（最紧实例）": "Auto (tightest instance)",
-  "点击速览面板以外的区域时自动收起。": "The glance panel hides automatically when you click outside it.",
   "展示范围": "Shown instances",
   "速览面板展示全部实例，或仅展示勾选的实例。": "The glance panel shows all instances, or only the ones you pick.",
   "全部实例": "All instances",
   "自选实例": "Custom selection",
-  "展示字段": "Shown fields",
-  "重置倒计时": "Reset countdown",
-  "多窗口明细": "Window details",
-  "同时展示 5 小时窗口与周配额等多个配额窗口的用量。": "Show usage of every quota window, e.g. the 5-hour window and the weekly quota.",
-  "告警标记": "Alert badge",
-  "告警中的实例以黄色边框与警示图标标出。": "Alerting instances are highlighted with an amber border and a warning icon.",
-  "底部操作条": "Footer bar",
-  "面板底部的未读通知与打开主窗口入口。": "Unread notifications and the main-window shortcut at the bottom of the panel.",
   "未选择展示的实例": "No instances selected",
   "可在「设置 → 托盘与速览」中勾选要在此展示的实例":
     "Pick which instances to show here in Settings → Tray & glance.",
@@ -454,7 +525,6 @@ export const en: Record<string, string> = {
   "卡片": "Cards",
   "已选": "Selected",
   "全选": "Select all",
-  "控制每个实例块中展示哪些数据。": "Controls which data appears on each instance block.",
   "用量柱": "Usage bars",
   "用量展示的实例": "Instance shown in the meter",
   "环形计量": "Ring meter",
@@ -465,15 +535,6 @@ export const en: Record<string, string> = {
   "暂无用量数据": "No usage data",
   "默认自动选择用量最高的实例（谁最接近用完就显示谁）。也可以固定显示某个实例；如果它暂时没有数据，会自动退回显示用量最高的实例。":
     "By default the icon automatically shows the instance with the highest usage (the one closest to its limit). You can also pin a specific instance — if it temporarily has no data, the icon falls back to the highest-usage one.",
-  "控制每个实例上显示哪些信息。": "Controls what details appear on each instance.",
-  "同时显示 5 小时窗口、周配额等多个配额窗口各自的用量。":
-    "Show usage of every quota window side by side, e.g. the 5-hour window and the weekly quota.",
-  "触发告警的实例会加黄色边框和警示图标。":
-    "Instances with active alerts get an amber border and a warning icon.",
-  "显示面板底部的通知中心和「打开主窗口」按钮。":
-    "Show the notification center and an \"Open main window\" button at the bottom of the panel.",
-  "点击面板以外的区域时，面板会自动收起。":
-    "The panel hides automatically when you click outside it.",
   "可在设置的「速览面板」中勾选要在此展示的实例":
     "Pick which instances to show here in Settings → Glance panel.",
   // ── 2026-09 i18n 清剿补键 ──

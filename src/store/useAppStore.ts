@@ -31,12 +31,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   glanceLayout: "list",
   glanceInstanceScope: "all",
   glanceInstanceIds: [],
-  glanceShowBalance: true,
-  glanceShowReset: true,
-  glanceShowWindows: false,
-  glanceShowAlerts: true,
-  glanceShowFooter: true,
-  glanceAutoHide: true,
 };
 
 function normalizeSettings(settings: Partial<AppSettings>): AppSettings {

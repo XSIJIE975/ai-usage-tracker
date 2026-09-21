@@ -28,11 +28,11 @@ import {
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 import { ErrorDetailsDialog } from "./ErrorDetailsDialog";
-import { DeepSeekLogo, GlmLogo, OpenCodeLogo } from "./brand/provider-logo";
+import { DeepSeekLogo, GlmLogo, OpenCodeLogo, WorkbuddyLogo } from "./brand/provider-logo";
 import { displayName } from "../lib/instance";
 import { providerName } from "../providers";
 import { useAppStore } from "../store/useAppStore";
-import { applyParams, useLanguage, useT } from "../i18n";
+import { applyParams, renderLineValue, useLanguage, useT } from "../i18n";
 import { cn } from "../lib/utils";
 
 function useNow(intervalMs = 30_000) {
@@ -53,7 +53,8 @@ const BRAND_LOGOS: Record<
 > = {
   deepseek: { Logo: DeepSeekLogo, bg: "bg-[#5786FE]/10" },
   "opencode-go": { Logo: OpenCodeLogo, bg: "bg-fg/10" },
-  glm: { Logo: GlmLogo, bg: "bg-[#3859FF]/10" },
+  glm: { Logo: GlmLogo, bg: "bg-transparent" },
+  workbuddy: { Logo: WorkbuddyLogo, bg: "bg-transparent" },
 };
 
 function ProviderAvatar({ providerId, name }: { providerId: string; name: string }) {
@@ -118,7 +119,7 @@ function MetricRow({
   const language = useLanguage();
   const resetTimeDisplay = useAppStore((state) => state.settings.resetTimeDisplay);
   const label = applyParams(t(line.label), line.params);
-  const valueText = line.value !== undefined ? t(line.value) : undefined;
+  const valueText = renderLineValue(line, t, language);
   if (line.type === "progress") {
     const percent = line.percentUsed ?? (line.limit ? Math.round(((line.used ?? 0) / line.limit) * 100) : 0);
     const remaining =
@@ -269,7 +270,7 @@ function CardBody({
 }: CardBodyProps) {
   const t = useT();
   const refreshIntervalMinutes = useAppStore((state) => state.settings.refreshIntervalMinutes);
-  const kindName = providerName(instance.providerId);
+  const kindName = t(providerName(instance.providerId));
   const title = displayName(instance, kindName);
   const hasNote = instance.note.trim().length > 0;
   const needsConfig = snapshot?.status === "needs_config";
@@ -530,6 +531,7 @@ export function ProviderCard({
   flipped: flippedProp,
   onToggleFlip,
 }: ProviderCardProps) {
+  const t = useT();
   const now = useNow();
   const [detailOpen, setDetailOpen] = useState(false);
   // 翻面朝向：受控（主窗口网格，拖拽浮起副本与占位卡共享）或内部自持（快速面板）。
@@ -537,7 +539,7 @@ export function ProviderCard({
   const [localFlipped, setLocalFlipped] = useState(false);
   const flipped = flippedProp ?? localFlipped;
   const toggleFlip = () => (onToggleFlip ? onToggleFlip() : setLocalFlipped((value) => !value));
-  const kindName = providerName(instance.providerId);
+  const kindName = t(providerName(instance.providerId));
   const title = displayName(instance, kindName);
   const needsConfig = snapshot?.status === "needs_config";
   // 仅当存在「百分比与原始数值俱全」的进度行时提供翻卡（当前即 GLM 配额行，

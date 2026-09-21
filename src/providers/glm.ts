@@ -89,7 +89,7 @@ export function parseGlmBalance(data: GlmBalanceData | undefined): number | null
 export function parseBalanceLine(data: GlmBalanceData | undefined): MetricLine | null {
   const amount = parseGlmBalance(data);
   if (amount == null) return null;
-  return { type: "text", label: "账户余额", value: currencyFormatter.format(amount) };
+  return { type: "text", label: "账户余额", value: currencyFormatter.format(amount), balance: true };
 }
 
 /** customer-package-reset/list 的单张重置卡（每张 1 次；available=false 且未过期视为已使用） */
@@ -112,6 +112,16 @@ export function countAvailableResets(cards: GlmResetCardRaw[] | undefined): numb
   return (cards ?? []).filter((card) => card.available === true).length;
 }
 
+/** 可用重置卡的 recordId 明细（到账检测差集用）；无 id 的卡跳过——绝不误报 */
+export function extractAvailableResetIds(
+  data: GlmPackageResetData | undefined,
+): { fiveHour: number[]; week: number[] } {
+  const ids = (cards: GlmResetCardRaw[] | undefined) =>
+    (cards ?? []).filter((card) => card.available === true && typeof card.recordId === "number")
+      .map((card) => card.recordId as number);
+  return { fiveHour: ids(data?.fiveHourResets), week: ids(data?.weekResets) };
+}
+
 /**
  * 卡片上的「可用重置卡」文本行：仅在有可用卡时渲染（与 DeepSeek 充值/赠送行的按需展示一致），
  * 无卡是常态，不显示「0 张」。
@@ -121,10 +131,14 @@ export function parseResetLine(data: GlmPackageResetData | undefined): MetricLin
   const fiveHour = countAvailableResets(data.fiveHourResets);
   const week = countAvailableResets(data.weekResets);
   if (fiveHour + week === 0) return null;
-  const parts: string[] = [];
-  if (fiveHour > 0) parts.push(`5 小时 ×${fiveHour}`);
-  if (week > 0) parts.push(`周 ×${week}`);
-  return { type: "text", label: "可用重置卡", value: parts.join(" · ") };
+  // 模板按组合选（与到账通知的三形态同构），数值渲染端代入（t+valueParams 通道）
+  const value =
+    fiveHour > 0 && week > 0
+      ? "5 小时 ×{fiveHour} · 周 ×{week}"
+      : fiveHour > 0
+        ? "5 小时 ×{fiveHour}"
+        : "周 ×{week}";
+  return { type: "text", label: "可用重置卡", value, valueParams: { fiveHour, week } };
 }
 
 function truncate(text: string, max = 300): string {
@@ -214,13 +228,19 @@ export function parseQuotaLimits(data: GlmQuotaData | undefined): MetricLine[] {
   return lines;
 }
 
+/**
+ * 智谱对未订阅 Coding Plan 的账号，monitor 族接口（配额/用量统计）统一返回 success=false
+ * 的错误封套而非空数据。实测两种措辞（2026-09-17 用户截图 / 此前 fixture 构造）：
+ * code=500「当前用户不存在coding plan」、code=403「未开通 Coding Plan」——
+ * 按 msg 含 coding plan（大小写不敏感）识别，不绑死 code；措辞再变时识别失效、
+ * 退回普通错误可见（ADR-0024 的 fail-visible 默认）。
+ */
+export function isNoCodingPlanEnvelope(json: GlmEnvelope<unknown>): boolean {
+  return json.success === false && /coding\s*plan/i.test(json.msg ?? "");
+}
+
 /** 配额响应整体处理：区分「未订阅/无数据」与「返回了未识别的类型」两种空结果 */
-function processQuota(result: HttpResult): {
-  ok: boolean;
-  lines: MetricLine[];
-  error?: string;
-  errorParams?: Record<string, string | number>;
-} {
+function processQuota(result: HttpResult): SourceOutcome {
   if (result.status !== 200) {
     const detail = result.bodyText?.trim() || "";
     return {
@@ -232,6 +252,14 @@ function processQuota(result: HttpResult): {
   }
   try {
     const json = JSON.parse(result.bodyText) as GlmEnvelope<GlmQuotaData>;
+    if (isNoCodingPlanEnvelope(json)) {
+      // 未订阅 Coding Plan 是账号的正常状态而非故障（ADR-0024 的可见性靠这条中性事实行，
+      // 不靠错误横幅）：与订阅者的「套餐档位」徽章行同位，余额/重置卡源不受影响
+      return {
+        ok: true,
+        lines: [{ type: "text", label: "Coding Plan", value: "未订阅" }],
+      };
+    }
     if (json.success === false) {
       return {
         ok: false,
@@ -271,6 +299,8 @@ interface SourceOutcome {
   lines: MetricLine[];
   error?: string;
   errorParams?: Record<string, string | number>;
+  /** 重置卡源成功时的可用卡 recordId 明细（availableResetIds 透传，见 ProviderSnapshot） */
+  availableResetIds?: { fiveHour: number[]; week: number[] };
 }
 
 /** 余额响应整体处理：解析不出金额（如纯订阅账户无现金数据）按失败处理，仅丢余额行不拖垮快照 */
@@ -335,7 +365,11 @@ function processReset(result: HttpResult): SourceOutcome {
       };
     }
     const line = parseResetLine(json.data);
-    return { ok: true, lines: line ? [line] : [] };
+    return {
+      ok: true,
+      lines: line ? [line] : [],
+      availableResetIds: extractAvailableResetIds(json.data),
+    };
   } catch (error) {
     return {
       ok: false,
@@ -461,6 +495,8 @@ async function fetchGlmSnapshot(instance: ProviderInstance): Promise<ProviderSna
         }
       : {}),
     lines: [...quotaOutcome.lines, ...balanceOutcome.lines, ...resetOutcome.lines],
+    // 重置卡源失败时不带该字段：到账检测按「冻结」处理，不播种也不判定（ADR-0023 同语义）
+    ...(resetOutcome.availableResetIds ? { availableResetIds: resetOutcome.availableResetIds } : {}),
   };
 }
 

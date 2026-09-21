@@ -8,13 +8,26 @@ import { modelColor, getThemeColors } from "./palette";
 import { useEffectiveTheme } from "../../lib/theme";
 import { useChartLegend } from "../../hooks/use-chart-legend";
 import { ChartLegend } from "./ChartLegend";
-import { cn } from "../../lib/utils";
+import { cn, formatPlain } from "../../lib/utils";
 
 echarts.use([PieChart, TooltipComponent, LegendComponent, CanvasRenderer]);
 
 export interface DonutSegment {
   name: string;
   value: number;
+}
+
+/**
+ * 扇区间距（度，ECharts padAngle）：固定间距会吞掉极薄扇区——0.5% 的扇区仅 1.8°，
+ * 2° 间距让两侧缝隙在视觉上并成一个缺口、扇区本身消失。钳到最小扇区角的 30%，
+ * 保证最薄一扇两侧仍有缝、但扇区永远可见（多扇并列时同样取最小角兜底）。
+ */
+export function donutPadAngle(values: number[]): number {
+  if (values.length <= 1) return 0;
+  const total = values.reduce((sum, value) => sum + value, 0);
+  if (total <= 0) return 0;
+  const minSectorAngle = (Math.min(...values) / total) * 360;
+  return Math.min(2, minSectorAngle * 0.3);
 }
 
 interface TooltipParam {
@@ -43,7 +56,7 @@ interface TooltipParam {
 export function Donut({
   segments,
   centerLabel,
-  format = (v) => String(v),
+  format = formatPlain,
   size = 200,
   className,
 }: {
@@ -160,7 +173,7 @@ export function Donut({
           radius: ["48%", "72%"],
           center: ["50%", "50%"],
           avoidLabelOverlap: false,
-          padAngle: data.length > 1 ? 2 : 0,
+          padAngle: donutPadAngle(data.map((seg) => seg.value)),
           label: {
             show: true,
             position: "center" as const,

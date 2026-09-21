@@ -173,7 +173,7 @@ export function useTraySync(
       `${window.label}（${t("已用")} ${Math.round(window.percent)}%）`;
     const summary = chosen
       ? [
-          displayName(chosen.instance, chosen.providerName),
+          displayName(chosen.instance, t(chosen.providerName)),
           ...chosen.windows.map(windowText),
         ].join("\n")
       : null;

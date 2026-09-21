@@ -33,6 +33,8 @@ const loadToolUsage = () => JSON.parse(readFixture("glm-tool-usage.json"));
 const loadToolUsageLive = () => JSON.parse(readFixture("glm-tool-usage-live.json"));
 const loadBalance = () => JSON.parse(readFixture("glm-balance.json"));
 const loadReset = () => JSON.parse(readFixture("glm-package-reset.json"));
+// 2026-09-17 用户实测（非 Coding Plan 账号）：用量 monitor 族对未订阅账号返回的错误封套
+const loadUnsubscribed = () => JSON.parse(readFixture("glm-quota-unsubscribed.json"));
 
 const httpResult = (body: unknown, status = 200): HttpResult => ({
   status,
@@ -209,14 +211,30 @@ describe("fetchGlmUsage", () => {
     expect(result.status === "error" && result.message).toBe("智谱用量接口返回 HTTP {status}");
   });
 
-  it("fails with server code/msg when success is false", async () => {
+  it("returns ok with empty usage when the account has no Coding Plan (not subscribed)", async () => {
     mockInvoke
       .mockResolvedValueOnce(credentialStatus(true))
-      .mockResolvedValueOnce(httpResult({ code: 403, msg: "未开通 Coding Plan", success: false }))
+      .mockResolvedValueOnce(httpResult(loadUnsubscribed()))
+      .mockResolvedValueOnce(httpResult(loadUnsubscribed()));
+    const result = await fetchGlmUsage(glmInstance, 0, 1);
+    // 未订阅是正常状态：不整页报错，空用量 + notSubscribed 标记，统计页据此渲染余额卡与专属空态
+    expect(result).toMatchObject({ status: "ok" });
+    if (result.status === "ok") {
+      expect(result.data.notSubscribed).toBe(true);
+      expect(result.data.models.buckets).toEqual([]);
+      expect(result.data.models.totals).toEqual({ calls: 0, tokens: 0 });
+      expect(result.data.tools.totalCalls).toBe(0);
+    }
+  });
+
+  it("fails with server code/msg when success is false for unrelated errors", async () => {
+    mockInvoke
+      .mockResolvedValueOnce(credentialStatus(true))
+      .mockResolvedValueOnce(httpResult({ code: 500, msg: "系统繁忙，请稍后再试", success: false }))
       .mockResolvedValueOnce(httpResult(loadToolUsage()));
     const result = await fetchGlmUsage(glmInstance, 0, 1);
     expect(result).toMatchObject({ status: "error" });
-    expect(result.status === "error" && result.params?.detail).toContain("未开通 Coding Plan");
+    expect(result.status === "error" && result.params?.detail).toContain("系统繁忙");
   });
 
   it("degrades to empty tool data when the tool endpoint fails", async () => {
