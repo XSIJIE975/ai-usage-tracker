@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { buildUsageQuery } from "./providers/deepseek-stats";
+import { normalizeWorkbuddyCookie } from "./lib/utils";
 
 /** 机器可读的诊断结果码，与 src-tauri/src/commands.rs 的 diagnose_request 保持一致 */
 export type DiagnosisCode =
@@ -67,6 +68,14 @@ async function diagnose(
   });
 }
 
+/** 整串 Cookie 头探测（workbuddy 的 session 会话，键名由服务端定，不能走 auth=<value> 通道） */
+async function diagnoseWithCookieHeader(url: string, cookieHeader: string): Promise<DiagnosisResult> {
+  return invoke<DiagnosisResult>("diagnose_request", {
+    url,
+    cookieHeader: cookieHeader.trim(),
+  });
+}
+
 const oneDayQuery = (): { start: number; end: number; tz: number } => {
   const end = Date.now();
   return buildUsageQuery(end - 86_400_000, end);
@@ -114,4 +123,13 @@ export function testGlmCodingPlanKey(key: string): Promise<DiagnosisResult> {
   if (!key.trim())
     return Promise.resolve({ ok: false, status: 0, latencyMs: 0, code: "missing-api-key" });
   return diagnose("https://open.bigmodel.cn/api/monitor/usage/quota/limit", "bearer", key);
+}
+
+/** WorkBuddy 登录凭据：连登接口探测（billing/activity 族只读端点，Cookie 会话）。
+ *  与保存链路共用归一化，未保存直接测试也能吃下 session= / Cookie: 前缀 / 整串写法 */
+export function testWorkbuddyCookie(cookie: string): Promise<DiagnosisResult> {
+  const normalized = normalizeWorkbuddyCookie(cookie);
+  if (!normalized)
+    return Promise.resolve({ ok: false, status: 0, latencyMs: 0, code: "missing-credential" });
+  return diagnoseWithCookieHeader("https://www.workbuddy.cn/activity/growth/streak", normalized);
 }

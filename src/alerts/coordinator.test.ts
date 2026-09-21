@@ -416,6 +416,43 @@ describe("GLM 配额与余额双规则", () => {
   });
 });
 
+describe("WorkBuddy 积分阈值规则", () => {
+  const wbInstance = (overrides: Partial<ProviderInstance> = {}): ProviderInstance => ({
+    ...instance({ id: "wb-1", providerId: "workbuddy", threshold: 80, balanceThreshold: null }),
+    ...overrides,
+  });
+  /** WorkBuddy 快照：积分余量 progress 行 + 套餐明细 text 行（与真实快照结构一致） */
+  const wbSnapshot = (percent: number | null, remainText?: string): ProviderSnapshot => ({
+    instanceId: "wb-1",
+    providerId: "workbuddy",
+    providerName: "腾讯 WorkBuddy / CodeBuddy",
+    status: "ok",
+    updatedAt: 0,
+    lines: [
+      ...(percent !== null
+        ? [{ type: "progress" as const, label: "积分余量", used: 100 - percent!, limit: 100, percentUsed: percent! }]
+        : [{ type: "text" as const, label: "积分余量", value: remainText ?? "暂无有效套餐" }]),
+    ],
+  });
+
+  it("积分已用达到阈值时触发 quota fire，语义为百分比", () => {
+    const fires = evaluateRules(wbInstance({ threshold: 80 }), wbSnapshot(85));
+    expect(fires).toHaveLength(1);
+    expect(fires[0]!.ruleKey).toBe("wb-1:quota");
+    expect(fires[0]!.params.percent).toBe("85.0");
+    expect(fires[0]!.params.threshold).toBe(80);
+  });
+
+  it("未达阈值不触发", () => {
+    expect(evaluateRules(wbInstance({ threshold: 80 }), wbSnapshot(50))).toEqual([]);
+  });
+
+  it("无进度行的残缺快照不把文本行数值误当百分比（「余 42」是 42 积分）", () => {
+    expect(evaluateRules(wbInstance({ threshold: 40 }), wbSnapshot(null, "余 42"))).toEqual([]);
+    expect(evaluateRules(wbInstance({ threshold: 40 }), wbSnapshot(null))).toEqual([]);
+  });
+});
+
 describe("额度耗尽规则（ADR-0021）", () => {
   const windowed = (
     providerId: "glm" | "opencode-go",

@@ -52,6 +52,24 @@ pub struct StoredSeenResetCards {
     pub seeded: bool,
 }
 
+/// WorkBuddy 签到通知的判重事实源：每实例一行，notified_date 是最近一次发出
+/// 「签到成功」通知的日期（CST YYYY-MM-DD）。快照上的签到字段是瞬时冗余、会随
+/// 落库快照重放（重启后 reevaluate 重读同一份），通知判重的权威在这里，
+/// 重启后同一天的旧快照重放不再重复通知。字段 snake_case 与 StoredAlertState 同口径
+#[derive(Serialize, Deserialize)]
+pub struct StoredWorkbuddyCheckin {
+    pub instance_id: String,
+    pub notified_date: String,
+}
+
+/// 旅行领奖通知判重行：claimed_key 是最近一次通知的行程标识（depart_at）。
+/// 按行程而非日期——一天可有多趟旅行，各趟各判各的；语义同 StoredWorkbuddyCheckin
+#[derive(Serialize, Deserialize)]
+pub struct StoredWorkbuddyTravelClaim {
+    pub instance_id: String,
+    pub claimed_key: String,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StoredInstance {
@@ -123,6 +141,18 @@ impl Db {
                 instance_id TEXT PRIMARY KEY,
                 record_ids TEXT NOT NULL,
                 seeded INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS workbuddy_checkins (
+                instance_id TEXT PRIMARY KEY,
+                notified_date TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS workbuddy_travel_claims (
+                instance_id TEXT PRIMARY KEY,
+                claimed_key TEXT NOT NULL,
                 updated_at INTEGER NOT NULL
             );
             "#,
@@ -456,6 +486,10 @@ impl Db {
             .map_err(|error| error.to_string())?;
         tx.execute("DELETE FROM seen_reset_cards WHERE instance_id = ?1", [id])
             .map_err(|error| error.to_string())?;
+        tx.execute("DELETE FROM workbuddy_checkins WHERE instance_id = ?1", [id])
+            .map_err(|error| error.to_string())?;
+        tx.execute("DELETE FROM workbuddy_travel_claims WHERE instance_id = ?1", [id])
+            .map_err(|error| error.to_string())?;
         tx.commit().map_err(|error| error.to_string())?;
         Ok(())
     }
@@ -713,6 +747,79 @@ impl Db {
         Ok(())
     }
 
+    /// 读某实例的签到通知判重日期；None = 从未通知过
+    pub fn get_workbuddy_checkin(&self, instance_id: &str) -> Result<Option<StoredWorkbuddyCheckin>, String> {
+        let row = self.conn.query_row(
+            "SELECT notified_date FROM workbuddy_checkins WHERE instance_id = ?1",
+            [instance_id],
+            |row| row.get::<_, String>(0),
+        );
+        match row {
+            Ok(notified_date) => Ok(Some(StoredWorkbuddyCheckin {
+                instance_id: instance_id.to_string(),
+                notified_date,
+            })),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    /// 回写某实例的签到通知判重日期（UPSERT 幂等）：前端检测器的内存投影是判定者，
+    /// 这里只是重启恢复用的事实源——落库快照重放同一天的签到字段不再重复通知
+    pub fn save_workbuddy_checkin(&self, checkin: &StoredWorkbuddyCheckin) -> Result<(), String> {
+        self.conn
+            .execute(
+                r#"
+                INSERT INTO workbuddy_checkins(instance_id, notified_date, updated_at)
+                VALUES(?1, ?2, ?3)
+                ON CONFLICT(instance_id) DO UPDATE SET
+                    notified_date = excluded.notified_date,
+                    updated_at = excluded.updated_at
+                "#,
+                rusqlite::params![checkin.instance_id, checkin.notified_date, chrono_utc_now()],
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    /// 读某实例的旅行领奖判重行程键；None = 从未通知过
+    pub fn get_workbuddy_travel_claim(
+        &self,
+        instance_id: &str,
+    ) -> Result<Option<StoredWorkbuddyTravelClaim>, String> {
+        let row = self.conn.query_row(
+            "SELECT claimed_key FROM workbuddy_travel_claims WHERE instance_id = ?1",
+            [instance_id],
+            |row| row.get::<_, String>(0),
+        );
+        match row {
+            Ok(claimed_key) => Ok(Some(StoredWorkbuddyTravelClaim {
+                instance_id: instance_id.to_string(),
+                claimed_key,
+            })),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    /// 回写某实例的旅行领奖判重行程键（UPSERT 幂等），语义同 save_workbuddy_checkin：
+    /// 落库快照随重启重放 travel 字段，靠这里判重不重复通知
+    pub fn save_workbuddy_travel_claim(&self, claim: &StoredWorkbuddyTravelClaim) -> Result<(), String> {
+        self.conn
+            .execute(
+                r#"
+                INSERT INTO workbuddy_travel_claims(instance_id, claimed_key, updated_at)
+                VALUES(?1, ?2, ?3)
+                ON CONFLICT(instance_id) DO UPDATE SET
+                    claimed_key = excluded.claimed_key,
+                    updated_at = excluded.updated_at
+                "#,
+                rusqlite::params![claim.instance_id, claim.claimed_key, chrono_utc_now()],
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
     pub fn list_notifications(&self, limit: i64) -> Result<Vec<StoredNotification>, String> {
         let mut statement = self
             .conn
@@ -929,6 +1036,70 @@ mod tests {
         assert_eq!(
             db.get_seen_reset_cards("inst-2").unwrap().unwrap().record_ids,
             vec![9]
+        );
+    }
+
+    #[test]
+    fn workbuddy_checkin_upsert_and_cascade() {
+        let db = temp_db();
+        // 从未通知 = None：签到检测器据此放行首条通知
+        assert!(db.get_workbuddy_checkin("inst-1").unwrap().is_none());
+        db.save_workbuddy_checkin(&super::StoredWorkbuddyCheckin {
+            instance_id: "inst-1".into(),
+            notified_date: "2026-09-20".into(),
+        })
+        .unwrap();
+        // 同一天重复回写（快照重放触发）幂等；跨天覆盖旧日期
+        db.save_workbuddy_checkin(&super::StoredWorkbuddyCheckin {
+            instance_id: "inst-1".into(),
+            notified_date: "2026-09-21".into(),
+        })
+        .unwrap();
+        let checkin = db.get_workbuddy_checkin("inst-1").unwrap().unwrap();
+        assert_eq!(checkin.notified_date, "2026-09-21");
+        // 删实例级联清理判重行
+        db.save_workbuddy_checkin(&super::StoredWorkbuddyCheckin {
+            instance_id: "inst-2".into(),
+            notified_date: "2026-09-20".into(),
+        })
+        .unwrap();
+        db.delete_instance("inst-1").unwrap();
+        assert!(db.get_workbuddy_checkin("inst-1").unwrap().is_none());
+        assert_eq!(
+            db.get_workbuddy_checkin("inst-2").unwrap().unwrap().notified_date,
+            "2026-09-20"
+        );
+    }
+
+    #[test]
+    fn workbuddy_travel_claim_upsert_and_cascade() {
+        let db = temp_db();
+        // 从未通知 = None：旅行检测器据此放行首条通知
+        assert!(db.get_workbuddy_travel_claim("inst-1").unwrap().is_none());
+        db.save_workbuddy_travel_claim(&super::StoredWorkbuddyTravelClaim {
+            instance_id: "inst-1".into(),
+            claimed_key: "1789370635".into(),
+        })
+        .unwrap();
+        // 同行程重复回写（快照重放触发）幂等；新行程覆盖旧行程键
+        db.save_workbuddy_travel_claim(&super::StoredWorkbuddyTravelClaim {
+            instance_id: "inst-1".into(),
+            claimed_key: "1789957341".into(),
+        })
+        .unwrap();
+        let claim = db.get_workbuddy_travel_claim("inst-1").unwrap().unwrap();
+        assert_eq!(claim.claimed_key, "1789957341");
+        // 删实例级联清理判重行
+        db.save_workbuddy_travel_claim(&super::StoredWorkbuddyTravelClaim {
+            instance_id: "inst-2".into(),
+            claimed_key: "1789370635".into(),
+        })
+        .unwrap();
+        db.delete_instance("inst-1").unwrap();
+        assert!(db.get_workbuddy_travel_claim("inst-1").unwrap().is_none());
+        assert_eq!(
+            db.get_workbuddy_travel_claim("inst-2").unwrap().unwrap().claimed_key,
+            "1789370635"
         );
     }
 

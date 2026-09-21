@@ -542,38 +542,52 @@ impl DiagnosisResult {
 
 /// 用"刚输入、尚未保存"的凭据值发起一次真实探测请求，验证连通性。
 /// auth: "bearer"（携带 credential 作为 Bearer token）| "cookie"（auth=<normalized credential>）
+/// cookie_header：原样携带整串 Cookie 头（workbuddy.cn 的 session 会话，键名由服务端定，
+/// 不能走 auth=<value> 的固定键名通道）；给出时忽略 auth/credential
 #[tauri::command]
 pub async fn diagnose_request(
     url: String,
     auth: Option<String>,
     credential: Option<String>,
     expect_html: Option<bool>,
+    cookie_header: Option<String>,
 ) -> Result<DiagnosisResult, String> {
     let client = http_client();
 
     let mut request = client.request(Method::GET, &url);
-    match auth.as_deref() {
-        Some("bearer") => {
-            let key = match credential.filter(|value| !value.trim().is_empty()) {
-                Some(key) => key,
-                None => return Ok(DiagnosisResult::new(false, 0, 0, "missing-credential", None)),
-            };
-            let key = key.trim();
-            request = request.header("Authorization", format!("Bearer {key}"));
+    if let Some(cookie) = cookie_header.filter(|value| !value.trim().is_empty()) {
+        // 原样携带整串 Cookie（workbuddy.cn 的 session 会话，键名服务端定）。
+        // UA 必须带 Edg/ 后缀：EdgeOne WAF 对非 Edge UA 一律 401（2026-09-21 实测，
+        // 与 Cookie 有效性无关），与前端 providers/workbuddy.ts 的取值保持一致
+        request = request.header("Cookie", cookie.trim());
+        request = request.header(
+            "User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36 Edg/153.0.0.0",
+        );
+    } else {
+        match auth.as_deref() {
+            Some("bearer") => {
+                let key = match credential.filter(|value| !value.trim().is_empty()) {
+                    Some(key) => key,
+                    None => return Ok(DiagnosisResult::new(false, 0, 0, "missing-credential", None)),
+                };
+                let key = key.trim();
+                request = request.header("Authorization", format!("Bearer {key}"));
+            }
+            Some("cookie") => {
+                let cookie = match credential.filter(|value| !value.trim().is_empty()) {
+                    Some(cookie) => cookie,
+                    None => return Ok(DiagnosisResult::new(false, 0, 0, "missing-credential", None)),
+                };
+                let normalized = normalize_auth_cookie(&cookie);
+                request = request.header("Cookie", format!("auth={normalized}"));
+                request = request.header(
+                    "User-Agent",
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Gecko/20100101 Firefox/148.0",
+                );
+            }
+            _ => {}
         }
-        Some("cookie") => {
-            let cookie = match credential.filter(|value| !value.trim().is_empty()) {
-                Some(cookie) => cookie,
-                None => return Ok(DiagnosisResult::new(false, 0, 0, "missing-credential", None)),
-            };
-            let normalized = normalize_auth_cookie(&cookie);
-            request = request.header("Cookie", format!("auth={normalized}"));
-            request = request.header(
-                "User-Agent",
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Gecko/20100101 Firefox/148.0",
-            );
-        }
-        _ => {}
     }
 
     let started = std::time::Instant::now();
@@ -710,6 +724,46 @@ pub fn save_seen_reset_cards(
     db.save_seen_reset_cards(&seen)
 }
 
+/// WorkBuddy 签到通知判重水合：None = 该实例从未通知过签到
+#[tauri::command]
+pub fn get_workbuddy_checkin(
+    state: State<'_, AppState>,
+    instance_id: String,
+) -> Result<Option<db::StoredWorkbuddyCheckin>, String> {
+    let db = state.db.lock().expect("db lock poisoned");
+    db.get_workbuddy_checkin(&instance_id)
+}
+
+/// WorkBuddy 签到通知判重回写：重启/F5 后据此恢复「每天只通知一次」
+#[tauri::command]
+pub fn save_workbuddy_checkin(
+    state: State<'_, AppState>,
+    checkin: db::StoredWorkbuddyCheckin,
+) -> Result<(), String> {
+    let db = state.db.lock().expect("db lock poisoned");
+    db.save_workbuddy_checkin(&checkin)
+}
+
+/// WorkBuddy 旅行领奖通知判重水合：None = 该实例从未通知过领奖
+#[tauri::command]
+pub fn get_workbuddy_travel_claim(
+    state: State<'_, AppState>,
+    instance_id: String,
+) -> Result<Option<db::StoredWorkbuddyTravelClaim>, String> {
+    let db = state.db.lock().expect("db lock poisoned");
+    db.get_workbuddy_travel_claim(&instance_id)
+}
+
+/// WorkBuddy 旅行领奖通知判重回写：按行程键判重，重启/F5 后不重复通知同一趟到账
+#[tauri::command]
+pub fn save_workbuddy_travel_claim(
+    state: State<'_, AppState>,
+    claim: db::StoredWorkbuddyTravelClaim,
+) -> Result<(), String> {
+    let db = state.db.lock().expect("db lock poisoned");
+    db.save_workbuddy_travel_claim(&claim)
+}
+
 #[tauri::command]
 pub fn list_notifications(
     state: State<'_, AppState>,
@@ -814,6 +868,15 @@ pub async fn provider_request(
                     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Gecko/20100101 Firefox/148.0"
                         .to_string()
                 });
+        }
+        Some("cookie_header") => {
+            // 原样携带整串 Cookie 头（workbuddy.cn 的 session 会话，键名由服务端定，
+            // 不能走 auth=<value> 的固定键名通道）；值仍从 vault 按槽位读取，前端不接触明文
+            let slot = credential_slot
+                .clone()
+                .ok_or_else(|| "cookie_header auth 需要 credential_slot".to_string())?;
+            let value = resolve_bearer_key(&kind, &slot, &instance_credentials)?;
+            headers.insert("Cookie".to_string(), value.to_string());
         }
         Some("cookie") => return Err("不支持的 provider cookie auth".to_string()),
         _ => {}

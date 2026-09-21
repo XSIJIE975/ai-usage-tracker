@@ -4,6 +4,7 @@ import {
   formatReset,
   formatResetAt,
   normalizeOpenCodeAuthCookie,
+  normalizeWorkbuddyCookie,
 } from "./utils";
 
 describe("normalizeOpenCodeAuthCookie", () => {
@@ -22,6 +23,36 @@ describe("normalizeOpenCodeAuthCookie", () => {
 
   it("extracts the auth cookie from a full cookie list", () => {
     expect(normalizeOpenCodeAuthCookie("foo=1; auth=abc; bar=2")).toBe("abc");
+  });
+});
+
+describe("normalizeWorkbuddyCookie", () => {
+  it("wraps a bare session value into a session= pair", () => {
+    expect(normalizeWorkbuddyCookie(" abc ")).toBe("session=abc");
+    expect(normalizeWorkbuddyCookie("YWJj=")).toBe("session=YWJj=");
+  });
+
+  it("keeps a session= pair, trimming whitespace", () => {
+    expect(normalizeWorkbuddyCookie("session=abc")).toBe("session=abc");
+    expect(normalizeWorkbuddyCookie("SESSION=abc")).toBe("session=abc");
+  });
+
+  it("strips a Cookie header prefix", () => {
+    expect(normalizeWorkbuddyCookie("Cookie: session=abc")).toBe("session=abc");
+    expect(normalizeWorkbuddyCookie("cookie:session=abc; session_2=def")).toBe("session=abc");
+  });
+
+  it("extracts the session cookie from a full cookie list", () => {
+    expect(normalizeWorkbuddyCookie("ta_user_id=1; session=abc; session_2=def")).toBe("session=abc");
+    expect(normalizeWorkbuddyCookie("session=abc==rest")).toBe("session=abc==rest");
+  });
+
+  it("passes through a cookie list without a session key", () => {
+    expect(normalizeWorkbuddyCookie("foo=1; session_2=def")).toBe("foo=1; session_2=def");
+  });
+
+  it("returns empty for blank input", () => {
+    expect(normalizeWorkbuddyCookie("   ")).toBe("");
   });
 });
 

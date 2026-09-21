@@ -2,6 +2,7 @@ import { Sheet, SheetBody, SheetContent, SheetDescription, SheetHeader, SheetTit
 import { DeepSeekStats } from "./DeepSeekStats";
 import { OpenCodeStats } from "./OpenCodeStats";
 import { GlmStats } from "./GlmStats";
+import { WorkbuddyStats } from "./workbuddy/WorkbuddyStats";
 import { displayName } from "../../lib/instance";
 import { providerName } from "../../providers";
 import { useT } from "../../i18n";
@@ -11,6 +12,9 @@ const STATS_COMPONENTS = {
   deepseek: DeepSeekStats,
   "opencode-go": OpenCodeStats,
   glm: GlmStats,
+  // WorkBuddy 统计基于官网消耗明细接口（get-user-request-usage，2026-09-21 实测接入），
+  // 纯只读，白名单见 ADR-0029
+  workbuddy: WorkbuddyStats,
 } as const;
 
 /** 实例统计抽屉：按实例种类挂载对应统计模块（卡片「查看统计」入口） */

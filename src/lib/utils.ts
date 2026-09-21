@@ -27,6 +27,33 @@ export function normalizeOpenCodeAuthCookie(value: string): string {
   return cookie;
 }
 
+/** WorkBuddy 登录凭据归一化：期望输入就是 session Cookie 的 Value；同时兼容
+ *  "session=…"、整串 Cookie（自动抠出 session 一项）、带 "Cookie:" 前缀的请求头旧写法。
+ *  输出恒为 "session=<值>" 完整键值对（Rust 端按整串 Cookie 头原样携带）；
+ *  多键 Cookie 里找不到 session 时原样（去前缀）返回，交由服务端判定 */
+export function normalizeWorkbuddyCookie(value: string): string {
+  let cookie = value.trim();
+  if (cookie.toLowerCase().startsWith("cookie:")) {
+    cookie = cookie.slice("cookie:".length).trim();
+  }
+  if (!cookie) return "";
+
+  if (cookie.includes(";")) {
+    for (const part of cookie.split(";")) {
+      const [rawName, ...rest] = part.trim().split("=");
+      if (rawName?.trim().toLowerCase() === "session") {
+        return `session=${rest.join("=").trim()}`;
+      }
+    }
+    return cookie;
+  }
+
+  if (/^session=/i.test(cookie)) {
+    return `session=${cookie.slice("session=".length).trim()}`;
+  }
+  return `session=${cookie}`;
+}
+
 export function formatRefreshLabel(minutes: number, translate?: (s: string) => string) {
   const t = translate ?? ((s: string) => s);
   if (minutes < 1) return t("已禁用");

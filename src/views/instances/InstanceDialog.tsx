@@ -24,9 +24,10 @@ import {
   testGlmCodingPlanKey,
   testOpenCodeApiKey,
   testOpenCodeConnection,
+  testWorkbuddyCookie,
 } from "../../diagnostics";
 import { useAppStore } from "../../store/useAppStore";
-import { normalizeOpenCodeAuthCookie } from "../../lib/utils";
+import { normalizeOpenCodeAuthCookie, normalizeWorkbuddyCookie } from "../../lib/utils";
 import { providerName } from "../../providers";
 import { useT } from "../../i18n";
 import type { ProviderInstance, ProviderKind } from "../../types/ipc";
@@ -98,6 +99,18 @@ const KIND_CONFIGS: Record<ProviderKind, KindConfig> = {
     threshold: { label: "Coding Plan 配额告警阈值（%）", hint: "Coding Plan 配额已用达到该百分比时发送系统通知；留空不告警。", min: 1, max: 100 },
     balanceThreshold: { label: "余额告警阈值（元）", hint: "账户余额低于该值时发送系统通知；留空不告警。", min: 0, max: 1_000_000 },
   },
+  workbuddy: {
+    fields: [
+      {
+        slot: "cookie",
+        label: "WorkBuddy 登录 Cookie",
+        placeholder: "只粘贴 session Cookie 的 Value",
+        help: "获取方式：打开 workbuddy.cn 并登录 → 按 F12 打开开发者工具 → 网络(Network) → 刷新页面 → 任选一个 API 请求（路径带 billing/meter 或 activity/growth）→ 请求标头的 Cookie 中找到名为 session 的项，复制它的 Value 粘贴到上方。整串 Cookie 或带 Cookie: 前缀的旧写法也能识别，会自动抠出 session。浏览器退出登录或会话轮换后此值会失效，届时重新复制一次。",
+        normalize: normalizeWorkbuddyCookie,
+      },
+    ],
+    threshold: { label: "积分已用告警阈值（%）", hint: "积分已用达到该百分比时发送系统通知；留空不告警。", min: 1, max: 100 },
+  },
 };
 
 /** 连通性诊断在表单层组队：workspaceId+cookie 成对探测，其余单字段探测刚输入的值 */
@@ -119,6 +132,8 @@ function diagnosisFor(kind: ProviderKind, slot: string, values: Record<string, s
       return { test: () => testOpenCodeApiKey(value), disabled: !value.trim() };
     case "glm/planKey":
       return { test: () => testGlmCodingPlanKey(value), disabled: !value.trim() };
+    case "workbuddy/cookie":
+      return { test: () => testWorkbuddyCookie(value), disabled: !value.trim() };
     default:
       return null;
   }

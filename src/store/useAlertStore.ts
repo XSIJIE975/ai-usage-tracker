@@ -4,10 +4,12 @@ import { emit } from "@tauri-apps/api/event";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { AlertCoordinator, type AlertCoordinatorDeps } from "../alerts/coordinator";
 import type { AlertFire } from "../alerts/evaluate";
+import { CheckinDetector, type CheckinArrival, type CheckinDetectorDeps } from "../alerts/checkin-detector";
 import { ResetCardDetector, type ResetCardArrival, type ResetCardDetectorDeps } from "../alerts/reset-card-detector";
+import { TravelDetector, type TravelArrival, type TravelDetectorDeps } from "../alerts/travel-detector";
 import { renderTemplate } from "../i18n/apply-params";
 import { resolveLanguage, translateText } from "../i18n/translate";
-import type { AppSettings, ProviderInstance, ProviderSnapshot, StoredAlertState, StoredNotification, StoredSeenResetCards } from "../types/ipc";
+import type { AppSettings, ProviderInstance, ProviderSnapshot, StoredAlertState, StoredNotification, StoredSeenResetCards, StoredWorkbuddyCheckin, StoredWorkbuddyTravelClaim } from "../types/ipc";
 import { currentWindowLabel, useAppStore } from "./useAppStore";
 import { useNotificationStore } from "./useNotificationStore";
 
@@ -123,8 +125,74 @@ function createResetCardDetector(): ResetCardDetector {
   return new ResetCardDetector(deps);
 }
 
+function createCheckinDetector(): CheckinDetector {
+  const deps: CheckinDetectorDeps = {
+    notify: (arrival: CheckinArrival) => {
+      // ruleKey 传 null：签到不走告警冷却判重（ADR-0025）；判重权威是
+      // workbuddy_checkins 的按日记录（同一天的快照重放不再到达这里）
+      void invoke<StoredNotification | null>("add_notification", {
+        instanceId: arrival.instanceId,
+        ruleKey: null,
+        title: arrival.title,
+        body: arrival.body,
+        params: arrival.params,
+      })
+        .then((stored) => {
+          if (!stored) return;
+          useNotificationStore.getState().onAdded(stored);
+          void sendSystemNotification(arrival);
+        })
+        .catch(() => {
+          void sendSystemNotification(arrival);
+        });
+    },
+    onStateChange: (record: StoredWorkbuddyCheckin) => {
+      // 判重日期回写后端事实源；失败只留痕——重启后最坏重报一次签到
+      // （投递韧性优先于判重，与重置卡已见集合同口径）
+      void invoke("save_workbuddy_checkin", { checkin: record }).catch((error) => {
+        console.warn("签到通知判重回写失败", error);
+      });
+    },
+  };
+  return new CheckinDetector(deps);
+}
+
+function createTravelDetector(): TravelDetector {
+  const deps: TravelDetectorDeps = {
+    notify: (arrival: TravelArrival) => {
+      // ruleKey 传 null：领奖通知不走告警冷却判重（ADR-0025）；判重权威是
+      // workbuddy_travel_claims 的按行程记录（同一行程的快照重放不再到达这里）
+      void invoke<StoredNotification | null>("add_notification", {
+        instanceId: arrival.instanceId,
+        ruleKey: null,
+        title: arrival.title,
+        body: arrival.body,
+        params: arrival.params,
+      })
+        .then((stored) => {
+          if (!stored) return;
+          useNotificationStore.getState().onAdded(stored);
+          void sendSystemNotification(arrival);
+        })
+        .catch(() => {
+          void sendSystemNotification(arrival);
+        });
+    },
+    onStateChange: (record: StoredWorkbuddyTravelClaim) => {
+      // 判重行程键回写后端事实源；失败只留痕——重启后最坏重报一次领奖
+      // （投递韧性优先于判重，与签到判重同口径）
+      void invoke("save_workbuddy_travel_claim", { claim: record }).catch((error) => {
+        console.warn("旅行领奖判重回写失败", error);
+      });
+    },
+  };
+  return new TravelDetector(deps);
+}
+
 const coordinator = createCoordinator();
 const resetCardDetector = createResetCardDetector();
+const checkinDetector = createCheckinDetector();
+const travelDetector = createTravelDetector();
 
 export const useAlertStore = create<AlertStore>(() => ({
   active: {},
@@ -134,6 +202,11 @@ export const useAlertStore = create<AlertStore>(() => ({
     // 到账检测与告警同窗口策略（ADR-0022）：只主窗口评估，面板刷出的快照由
     // reevaluate 重跑，多 webview 副本互不知晓也不会重复通知（已见集合判定）
     resetCardDetector.observe(instance, snapshot);
+    // 签到检测同窗口策略；错误快照也参与——签到与取数是两个源（ADR-0029），
+    // 检测器内部按 checkin 字段有无判定，取数失败不吞掉已发生的签到
+    checkinDetector.observe(instance, snapshot);
+    // 旅行领奖检测同口径：错误快照也参与，检测器内部按 travel 字段有无判定
+    travelDetector.observe(instance, snapshot);
   },
   reevaluate: () => {
     if (currentWindowLabel() !== "main") return;
@@ -143,6 +216,8 @@ export const useAlertStore = create<AlertStore>(() => ({
       const snapshot = latest.get(instance.id);
       if (snapshot) coordinator.observe(instance, snapshot, settings.alertsEnabled, settings.alertCooldownHours * 3_600_000);
       if (snapshot) resetCardDetector.observe(instance, snapshot);
+      if (snapshot) checkinDetector.observe(instance, snapshot);
+      if (snapshot) travelDetector.observe(instance, snapshot);
     }
   },
   hydrate: async () => {
@@ -167,9 +242,34 @@ export const useAlertStore = create<AlertStore>(() => ({
       .map((result) => (result.status === "fulfilled" ? result.value : null))
       .filter((item): item is StoredSeenResetCards => item !== null);
     resetCardDetector.hydrate(seen);
+    // 签到判重日期按实例逐个水合；失败不阻断——最坏同一天的旧快照重放重报一次
+    const workbuddyIds = useAppStore
+      .getState()
+      .instances.filter((instance) => instance.providerId === "workbuddy")
+      .map((instance) => instance.id);
+    const checkinResults = await Promise.allSettled(
+      workbuddyIds.map((instanceId) => invoke<StoredWorkbuddyCheckin | null>("get_workbuddy_checkin", { instanceId })),
+    );
+    checkinDetector.hydrate(
+      checkinResults
+        .map((result) => (result.status === "fulfilled" ? result.value : null))
+        .filter((item): item is StoredWorkbuddyCheckin => item !== null),
+    );
+    // 旅行领奖判重按实例逐个水合（单行按行程键设计）；失败不阻断——最坏同行程的
+    // 旧快照重放重报一次
+    const travelResults = await Promise.allSettled(
+      workbuddyIds.map((instanceId) => invoke<StoredWorkbuddyTravelClaim | null>("get_workbuddy_travel_claim", { instanceId })),
+    );
+    travelDetector.hydrate(
+      travelResults
+        .map((result) => (result.status === "fulfilled" ? result.value : null))
+        .filter((item): item is StoredWorkbuddyTravelClaim => item !== null),
+    );
   },
   prune: (instanceId) => {
     coordinator.prune(instanceId);
     resetCardDetector.prune(instanceId);
+    checkinDetector.prune(instanceId);
+    travelDetector.prune(instanceId);
   },
 }));
