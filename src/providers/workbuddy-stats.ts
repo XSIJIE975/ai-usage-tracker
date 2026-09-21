@@ -136,7 +136,7 @@ export const fetchWorkbuddyUsage = async (
         instanceId: instance.id,
         url: USAGE_URL,
         method: "POST",
-        auth: "cookie_header",
+        auth: "session_cookie",
         credentialSlot: "cookie",
         headers: {
           Accept: "application/json",

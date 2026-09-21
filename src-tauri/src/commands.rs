@@ -246,6 +246,30 @@ fn normalize_auth_cookie(value: &str) -> String {
     cookie.to_string()
 }
 
+/// WorkBuddy session Cookie Value 合法性校验（只判定、不改写）：限定 RFC 6265
+/// cookie-value 字符集（可见 ASCII，排除空白/引号/逗号/分号/控制符），
+/// 挡住 CRLF 头注入与整串 Cookie 误粘；上限 16384 字符（实测真实 session 近 4000 字符）
+fn validate_session_value(value: &str) -> Result<(), String> {
+    if value.is_empty() {
+        return Err("请填写 WorkBuddy session Cookie 的 Value".to_string());
+    }
+    if value.len() > 16_384 {
+        return Err("WorkBuddy session 值过长，请确认只粘贴了 session 的 Value".to_string());
+    }
+    if !value.chars().all(|c| {
+        c == '!'
+            || ('\u{23}'..='\u{2b}').contains(&c)
+            || ('\u{2d}'..='\u{3a}').contains(&c)
+            || ('\u{3c}'..='\u{7e}').contains(&c)
+    }) {
+        return Err(
+            "WorkBuddy session 值包含非法字符（不能带空格、引号、分号或整串 Cookie），请只粘贴 Value 本体"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn get_settings(state: State<'_, AppState>) -> Result<Value, String> {
     let db = state.db.lock().expect("db lock poisoned");
@@ -542,24 +566,25 @@ impl DiagnosisResult {
 
 /// 用"刚输入、尚未保存"的凭据值发起一次真实探测请求，验证连通性。
 /// auth: "bearer"（携带 credential 作为 Bearer token）| "cookie"（auth=<normalized credential>）
-/// cookie_header：原样携带整串 Cookie 头（workbuddy.cn 的 session 会话，键名由服务端定，
-/// 不能走 auth=<value> 的固定键名通道）；给出时忽略 auth/credential
+/// session_value：WorkBuddy session Cookie 的 Value 原文——校验字符集后拼
+/// Cookie: session=<值>（与 provider_request 的 session_cookie 通道同款）；给出时忽略 auth/credential
 #[tauri::command]
 pub async fn diagnose_request(
     url: String,
     auth: Option<String>,
     credential: Option<String>,
     expect_html: Option<bool>,
-    cookie_header: Option<String>,
+    session_value: Option<String>,
 ) -> Result<DiagnosisResult, String> {
     let client = http_client();
 
     let mut request = client.request(Method::GET, &url);
-    if let Some(cookie) = cookie_header.filter(|value| !value.trim().is_empty()) {
-        // 原样携带整串 Cookie（workbuddy.cn 的 session 会话，键名服务端定）。
+    if let Some(session) = session_value.filter(|value| !value.trim().is_empty()) {
+        let session = session.trim();
+        validate_session_value(session)?;
         // UA 必须带 Edg/ 后缀：EdgeOne WAF 对非 Edge UA 一律 401（2026-09-21 实测，
         // 与 Cookie 有效性无关），与前端 providers/workbuddy.ts 的取值保持一致
-        request = request.header("Cookie", cookie.trim());
+        request = request.header("Cookie", format!("session={session}"));
         request = request.header(
             "User-Agent",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36 Edg/153.0.0.0",
@@ -869,14 +894,15 @@ pub async fn provider_request(
                         .to_string()
                 });
         }
-        Some("cookie_header") => {
-            // 原样携带整串 Cookie 头（workbuddy.cn 的 session 会话，键名由服务端定，
-            // 不能走 auth=<value> 的固定键名通道）；值仍从 vault 按槽位读取，前端不接触明文
+        Some("session_cookie") => {
+            // vault 槽位存 session Cookie 的 Value 原文（前端不做任何改写），这里校验
+            // 字符集（防头注入）后统一拼 Cookie: session=<值>，与探测链路同款
             let slot = credential_slot
                 .clone()
-                .ok_or_else(|| "cookie_header auth 需要 credential_slot".to_string())?;
+                .ok_or_else(|| "session_cookie auth 需要 credential_slot".to_string())?;
             let value = resolve_bearer_key(&kind, &slot, &instance_credentials)?;
-            headers.insert("Cookie".to_string(), value.to_string());
+            validate_session_value(value)?;
+            headers.insert("Cookie".to_string(), format!("session={value}"));
         }
         Some("cookie") => return Err("不支持的 provider cookie auth".to_string()),
         _ => {}
@@ -1022,6 +1048,23 @@ mod tests {
         assert_eq!(normalize_auth_cookie("AUTH=abc"), "abc");
         assert_eq!(normalize_auth_cookie("Cookie: auth=abc"), "abc");
         assert_eq!(normalize_auth_cookie("foo=1; auth=abc; bar=2"), "abc");
+    }
+
+    #[test]
+    fn validates_workbuddy_session_values_verbatim() {
+        // 合法：opaque token 原样通过（含 = 填充与 : - _ 等 cookie 字符集内符号）
+        assert!(validate_session_value("abc123-_=:").is_ok());
+        assert!(validate_session_value("YWJj==").is_ok());
+        assert!(validate_session_value("Ref4V2b0nyljz|1790576618|c3y14nl-u_X|kuv4NDBI1Fuu").is_ok());
+        // 非法：空白/换行（头注入）、引号、分号（整串 Cookie 误粘）、非 ASCII
+        assert!(validate_session_value("").is_err());
+        assert!(validate_session_value("a b").is_err());
+        assert!(validate_session_value("a\r\nX: 1").is_err());
+        assert!(validate_session_value("\"abc\"").is_err());
+        assert!(validate_session_value("session=abc; session_2=def").is_err());
+        assert!(validate_session_value("会话值").is_err());
+        assert!(validate_session_value(&"a".repeat(16_384)).is_ok());
+        assert!(validate_session_value(&"a".repeat(16_385)).is_err());
     }
 
     #[test]

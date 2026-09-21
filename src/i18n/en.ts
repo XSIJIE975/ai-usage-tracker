@@ -335,9 +335,9 @@ export const en: Record<string, string> = {
   "获取方式：打开 bigmodel.cn 控制台 → Coding Plan 页 → 「生成 API Key」，复制生成的 API Key 粘贴到上方。":
     "How to get: open the bigmodel.cn console → Coding Plan page → \"Generate API Key\", then copy the generated API Key and paste it above.",
   "WorkBuddy 登录 Cookie": "WorkBuddy login Cookie",
-  "只粘贴 session Cookie 的 Value": "Paste only the session cookie's Value",
-  "获取方式：打开 workbuddy.cn 并登录 → 按 F12 打开开发者工具 → 网络(Network) → 刷新页面 → 任选一个 API 请求（路径带 billing/meter 或 activity/growth）→ 请求标头的 Cookie 中找到名为 session 的项，复制它的 Value 粘贴到上方。整串 Cookie 或带 Cookie: 前缀的旧写法也能识别，会自动抠出 session。浏览器退出登录或会话轮换后此值会失效，届时重新复制一次。":
-    "How to get: open workbuddy.cn and sign in → F12 dev tools → Network → reload the page → pick any API request (path containing billing/meter or activity/growth) → in the request headers' Cookie, find the item named session and paste its Value above. Legacy inputs (the whole Cookie string, or a leading \"Cookie:\" prefix) are still recognized — session is extracted automatically. The value expires when the browser signs out or rotates the session — copy it again then.",
+  "只粘贴 session 的 Value": "Paste only the session cookie's Value",
+  "获取方式：登录 workbuddy.cn → F12 开发者工具 → Application(应用) → Cookies → 选 workbuddy.cn → 复制名为 session 项的 Value 粘贴到上方（不带 session= 前缀）。退出登录或会话轮换后失效，重新复制即可。":
+    "How to get: sign in to workbuddy.cn → F12 dev tools → Application → Cookies → workbuddy.cn → copy the Value of the session item and paste it above (no \"session=\" prefix). It expires on sign-out or session rotation — copy it again.",
   "积分已用告警阈值（%）": "Credits usage alert threshold (%)",
   "积分已用达到该百分比时发送系统通知；留空不告警。":
     "Notify when credits usage reaches this percent; leave empty to disable alerts.",

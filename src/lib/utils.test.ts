@@ -4,7 +4,7 @@ import {
   formatReset,
   formatResetAt,
   normalizeOpenCodeAuthCookie,
-  normalizeWorkbuddyCookie,
+  validateWorkbuddySessionValue,
 } from "./utils";
 
 describe("normalizeOpenCodeAuthCookie", () => {
@@ -26,33 +26,30 @@ describe("normalizeOpenCodeAuthCookie", () => {
   });
 });
 
-describe("normalizeWorkbuddyCookie", () => {
-  it("wraps a bare session value into a session= pair", () => {
-    expect(normalizeWorkbuddyCookie(" abc ")).toBe("session=abc");
-    expect(normalizeWorkbuddyCookie("YWJj=")).toBe("session=YWJj=");
+describe("validateWorkbuddySessionValue", () => {
+  it("accepts an opaque session value verbatim", () => {
+    expect(validateWorkbuddySessionValue("abc123-_=:")).toBeNull();
+    expect(validateWorkbuddySessionValue("YWJj==")).toBeNull();
+    // 真实 session 形态：id|ts|hmac|id 三段式，约 4000 字符
+    expect(validateWorkbuddySessionValue("Ref4V2b0nyljz|1790576618|c3y14nl-u_X|kuv4NDBI1Fuu")).toBeNull();
   });
 
-  it("keeps a session= pair, trimming whitespace", () => {
-    expect(normalizeWorkbuddyCookie("session=abc")).toBe("session=abc");
-    expect(normalizeWorkbuddyCookie("SESSION=abc")).toBe("session=abc");
+  it("rejects empty input", () => {
+    expect(validateWorkbuddySessionValue("")).toMatch(/请填写/);
   });
 
-  it("strips a Cookie header prefix", () => {
-    expect(normalizeWorkbuddyCookie("Cookie: session=abc")).toBe("session=abc");
-    expect(normalizeWorkbuddyCookie("cookie:session=abc; session_2=def")).toBe("session=abc");
+  it("rejects header-injection and malformed paste characters", () => {
+    expect(validateWorkbuddySessionValue("a b")).toMatch(/非法字符/);
+    expect(validateWorkbuddySessionValue("a\r\nSet-Cookie: x=1")).toMatch(/非法字符/);
+    expect(validateWorkbuddySessionValue('a"b')).toMatch(/非法字符/);
+    expect(validateWorkbuddySessionValue("session=abc; session_2=def")).toMatch(/非法字符/);
+    expect(validateWorkbuddySessionValue("<script src=x onerror=1>")).toMatch(/非法字符/);
+    expect(validateWorkbuddySessionValue("值")).toMatch(/非法字符/);
   });
 
-  it("extracts the session cookie from a full cookie list", () => {
-    expect(normalizeWorkbuddyCookie("ta_user_id=1; session=abc; session_2=def")).toBe("session=abc");
-    expect(normalizeWorkbuddyCookie("session=abc==rest")).toBe("session=abc==rest");
-  });
-
-  it("passes through a cookie list without a session key", () => {
-    expect(normalizeWorkbuddyCookie("foo=1; session_2=def")).toBe("foo=1; session_2=def");
-  });
-
-  it("returns empty for blank input", () => {
-    expect(normalizeWorkbuddyCookie("   ")).toBe("");
+  it("rejects oversized values", () => {
+    expect(validateWorkbuddySessionValue("a".repeat(16_385))).toMatch(/过长/);
+    expect(validateWorkbuddySessionValue("a".repeat(16_384))).toBeNull();
   });
 });
 

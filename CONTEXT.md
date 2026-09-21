@@ -90,7 +90,7 @@ _Avoid_：把 CodeBuddy 当成另一个供应商（同一积分体系）；「Co
 
 ## WorkBuddy 登录 Cookie
 
-workbuddy.cn 网页端的登录态（`session` 与 `session_2` 两个 Cookie，服务端会话而非 JWT），请求时以 `session=<值>` 作 Cookie 头携带即可。获取方式为手动粘贴：登录后 F12 从网络面板复制名为 session 的 Cookie 的 Value；整串 Cookie 或带 `Cookie:` 前缀的旧写法也能识别，保存/测试前统一归一化为 `session=<值>`，失效后重新复制即恢复。网页端**没有** Bearer token——Bearer JWT 只存在于官方 IDE 扩展/CLI 的 OAuth 链路（与网页会话是两条通道，社区工具走的正是后者）；不做自动刷新：与官方客户端并存时主动续期会互相踢下线（ADR-0029）。与 DeepSeek UserToken 同属「网页登录态」类凭据，存于凭据库。
+workbuddy.cn 网页端的登录态（`session` 与 `session_2` 两个 Cookie，服务端会话而非 JWT）。凭据只存 `session` 的 Value 原文：用户从 F12 复制什么就存什么，前端不做任何改写，仅按 RFC 6265 字符集白名单校验（防 CRLF 头注入与整串误粘），`Cookie: session=<值>` 的拼装统一在 Rust 端（探测与刷新同款）。失效后重新复制即恢复。网页端**没有** Bearer token——Bearer JWT 只存在于官方 IDE 扩展/CLI 的 OAuth 链路（与网页会话是两条通道，社区工具走的正是后者）；不做自动刷新：与官方客户端并存时主动续期会互相踢下线（ADR-0029）。与 DeepSeek UserToken 同属「网页登录态」类凭据，存于凭据库。
 
 ## 积分
 

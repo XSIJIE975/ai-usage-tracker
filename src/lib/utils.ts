@@ -27,31 +27,25 @@ export function normalizeOpenCodeAuthCookie(value: string): string {
   return cookie;
 }
 
-/** WorkBuddy 登录凭据归一化：期望输入就是 session Cookie 的 Value；同时兼容
- *  "session=…"、整串 Cookie（自动抠出 session 一项）、带 "Cookie:" 前缀的请求头旧写法。
- *  输出恒为 "session=<值>" 完整键值对（Rust 端按整串 Cookie 头原样携带）；
- *  多键 Cookie 里找不到 session 时原样（去前缀）返回，交由服务端判定 */
-export function normalizeWorkbuddyCookie(value: string): string {
-  let cookie = value.trim();
-  if (cookie.toLowerCase().startsWith("cookie:")) {
-    cookie = cookie.slice("cookie:".length).trim();
-  }
-  if (!cookie) return "";
+/** WorkBuddy session Cookie Value 校验（只判合法性、不改写内容）：
+ *  白名单为 RFC 6265 cookie-value 字符集（可见 ASCII，排除空白/引号/逗号/分号），
+ *  挡住 CRLF 头注入与畸形粘贴；`Cookie: session=<值>` 的拼装统一在 Rust 端做 */
+export const WORKBUDDY_SESSION_MAX_LENGTH = 16_384;
 
-  if (cookie.includes(";")) {
-    for (const part of cookie.split(";")) {
-      const [rawName, ...rest] = part.trim().split("=");
-      if (rawName?.trim().toLowerCase() === "session") {
-        return `session=${rest.join("=").trim()}`;
-      }
-    }
-    return cookie;
+export function validateWorkbuddySessionValue(value: string): string | null {
+  if (!value) return "请填写 WorkBuddy session Cookie 的 Value";
+  if (value.length > WORKBUDDY_SESSION_MAX_LENGTH)
+    return `WorkBuddy session 值过长（超过 ${WORKBUDDY_SESSION_MAX_LENGTH} 字符），请确认只粘贴了 session 的 Value`;
+  for (const ch of value) {
+    const legal =
+      ch === "!" ||
+      (ch >= "#" && ch <= "+") ||
+      (ch >= "-" && ch <= ":") ||
+      (ch >= "<" && ch <= "~");
+    if (!legal)
+      return "WorkBuddy session 值包含非法字符（不能带空格、引号、分号或整串 Cookie），请只粘贴 Value 本体";
   }
-
-  if (/^session=/i.test(cookie)) {
-    return `session=${cookie.slice("session=".length).trim()}`;
-  }
-  return `session=${cookie}`;
+  return null;
 }
 
 export function formatRefreshLabel(minutes: number, translate?: (s: string) => string) {

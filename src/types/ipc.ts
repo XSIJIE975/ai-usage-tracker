@@ -36,9 +36,9 @@ export interface ProviderRequestOptions {
   method?: "GET" | "POST";
   headers?: Record<string, string>;
   bodyText?: string;
-  /** "cookie_header"：从 vault 槽位取值原样作 Cookie 头（workbuddy 的 session 会话） */
-  auth?: "bearer" | "cookie" | "none" | "cookie_header";
-  /** bearer/cookie_header 时的凭据槽；bearer 缺省用该种类的主鉴权键 */
+  /** "session_cookie"：从 vault 槽位读 session 的 Value，校验后拼作 Cookie: session=<值>（workbuddy） */
+  auth?: "bearer" | "cookie" | "none" | "session_cookie";
+  /** bearer/session_cookie 时的凭据槽；bearer 缺省用该种类的主鉴权键 */
   credentialSlot?: string;
 }
 

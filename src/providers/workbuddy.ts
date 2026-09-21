@@ -14,8 +14,8 @@ import type { ProviderModule } from "./types";
 //   src/extension.ts 揭示了接口族与响应形态；
 // - 用户从 workbuddy.cn 抓包证实：**网页端不用 Bearer JWT，身份是 Cookie 会话**
 //   （session + session_2），请求体也带真实 PackageCodes（与 CodeBuddy-Usage 的
-//   内置清单一致）。鉴权因此走 cookie_header 通道，凭据为归一化后的 session
-//   Cookie（前端保存/测试统一转成 "session=<值>"，整串粘贴也能抠出 session）。
+//   内置清单一致）。鉴权因此走 session_cookie 通道：凭据只存 session 的 Value
+//   （原文存、不加工），Rust 端校验字符集后拼 `Cookie: session=<值>`。
 // - 余额/套餐：POST /billing/meter/get-user-resource（与两个社区实现同端点同主机：
 //   CodeBuddy-Usage 逐字同路径，workbuddy2api 在 codebuddy.cn 走 /v2 前缀同族；
 //   网页端 plans-usage 页用的同族 -free-packages 实测也可用，但顾名思义只覆盖免费包，
@@ -95,7 +95,7 @@ const RESOURCE_BODY = JSON.stringify({
   NeedInUsage: true,
 });
 
-/** 凭据槽（workbuddy 实例的 session Cookie，归一化为 "session=<值>"） */
+/** 凭据槽（workbuddy 实例存的 session Cookie 的 Value 原文） */
 const CREDENTIAL_SLOT = "cookie";
 
 interface WorkbuddyEnvelope<T> {
@@ -461,7 +461,7 @@ async function departTravel(instanceId: string): Promise<boolean> {
       instanceId,
       url: `${TRAVEL_URL}/depart`,
       method: "POST",
-      auth: "cookie_header",
+      auth: "session_cookie",
       credentialSlot: CREDENTIAL_SLOT,
       headers: TRAVEL_HEADERS,
       bodyText: JSON.stringify({ location_id: 1 }),
@@ -499,7 +499,7 @@ async function fetchWorkbuddySnapshot(instance: ProviderInstance): Promise<Provi
         instanceId: instance.id,
         url: CHECKIN_URL,
         method: "POST",
-        auth: "cookie_header",
+        auth: "session_cookie",
         credentialSlot: CREDENTIAL_SLOT,
         headers: BILLING_HEADERS,
         bodyText: "{}",
@@ -525,7 +525,7 @@ async function fetchWorkbuddySnapshot(instance: ProviderInstance): Promise<Provi
   try {
     const requestInit = {
       instanceId: instance.id,
-      auth: "cookie_header" as const,
+      auth: "session_cookie" as const,
       credentialSlot: CREDENTIAL_SLOT,
       headers: TRAVEL_HEADERS,
     };
@@ -581,7 +581,7 @@ async function fetchWorkbuddySnapshot(instance: ProviderInstance): Promise<Provi
       instanceId: instance.id,
       url: RESOURCE_URL,
       method: "POST",
-      auth: "cookie_header",
+      auth: "session_cookie",
       credentialSlot: CREDENTIAL_SLOT,
       headers: BILLING_HEADERS,
       bodyText: RESOURCE_BODY,
@@ -590,7 +590,7 @@ async function fetchWorkbuddySnapshot(instance: ProviderInstance): Promise<Provi
       instanceId: instance.id,
       url: STREAK_URL,
       method: "GET",
-      auth: "cookie_header",
+      auth: "session_cookie",
       credentialSlot: CREDENTIAL_SLOT,
       headers: ACTIVITY_HEADERS,
     }),
