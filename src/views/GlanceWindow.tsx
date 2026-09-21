@@ -159,7 +159,7 @@ export function GlanceWindow() {
         <button
           type="button"
           onClick={() => void openMain()}
-          className="flex items-center gap-1.5 rounded px-1 py-0.5 text-[11px] text-fg-muted transition-colors hover:text-fg-secondary"
+          className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded px-1 py-0.5 text-[11px] text-fg-muted transition-colors hover:text-fg-secondary"
         >
           <Bell className="h-3 w-3" />
           {unread > 0 ? `${unread} ${t("条未读")}` : t("通知中心")}
@@ -167,7 +167,7 @@ export function GlanceWindow() {
         <button
           type="button"
           onClick={() => void openMain()}
-          className="flex items-center gap-1.5 rounded px-1 py-0.5 text-[11px] text-fg-muted transition-colors hover:text-fg-secondary"
+          className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded px-1 py-0.5 text-[11px] text-fg-muted transition-colors hover:text-fg-secondary"
         >
           <Gauge className="h-3 w-3" />
           {t("打开主窗口")}

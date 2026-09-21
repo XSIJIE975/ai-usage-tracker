@@ -210,7 +210,7 @@ export const en: Record<string, string> = {
 
   // ── 快速面板 ──
   "打开主窗口": "Open main window",
-  "通知中心": "Notification center",
+  "通知中心": "Notifications",
   "条未读": " unread",
   "隐藏": "Hide",
   "自动刷新已关闭": "Auto refresh off",
