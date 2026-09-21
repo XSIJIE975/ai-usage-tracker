@@ -434,7 +434,6 @@ export const en: Record<string, string> = {
   "用量环展示的实例": "Instance shown in the ring",
   "默认展示用量百分比最高的实例；也可固定展示某个实例。": "Shows the instance with the highest usage percentage by default; you can also pin a specific one.",
   "自动（最紧实例）": "Auto (tightest instance)",
-  "点击速览面板以外的区域时自动收起。": "The glance panel hides automatically when you click outside it.",
   "展示范围": "Shown instances",
   "速览面板展示全部实例，或仅展示勾选的实例。": "The glance panel shows all instances, or only the ones you pick.",
   "全部实例": "All instances",
@@ -443,10 +442,6 @@ export const en: Record<string, string> = {
   "重置倒计时": "Reset countdown",
   "多窗口明细": "Window details",
   "同时展示 5 小时窗口与周配额等多个配额窗口的用量。": "Show usage of every quota window, e.g. the 5-hour window and the weekly quota.",
-  "告警标记": "Alert badge",
-  "告警中的实例以黄色边框与警示图标标出。": "Alerting instances are highlighted with an amber border and a warning icon.",
-  "底部操作条": "Footer bar",
-  "面板底部的未读通知与打开主窗口入口。": "Unread notifications and the main-window shortcut at the bottom of the panel.",
   "未选择展示的实例": "No instances selected",
   "可在「设置 → 托盘与速览」中勾选要在此展示的实例":
     "Pick which instances to show here in Settings → Tray & glance.",
@@ -465,7 +460,6 @@ export const en: Record<string, string> = {
   "卡片": "Cards",
   "已选": "Selected",
   "全选": "Select all",
-  "控制每个实例块中展示哪些数据。": "Controls which data appears on each instance block.",
   "用量柱": "Usage bars",
   "用量展示的实例": "Instance shown in the meter",
   "环形计量": "Ring meter",
@@ -479,12 +473,6 @@ export const en: Record<string, string> = {
   "控制每个实例上显示哪些信息。": "Controls what details appear on each instance.",
   "同时显示 5 小时窗口、周配额等多个配额窗口各自的用量。":
     "Show usage of every quota window side by side, e.g. the 5-hour window and the weekly quota.",
-  "触发告警的实例会加黄色边框和警示图标。":
-    "Instances with active alerts get an amber border and a warning icon.",
-  "显示面板底部的通知中心和「打开主窗口」按钮。":
-    "Show the notification center and an \"Open main window\" button at the bottom of the panel.",
-  "点击面板以外的区域时，面板会自动收起。":
-    "The panel hides automatically when you click outside it.",
   "可在设置的「速览面板」中勾选要在此展示的实例":
     "Pick which instances to show here in Settings → Glance panel.",
   // ── 2026-09 i18n 清剿补键 ──

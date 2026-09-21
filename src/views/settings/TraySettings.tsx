@@ -87,7 +87,7 @@ export function TraySettings() {
     translate: t,
   });
   const glanceFields: GlanceFieldFlags = {
-    showAlerts: settings.glanceShowAlerts,
+    showAlerts: true,
     showBalance: settings.glanceShowBalance,
     showReset: settings.glanceShowReset,
     showWindows: settings.glanceShowWindows,
@@ -204,32 +204,31 @@ export function TraySettings() {
             translate={t}
           />
 
-          <div className="flex items-center justify-between gap-4">
-            <Label>{t("展示形态")}</Label>
-            <Segmented
-              size="sm"
-              value={settings.glanceLayout}
-              onChange={(value) => void save({ glanceLayout: value }, "glance")}
-              options={[
-                { value: "list", label: t("列表") },
-                { value: "cards", label: t("卡片") },
-              ]}
-            />
-          </div>
-
-          <Separator />
-
-          <div className="flex items-center justify-between gap-4">
-            <Label>{t("展示范围")}</Label>
-            <Segmented
-              size="sm"
-              value={settings.glanceInstanceScope}
-              onChange={(value) => void save({ glanceInstanceScope: value }, "glance")}
-              options={[
-                { value: "all", label: t("全部实例") },
-                { value: "custom", label: t("自选实例") },
-              ]}
-            />
+          <div className="grid max-w-2xl grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="flex items-center justify-between gap-3">
+              <Label>{t("展示形态")}</Label>
+              <Segmented
+                size="sm"
+                value={settings.glanceLayout}
+                onChange={(value) => void save({ glanceLayout: value }, "glance")}
+                options={[
+                  { value: "list", label: t("列表") },
+                  { value: "cards", label: t("卡片") },
+                ]}
+              />
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <Label>{t("展示范围")}</Label>
+              <Segmented
+                size="sm"
+                value={settings.glanceInstanceScope}
+                onChange={(value) => void save({ glanceInstanceScope: value }, "glance")}
+                options={[
+                  { value: "all", label: t("全部实例") },
+                  { value: "custom", label: t("自选实例") },
+                ]}
+              />
+            </div>
           </div>
 
           {customScope && (
@@ -302,50 +301,24 @@ export function TraySettings() {
               <Label>{t("展示字段")}</Label>
               <HintTooltip tip={t("控制每个实例上显示哪些信息。")} />
             </div>
-            <FieldSwitch
-              label={t("账户余额")}
-              checked={settings.glanceShowBalance}
-              onChange={(value) => void save({ glanceShowBalance: value }, "glance")}
-            />
-            <FieldSwitch
-              label={t("重置倒计时")}
-              checked={settings.glanceShowReset}
-              onChange={(value) => void save({ glanceShowReset: value }, "glance")}
-            />
-            <FieldSwitch
-              label={t("多窗口明细")}
-              tip={t("同时显示 5 小时窗口、周配额等多个配额窗口各自的用量。")}
-              checked={settings.glanceShowWindows}
-              onChange={(value) => void save({ glanceShowWindows: value }, "glance")}
-            />
-            <FieldSwitch
-              label={t("告警标记")}
-              tip={t("触发告警的实例会加黄色边框和警示图标。")}
-              checked={settings.glanceShowAlerts}
-              onChange={(value) => void save({ glanceShowAlerts: value }, "glance")}
-            />
-          </div>
-
-          <Separator />
-
-          <FieldSwitch
-            label={t("底部操作条")}
-            tip={t("显示面板底部的通知中心和「打开主窗口」按钮。")}
-            checked={settings.glanceShowFooter}
-            onChange={(value) => void save({ glanceShowFooter: value }, "glance")}
-          />
-
-          <Separator />
-
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-1.5">
-              <Label>{t("失焦自动隐藏")}</Label>
-              <HintTooltip tip={t("点击面板以外的区域时，面板会自动收起。")} />
+            <div className="grid max-w-2xl grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2">
+              <FieldSwitch
+                label={t("账户余额")}
+                checked={settings.glanceShowBalance}
+                onChange={(value) => void save({ glanceShowBalance: value }, "glance")}
+              />
+              <FieldSwitch
+                label={t("重置倒计时")}
+                checked={settings.glanceShowReset}
+                onChange={(value) => void save({ glanceShowReset: value }, "glance")}
+              />
+              <FieldSwitch
+                label={t("多窗口明细")}
+                tip={t("同时显示 5 小时窗口、周配额等多个配额窗口各自的用量。")}
+                checked={settings.glanceShowWindows}
+                onChange={(value) => void save({ glanceShowWindows: value }, "glance")}
+              />
             </div>
-            <Switch
-              checked={settings.glanceAutoHide}
-              onCheckedChange={(value) => void save({ glanceAutoHide: value }, "glance")}
-            />
           </div>
         </CardContent>
       </Card>

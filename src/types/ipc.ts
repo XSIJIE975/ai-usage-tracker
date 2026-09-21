@@ -123,12 +123,6 @@ export interface AppSettings {
   glanceShowReset: boolean;
   /** 速览面板字段：多窗口明细（5 小时窗口 + 周配额等） */
   glanceShowWindows: boolean;
-  /** 速览面板字段：告警标记 */
-  glanceShowAlerts: boolean;
-  /** 速览面板底部操作条（未读通知 + 打开主窗口） */
-  glanceShowFooter: boolean;
-  /** 速览面板失焦自动隐藏 */
-  glanceAutoHide: boolean;
 }
 
 export interface StoredNotification {

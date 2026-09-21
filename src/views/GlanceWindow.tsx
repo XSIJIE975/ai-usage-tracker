@@ -38,7 +38,6 @@ export function GlanceWindow() {
   const { ready, panelVisible, hideWindow } = usePanelWindow({
     shownEvent: "glance-shown",
     hideCommand: "hide_glance_window",
-    autoHideKey: "glanceAutoHide",
   });
   usePanelAutoRefresh(panelVisible);
 
@@ -62,7 +61,7 @@ export function GlanceWindow() {
     translate: t,
   });
   const fields = {
-    showAlerts: settings.glanceShowAlerts,
+    showAlerts: true,
     showBalance: settings.glanceShowBalance,
     showReset: settings.glanceShowReset,
     showWindows: settings.glanceShowWindows,
@@ -162,26 +161,24 @@ export function GlanceWindow() {
         </div>
       </main>
 
-      {settings.glanceShowFooter && (
-        <footer className="flex shrink-0 items-center justify-between border-t border-line bg-surface-2/40 px-3 py-1.5">
-          <button
-            type="button"
-            onClick={() => void openMain()}
-            className="flex items-center gap-1.5 rounded px-1 py-0.5 text-[11px] text-fg-muted transition-colors hover:text-fg-secondary"
-          >
-            <Bell className="h-3 w-3" />
-            {unread > 0 ? `${unread} ${t("条未读")}` : t("通知中心")}
-          </button>
-          <button
-            type="button"
-            onClick={() => void openMain()}
-            className="flex items-center gap-1.5 rounded px-1 py-0.5 text-[11px] text-fg-muted transition-colors hover:text-fg-secondary"
-          >
-            <Gauge className="h-3 w-3" />
-            {t("打开主窗口")}
-          </button>
-        </footer>
-      )}
+      <footer className="flex shrink-0 items-center justify-between border-t border-line bg-surface-2/40 px-3 py-1.5">
+        <button
+          type="button"
+          onClick={() => void openMain()}
+          className="flex items-center gap-1.5 rounded px-1 py-0.5 text-[11px] text-fg-muted transition-colors hover:text-fg-secondary"
+        >
+          <Bell className="h-3 w-3" />
+          {unread > 0 ? `${unread} ${t("条未读")}` : t("通知中心")}
+        </button>
+        <button
+          type="button"
+          onClick={() => void openMain()}
+          className="flex items-center gap-1.5 rounded px-1 py-0.5 text-[11px] text-fg-muted transition-colors hover:text-fg-secondary"
+        >
+          <Gauge className="h-3 w-3" />
+          {t("打开主窗口")}
+        </button>
+      </footer>
     </div>
   );
 }

@@ -13,8 +13,8 @@ export interface PanelWindowConfig {
   shownEvent: string;
   /** 收起窗口的后端命令（hide_quick_window / hide_glance_window） */
   hideCommand: string;
-  /** 失焦自动隐藏对应的设置键 */
-  autoHideKey: "quickAutoHide" | "glanceAutoHide";
+  /** 失焦自动隐藏对应的设置键；缺省 = 无条件失焦自动隐藏（速览面板不提供该开关） */
+  autoHideKey?: "quickAutoHide";
   /** 焦点回到窗口时的守卫：返回 false 跳过本次数据同步（快速面板的拖动回焦不算「用户回来看数据」） */
   onFocusGained?: () => boolean;
   /** Esc 按下的前置处理：返回 true 表示已消费（如快速面板先关闭通知面板） */
@@ -105,7 +105,7 @@ export function usePanelWindow(config: PanelWindowConfig) {
             // 失焦自动隐藏：仅当鼠标光标确实在窗口外时才收起。
             // 点击标题栏拖动窗口时 Windows 会触发失焦（进入系统拖动循环），
             // 此时光标仍在窗口内，不能隐藏——否则表现为"一点标题栏窗口就消失、无法拖动"。
-            if (!useAppStore.getState().settings[autoHideKey]) return;
+            if (autoHideKey && !useAppStore.getState().settings[autoHideKey]) return;
             void (async () => {
               try {
                 const [cursor, position, size] = await Promise.all([
