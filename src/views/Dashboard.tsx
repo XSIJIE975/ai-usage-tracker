@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { ComponentPropsWithoutRef, ComponentType, RefObject } from "react";
+import type { ComponentPropsWithoutRef, RefObject } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   AlertCircle,
@@ -15,7 +15,7 @@ import {
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover";
 import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from "../components/ui/command";
-import { DeepSeekLogo, GlmLogo, OpenCodeLogo, WorkbuddyLogo } from "../components/brand/provider-logo";
+import { ProviderLogo } from "../components/brand/provider-logo";
 import { InstanceDialog } from "./instances/InstanceDialog";
 import { DeleteInstanceDialog } from "./instances/DeleteInstanceDialog";
 import { providerModules } from "../providers";
@@ -591,14 +591,6 @@ export function Dashboard() {
   );
 }
 
-const KIND_LOGOS: Record<ProviderKind, ComponentType<{ className?: string }>> = {
-  deepseek: DeepSeekLogo,
-  "opencode-go": OpenCodeLogo,
-  glm: GlmLogo,
-  workbuddy: WorkbuddyLogo,
-};
-
 function ProviderKindLogo({ providerId }: { providerId: ProviderKind }) {
-  const Logo = KIND_LOGOS[providerId];
-  return <Logo className="h-5 w-5 shrink-0" />;
+  return <ProviderLogo providerId={providerId} className="h-5 w-5 shrink-0" />;
 }

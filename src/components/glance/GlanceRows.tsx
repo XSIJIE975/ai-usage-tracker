@@ -1,7 +1,8 @@
 import { LoaderCircle, TriangleAlert } from "lucide-react";
 import { cn, formatReset } from "../../lib/utils";
-import { metricColor, statusDotColor, type GlanceInstance } from "./data";
+import { metricColor, type GlanceInstance } from "./data";
 import type { Translate } from "./data";
+import { ProviderLogo } from "../brand/provider-logo";
 
 /** 紧凑行列表形态：每实例一块，名称+百分比 / 细进度条+重置倒计时 / 明细字段行（全部固定展示） */
 export function GlanceRows({
@@ -54,11 +55,7 @@ function GlanceRow({
       style={{ animationDelay: `${Math.min(index * 24, 180)}ms` }}
     >
       <div className="flex items-center gap-2">
-        <span
-          className="h-1.5 w-1.5 shrink-0 rounded-full"
-          style={{ background: statusDotColor(item.status) }}
-          aria-hidden
-        />
+        <ProviderLogo providerId={item.providerId} className="h-4 w-4 shrink-0" />
         {item.alertActive && (
           <TriangleAlert className="h-3.5 w-3.5 shrink-0 text-warning" aria-label={translate("有额度告警")} />
         )}
