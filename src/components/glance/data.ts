@@ -57,7 +57,7 @@ export function buildGlanceInstances(
     return {
       id: instance.id,
       providerId: instance.providerId,
-      label: displayName(instance, snapshot?.providerName ?? ""),
+      label: displayName(instance, snapshot ? translate(snapshot.providerName) : ""),
       status: snapshot ? snapshot.status : "no_data",
       refreshing: loading || refreshing[instance.id] === true,
       alertActive: alertActive[instance.id] ?? false,

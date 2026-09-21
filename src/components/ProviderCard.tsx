@@ -270,7 +270,7 @@ function CardBody({
 }: CardBodyProps) {
   const t = useT();
   const refreshIntervalMinutes = useAppStore((state) => state.settings.refreshIntervalMinutes);
-  const kindName = providerName(instance.providerId);
+  const kindName = t(providerName(instance.providerId));
   const title = displayName(instance, kindName);
   const hasNote = instance.note.trim().length > 0;
   const needsConfig = snapshot?.status === "needs_config";
@@ -531,6 +531,7 @@ export function ProviderCard({
   flipped: flippedProp,
   onToggleFlip,
 }: ProviderCardProps) {
+  const t = useT();
   const now = useNow();
   const [detailOpen, setDetailOpen] = useState(false);
   // 翻面朝向：受控（主窗口网格，拖拽浮起副本与占位卡共享）或内部自持（快速面板）。
@@ -538,7 +539,7 @@ export function ProviderCard({
   const [localFlipped, setLocalFlipped] = useState(false);
   const flipped = flippedProp ?? localFlipped;
   const toggleFlip = () => (onToggleFlip ? onToggleFlip() : setLocalFlipped((value) => !value));
-  const kindName = providerName(instance.providerId);
+  const kindName = t(providerName(instance.providerId));
   const title = displayName(instance, kindName);
   const needsConfig = snapshot?.status === "needs_config";
   // 仅当存在「百分比与原始数值俱全」的进度行时提供翻卡（当前即 GLM 配额行，

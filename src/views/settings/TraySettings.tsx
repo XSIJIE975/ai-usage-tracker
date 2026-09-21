@@ -152,7 +152,7 @@ export function TraySettings() {
                   </div>
                   <p className="mt-1 text-[13px] text-fg-muted">
                     {chosen
-                      ? `${t("当前展示")}：${displayName(chosen.instance, chosen.providerName)}（${chosen.tightestWindow.label} ${Math.round(chosen.tightestWindow.percent)}%）`
+                      ? `${t("当前展示")}：${displayName(chosen.instance, t(chosen.providerName))}（${chosen.tightestWindow.label} ${Math.round(chosen.tightestWindow.percent)}%）`
                       : t("暂无用量数据")}
                   </p>
                 </div>
@@ -163,7 +163,7 @@ export function TraySettings() {
                   options={[
                     { value: "", label: t("自动（用量最高的实例）") },
                     ...instances.map((instance) => {
-                      const name = displayName(instance, providerName(instance.providerId));
+                      const name = displayName(instance, t(providerName(instance.providerId)));
                       const percent = percentById.get(instance.id);
                       return {
                         value: instance.id,
@@ -273,7 +273,7 @@ export function TraySettings() {
                           aria-hidden
                         />
                         <span className="min-w-0 truncate text-fg">
-                          {displayName(instance, providerName(instance.providerId))}
+                          {displayName(instance, t(providerName(instance.providerId)))}
                         </span>
                         <span className="tnum ml-auto shrink-0 text-fg-muted">
                           {percent !== undefined ? `${Math.round(percent)}%` : "—"}

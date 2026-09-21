@@ -205,7 +205,7 @@ export function InstanceDialog({
     });
   }, [open, editing, credentials, config.fields]);
 
-  const kindTitle = providerName(kind);
+  const kindTitle = t(providerName(kind));
 
   const notice = !vaultStatus
     ? undefined

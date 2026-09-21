@@ -413,7 +413,7 @@ export function Dashboard() {
                   {providerModules.map((module) => (
                     <CommandItem
                       key={module.id}
-                      value={`${module.name} ${module.description}`}
+                      value={`${module.name} ${module.description} ${t(module.name)} ${t(module.description)}`}
                       onSelect={() => {
                         setAddOpen(false);
                         setCreatingKind(module.id);
@@ -421,7 +421,7 @@ export function Dashboard() {
                     >
                       <ProviderKindLogo providerId={module.id} />
                       <div className="min-w-0">
-                        <p className="font-medium text-fg">{module.name}</p>
+                        <p className="font-medium text-fg">{t(module.name)}</p>
                         <p className="truncate text-xs text-fg-muted">{t(module.description)}</p>
                       </div>
                     </CommandItem>

@@ -30,7 +30,7 @@ export function StatsSheet({
   const t = useT();
   if (!instance) return null;
   const StatsComponent = STATS_COMPONENTS[instance.providerId];
-  const kindName = providerName(instance.providerId);
+  const kindName = t(providerName(instance.providerId));
   const title = displayName(instance, kindName);
   const hasNote = instance.note.trim().length > 0;
 

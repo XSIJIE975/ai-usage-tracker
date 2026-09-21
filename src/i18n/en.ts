@@ -366,6 +366,7 @@ export const en: Record<string, string> = {
   "DeepSeek 官方": "DeepSeek",
   "OpenCode Go": "OpenCode Go",
   "智谱 GLM": "Zhipu GLM",
+  "腾讯 WorkBuddy / CodeBuddy": "Tencent WorkBuddy / CodeBuddy",
   "查询智谱 Coding Plan 配额、用量与账户余额": "Zhipu Coding Plan quota, usage and account balance",
   "查询 WorkBuddy 积分余量、套餐明细、连登天数、签到与喵喵旅行": "WorkBuddy credits, package details, daily streak, check-in and buddy travel",
   "查询 DeepSeek 官方 API 余额和可用状态": "Query balance and availability via the official DeepSeek API",
