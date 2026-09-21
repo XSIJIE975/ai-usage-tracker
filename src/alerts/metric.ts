@@ -33,14 +33,11 @@ export function primaryProgressLine(lines: MetricLine[]): MetricLine | null {
   return progressLines.reduce((a, b) => (resetDistance(a) >= resetDistance(b) ? a : b));
 }
 
-/** 账户余额所在的 text 行（第一个可解析数值的 text 行），供展示余额原文；无则 null */
+/** 账户余额所在行（供应商产出时打 balance 结构化标记），供展示余额原文与抽数值；
+ *  无则 null。不按「第一个能解析出数字的文本行」启发式选行——模板化 value 的文本解析
+ *  不可靠（ISO 日期参数会带出第二个小数点），且连登「1 天」这类行本就不是余额（2026-09-21） */
 export function firstBalanceLine(lines: MetricLine[]): MetricLine | null {
-  for (const line of lines) {
-    if (line.type !== "text" || typeof line.value !== "string") continue;
-    if (parseMetricValue(line.value) === null) continue;
-    return line;
-  }
-  return null;
+  return lines.find((line) => line.balance === true) ?? null;
 }
 
 /**

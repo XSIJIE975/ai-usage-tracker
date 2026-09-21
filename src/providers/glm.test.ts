@@ -116,7 +116,8 @@ describe("glmProvider.fetch", () => {
     expect(snapshot.lines[4]).toMatchObject({
       type: "text",
       label: "可用重置卡",
-      value: "5 小时 ×1 · 周 ×1",
+      value: "5 小时 ×{fiveHour} · 周 ×{week}",
+      valueParams: { fiveHour: 1, week: 1 },
     });
 
     expect(mockInvoke).toHaveBeenCalledTimes(4);
@@ -468,7 +469,12 @@ describe("parseResetLine / countAvailableResets", () => {
       ],
       weekResets: [{ recordId: 3, expireTime: "2026-10-01 10:00:00", available: true }],
     });
-    expect(line).toMatchObject({ type: "text", label: "可用重置卡", value: "5 小时 ×1 · 周 ×1" });
+    expect(line).toMatchObject({
+      type: "text",
+      label: "可用重置卡",
+      value: "5 小时 ×{fiveHour} · 周 ×{week}",
+      valueParams: { fiveHour: 1, week: 1 },
+    });
   });
 
   it("hides the five-hour part when only weekly cards are available", () => {
@@ -476,7 +482,8 @@ describe("parseResetLine / countAvailableResets", () => {
       fiveHourResets: [{ recordId: 1, expireTime: "2026-09-30 10:00:00", available: false }],
       weekResets: [{ recordId: 3, expireTime: "2026-10-01 10:00:00", available: true }],
     });
-    expect(line?.value).toBe("周 ×1");
+    expect(line?.value).toBe("周 ×{week}");
+    expect(line?.valueParams).toEqual({ fiveHour: 0, week: 1 });
     expect(parseResetLine(undefined)).toBeNull();
     expect(parseResetLine({})).toBeNull();
   });

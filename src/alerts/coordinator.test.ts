@@ -27,7 +27,7 @@ const deepseekSnapshot = (balance: number): ProviderSnapshot => ({
   providerName: "DeepSeek",
   status: "ok",
   updatedAt: 0,
-  lines: [{ type: "text", label: "账户余额", value: `¥${balance.toFixed(2)}` }],
+  lines: [{ type: "text", label: "账户余额", value: `¥${balance.toFixed(2)}`, balance: true }],
 });
 
 const extractFrom = (snapshot: ProviderSnapshot) => extractMetric(snapshot)!;
@@ -358,7 +358,7 @@ describe("GLM 配额与余额双规则", () => {
       { type: "badge", label: "套餐档位", value: "Lite" },
       { type: "progress", label: "每周请求配额", percentUsed: quotaPercent, resetsAt: "2026-09-08T00:00:00Z" },
       ...(balance !== null
-        ? [{ type: "text" as const, label: "账户余额", value: `¥${balance.toFixed(2)}` }]
+        ? [{ type: "text" as const, label: "账户余额", value: `¥${balance.toFixed(2)}`, balance: true }]
         : []),
     ],
   });

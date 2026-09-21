@@ -5,6 +5,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 import { invoke } from "@tauri-apps/api/core";
+import { renderLineValue } from "../i18n/apply-params";
 import type { HttpResult, ProviderInstance } from "../types/ipc";
 import {
   cstDateString,
@@ -138,17 +139,20 @@ describe("parseResourceLines", () => {
     expect(main.used).toBeCloseTo(699.5, 5);
     expect(main.limit).toBe(3000);
     expect(main.percentUsed).toBeCloseTo(((3000 - 2300.5) / 3000) * 100, 5);
+    // 余额位数值：纯数字总余量 + balance 标记（速览按标记选行）
+    expect(main.value).toBe("2300.50");
+    expect(main.balance).toBe(true);
   });
 
   it("明细行按到期时间升序排列（最紧急在前），行内带余量与到期日", () => {
     const lines = parseResourceLines(
       resourceData([totalPackage(), cyclePackage()]),
     );
-    // 周期包 9-30 到期在前，月度套餐 10-1 在后
-    expect(lines[1]).toMatchObject({ type: "text", label: "周期包" });
-    expect(lines[1].value).toBe("余 800.50 · 9月30日到期");
+    // 周期包 9-30 到期在前，月度套餐 10-1 在后；value 是模板，渲染端代入日期
+    expect(lines[1]).toMatchObject({ type: "text", label: "周期包", value: "余 {remain} · {expiresAt}到期" });
+    expect(renderLineValue(lines[1]!, (s) => s, "zh")).toBe("余 800.50 · 9月30日到期");
     expect(lines[2]).toMatchObject({ type: "text", label: "月度套餐" });
-    expect(lines[2].value).toBe("余 1,500 · 10月1日到期");
+    expect(renderLineValue(lines[2]!, (s) => s, "zh")).toBe("余 1,500 · 10月1日到期");
   });
 
   it("超过 3 份套餐时前 3 行逐条展示，其余合并为一行", () => {
@@ -164,7 +168,12 @@ describe("parseResourceLines", () => {
     expect(lines).toHaveLength(5);
     expect(lines[1].label).toBe("A");
     expect(lines[3].label).toBe("C");
-    expect(lines[4]).toMatchObject({ label: "其余 {count} 个套餐", params: { count: 2 }, value: "余 300" });
+    expect(lines[4]).toMatchObject({
+      label: "其余 {count} 个套餐",
+      params: { count: 2 },
+      value: "余 {remain}",
+      valueParams: { remain: "300" },
+    });
   });
 
   it("无有效套餐时出中性事实行，不出空快照", () => {
@@ -177,7 +186,13 @@ describe("parseResourceLines", () => {
     const lines = parseResourceLines(
       resourceData([{ PackageName: "残缺包", CapacityRemainPrecise: 42 } as WorkbuddyPackage]),
     );
-    expect(lines[0]).toEqual({ type: "text", label: "积分余量", value: "余 42" });
+    expect(lines[0]).toEqual({
+      type: "text",
+      label: "积分余量",
+      value: "余 {remain}",
+      valueParams: { remain: "42" },
+      balance: true,
+    });
   });
 
   it("脏数据钳制：remain 超总量取总量、负值取 0，不出负 used 或虚高百分比", () => {
@@ -199,8 +214,8 @@ describe("parseResourceLines", () => {
     );
     // 余 2000+0=2000，总 2000+100=2100，已用 100
     expect(lines[0]).toMatchObject({ type: "progress", used: 100, limit: 2100 });
-    expect(lines[1]).toMatchObject({ label: "超量包", value: "余 2,000 · 10月1日到期" });
-    expect(lines[2]).toMatchObject({ label: "负值包", value: "余 0 · 10月2日到期" });
+    expect(lines[1]).toMatchObject({ label: "超量包", value: "余 {remain} · {expiresAt}到期", valueParams: { remain: "2,000" } });
+    expect(lines[2]).toMatchObject({ label: "负值包", value: "余 {remain} · {expiresAt}到期", valueParams: { remain: "0" } });
   });
 
   it("周期制整组采用：缺 Cycle 总量时整组回退总量制，不跨制拼接字段", () => {
@@ -218,7 +233,11 @@ describe("parseResourceLines", () => {
       ]),
     );
     expect(lines[0]).toMatchObject({ type: "progress", used: 100, limit: 200 });
-    expect(lines[1]).toMatchObject({ label: "孤立周期余量", value: "余 100 · 10月3日到期" });
+    expect(lines[1]).toMatchObject({
+      label: "孤立周期余量",
+      value: "余 {remain} · {expiresAt}到期",
+      valueParams: { remain: "100" },
+    });
   });
 
   it("2026-09-21 实测形态：data.Accounts 直挂 + 空串总量字段 + 同名套餐合并为一行", () => {
@@ -255,16 +274,9 @@ describe("parseResourceLines", () => {
     expect(lines[0]!.used).toBeCloseTo(589.74, 5);
     expect(lines[0]!.limit).toBe(700);
     // 两个分组，按最早到期升序：体验版 9月30日（已用尽）在前，裂变包 10月9日在后
-    expect(lines[1]).toEqual({
-      type: "text",
-      label: "CodeBuddy个人体验版",
-      value: "余 0 · 9月30日到期",
-    });
-    expect(lines[2]).toEqual({
-      type: "text",
-      label: "CodeBuddy个人版国内运营裂变包",
-      value: "余 110.26 · 10月9日到期",
-    });
+    expect(lines[1]).toMatchObject({ type: "text", label: "CodeBuddy个人体验版", value: "余 {remain} · {expiresAt}到期", valueParams: { remain: "0" } });
+    expect(lines[2]).toMatchObject({ type: "text", label: "CodeBuddy个人版国内运营裂变包", value: "余 {remain} · {expiresAt}到期", valueParams: { remain: "110.26" } });
+    expect(renderLineValue(lines[2]!, (s) => s, "zh")).toBe("余 110.26 · 10月9日到期");
   });
 
   it("社区文档的 Response 包裹形态同样可解析（兼容另一端点）", () => {
@@ -278,7 +290,12 @@ describe("parseResourceLines", () => {
 
 describe("parseStreakLine", () => {
   it("连登行：days≤0 或缺失不渲染", () => {
-    expect(parseStreakLine({ streak: { days: 3 } })).toEqual({ type: "text", label: "连登", value: "3 天" });
+    expect(parseStreakLine({ streak: { days: 3 } })).toEqual({
+      type: "text",
+      label: "连登",
+      value: "{days} 天",
+      valueParams: { days: 3 },
+    });
     expect(parseStreakLine({ streak: { days: 0 } })).toBeNull();
     expect(parseStreakLine(undefined)).toBeNull();
   });
@@ -363,9 +380,10 @@ describe("parseTravelLine", () => {
       location: { name: "咖啡馆" },
       arrive_at: 1789381435,
     });
-    expect(line).toMatchObject({ type: "text", label: "喵喵旅行" });
+    expect(line).toMatchObject({ type: "text", label: "喵喵旅行", value: "旅行中 · {place} · {backAt} 回来" });
+    expect(line!.valueParams).toMatchObject({ place: "咖啡馆" });
     // 时刻随测试机时区变化，只锚定结构与固定段
-    expect(line!.value).toMatch(/^旅行中 · 咖啡馆 · \d{2}:\d{2} 回来$/);
+    expect(renderLineValue(line!, (s) => s, "zh")).toMatch(/^旅行中 · 咖啡馆 · \d{2}:\d{2} 回来$/);
     expect(parseTravelLine({ state: "traveling" })!.value).toBe("旅行中");
     expect(parseTravelLine({ state: "arrived", location: { name: "咖啡馆" } })).toBeNull();
     expect(parseTravelLine({ state: "idle" })).toBeNull();

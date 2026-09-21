@@ -32,7 +32,7 @@ import { DeepSeekLogo, GlmLogo, OpenCodeLogo, WorkbuddyLogo } from "./brand/prov
 import { displayName } from "../lib/instance";
 import { providerName } from "../providers";
 import { useAppStore } from "../store/useAppStore";
-import { applyParams, useLanguage, useT } from "../i18n";
+import { applyParams, renderLineValue, useLanguage, useT } from "../i18n";
 import { cn } from "../lib/utils";
 
 function useNow(intervalMs = 30_000) {
@@ -119,7 +119,7 @@ function MetricRow({
   const language = useLanguage();
   const resetTimeDisplay = useAppStore((state) => state.settings.resetTimeDisplay);
   const label = applyParams(t(line.label), line.params);
-  const valueText = line.value !== undefined ? t(line.value) : undefined;
+  const valueText = renderLineValue(line, t, language);
   if (line.type === "progress") {
     const percent = line.percentUsed ?? (line.limit ? Math.round(((line.used ?? 0) / line.limit) * 100) : 0);
     const remaining =

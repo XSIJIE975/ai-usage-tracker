@@ -185,10 +185,6 @@ export function parseExpiry(raw: string | number | undefined): Date | null {
   return null;
 }
 
-function formatExpiry(date: Date): string {
-  return `${date.getMonth() + 1}月${date.getDate()}日`;
-}
-
 function formatCount(value: number): string {
   return Number.isInteger(value) ? value.toLocaleString("zh-CN") : value.toFixed(2);
 }
@@ -221,11 +217,20 @@ export function parseResourceLines(data: WorkbuddyResourceData | undefined): Met
       used: totalSize - totalRemain,
       limit: totalSize,
       percentUsed: ((totalSize - totalRemain) / totalSize) * 100,
+      // 余额位数值（速览按 balance 标记选行）：纯数字，卡片进度分支不渲染 value
+      value: formatCount(totalRemain),
+      balance: true,
     });
   } else {
     // 只有余量没有总量：出不了百分比，退化为文本行（主指标回退余额数值的口径不适用，
     // workbuddy 没有金额量纲，该实例不参与托盘环与阈值告警）
-    lines.push({ type: "text", label: "积分余量", value: `余 ${formatCount(totalRemain)}` });
+    lines.push({
+      type: "text",
+      label: "积分余量",
+      value: "余 {remain}",
+      valueParams: { remain: formatCount(totalRemain) },
+      balance: true,
+    });
   }
 
   interface PackageGroup {
@@ -251,9 +256,17 @@ export function parseResourceLines(data: WorkbuddyResourceData | undefined): Met
   });
   const MAX_PACKAGE_LINES = 3;
   for (const group of sortedGroups.slice(0, MAX_PACKAGE_LINES)) {
-    const parts = [`余 ${formatCount(group.remain)}`];
-    if (group.expiry) parts.push(`${formatExpiry(group.expiry)}到期`);
-    lines.push({ type: "text", label: group.name, value: parts.join(" · ") });
+    const remain = { remain: formatCount(group.remain) };
+    lines.push(
+      group.expiry
+        ? {
+            type: "text",
+            label: group.name,
+            value: "余 {remain} · {expiresAt}到期",
+            valueParams: { ...remain, expiresAt: group.expiry.toISOString() },
+          }
+        : { type: "text", label: group.name, value: "余 {remain}", valueParams: remain },
+    );
   }
   if (sortedGroups.length > MAX_PACKAGE_LINES) {
     const rest = sortedGroups.slice(MAX_PACKAGE_LINES);
@@ -262,7 +275,8 @@ export function parseResourceLines(data: WorkbuddyResourceData | undefined): Met
       type: "text",
       label: "其余 {count} 个套餐",
       params: { count: rest.length },
-      value: `余 ${formatCount(restRemain)}`,
+      value: "余 {remain}",
+      valueParams: { remain: formatCount(restRemain) },
     });
   }
   return lines;
@@ -272,7 +286,7 @@ export function parseResourceLines(data: WorkbuddyResourceData | undefined): Met
 export function parseStreakLine(data: WorkbuddyStreakData | undefined): MetricLine | null {
   const days = data?.streak?.days;
   if (typeof days !== "number" || !Number.isFinite(days) || days <= 0) return null;
-  return { type: "text", label: "连登", value: `${days} 天` };
+  return { type: "text", label: "连登", value: "{days} 天", valueParams: { days } };
 }
 
 /** travel/status 的 data（2026-09-21 用户实测；字段名服务端 snake_case 原样）。
@@ -294,17 +308,32 @@ export interface WorkbuddyTravelStatus {
  *  领奖结果走通知（检测器），不出常驻行 */
 export function parseTravelLine(data: WorkbuddyTravelStatus | null | undefined): MetricLine | null {
   if (!data || data.state !== "traveling") return null;
-  const parts = ["旅行中"];
   const place = data.location?.name?.trim();
-  if (place) parts.push(place);
+  let backAt: string | undefined;
   if (typeof data.arrive_at === "number" && Number.isFinite(data.arrive_at) && data.arrive_at > 0) {
     const at = new Date(data.arrive_at * 1000);
     if (!Number.isNaN(at.getTime())) {
       const pad = (n: number) => String(n).padStart(2, "0");
-      parts.push(`${pad(at.getHours())}:${pad(at.getMinutes())} 回来`);
+      backAt = `${pad(at.getHours())}:${pad(at.getMinutes())}`;
     }
   }
-  return { type: "text", label: "喵喵旅行", value: parts.join(" · ") };
+  const valueParams: Record<string, string> = {};
+  if (place) valueParams.place = place;
+  if (backAt) valueParams.backAt = backAt;
+  const value =
+    place && backAt
+      ? "旅行中 · {place} · {backAt} 回来"
+      : place
+        ? "旅行中 · {place}"
+        : backAt
+          ? "旅行中 · {backAt} 回来"
+          : "旅行中";
+  return {
+    type: "text",
+    label: "喵喵旅行",
+    value,
+    valueParams: Object.keys(valueParams).length > 0 ? valueParams : undefined,
+  };
 }
 
 /** travel 响应整体处理：封套不成功/解析失败返回 null（辅助源，静默） */

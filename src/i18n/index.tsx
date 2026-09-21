@@ -26,7 +26,7 @@ export function useT() {
 
 /** 纯函数从 ./apply-params 转发：保持既有导入路径不变；
  *  处于 store 导入链上的非 React 模块请直接走纯模块，避免循环导入 */
-export { applyParams, renderTemplate } from "./apply-params";
+export { applyParams, renderTemplate, renderLineValue } from "./apply-params";
 
 /** 当前解析后的语言（供非字典的模板格式化使用，如预测文案） */
 export function useLanguage(): Language {

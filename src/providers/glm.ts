@@ -89,7 +89,7 @@ export function parseGlmBalance(data: GlmBalanceData | undefined): number | null
 export function parseBalanceLine(data: GlmBalanceData | undefined): MetricLine | null {
   const amount = parseGlmBalance(data);
   if (amount == null) return null;
-  return { type: "text", label: "账户余额", value: currencyFormatter.format(amount) };
+  return { type: "text", label: "账户余额", value: currencyFormatter.format(amount), balance: true };
 }
 
 /** customer-package-reset/list 的单张重置卡（每张 1 次；available=false 且未过期视为已使用） */
@@ -131,10 +131,14 @@ export function parseResetLine(data: GlmPackageResetData | undefined): MetricLin
   const fiveHour = countAvailableResets(data.fiveHourResets);
   const week = countAvailableResets(data.weekResets);
   if (fiveHour + week === 0) return null;
-  const parts: string[] = [];
-  if (fiveHour > 0) parts.push(`5 小时 ×${fiveHour}`);
-  if (week > 0) parts.push(`周 ×${week}`);
-  return { type: "text", label: "可用重置卡", value: parts.join(" · ") };
+  // 模板按组合选（与到账通知的三形态同构），数值渲染端代入（t+valueParams 通道）
+  const value =
+    fiveHour > 0 && week > 0
+      ? "5 小时 ×{fiveHour} · 周 ×{week}"
+      : fiveHour > 0
+        ? "5 小时 ×{fiveHour}"
+        : "周 ×{week}";
+  return { type: "text", label: "可用重置卡", value, valueParams: { fiveHour, week } };
 }
 
 function truncate(text: string, max = 300): string {

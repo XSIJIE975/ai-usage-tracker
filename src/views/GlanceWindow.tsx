@@ -14,7 +14,7 @@ import { useAppStore } from "../store/useAppStore";
 import { useAlertStore } from "../store/useAlertStore";
 import { selectUnreadCount, useNotificationStore } from "../store/useNotificationStore";
 import { cn } from "../lib/utils";
-import { useT } from "../i18n";
+import { useLanguage, useT } from "../i18n";
 
 /**
  * 速览面板（ADR-0016）：托盘左键单击唤起，由 Rust 侧锚定到托盘图标旁。
@@ -34,6 +34,7 @@ export function GlanceWindow() {
   const unread = useNotificationStore(selectUnreadCount);
   const alertActiveMap = useAlertStore((state) => state.active);
   const t = useT();
+  const language = useLanguage();
 
   const { ready, panelVisible, hideWindow } = usePanelWindow({
     shownEvent: "glance-shown",
@@ -59,6 +60,7 @@ export function GlanceWindow() {
     refreshing: refreshingInstances,
     loading,
     translate: t,
+    language,
   });
 
   const rootRef = useRef<HTMLDivElement>(null);

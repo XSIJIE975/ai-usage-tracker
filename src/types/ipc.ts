@@ -48,6 +48,12 @@ export interface MetricLine {
   /** label 模板的 {name} 占位符实参（如 "{hours} 小时请求配额" 的 hours），渲染端替换 */
   params?: Record<string, string | number>;
   value?: string;
+  /** value 模板的 {name} 占位符实参（ADR-0022 同款通道，渲染端 renderLineValue 替换）。
+      ISO 时刻串（YYYY-MM-DDT…）形态的参数值按界面语言格式化日期后替换（如到期日） */
+  valueParams?: Record<string, string | number>;
+  /** 账户余额/主数值行的结构化标记（速览余额位与 extractBalanceValue 按标记选行，
+      不做文案数字启发式——模板化后文本解析不可靠，2026-09-21 曾把「1 天」连登行当余额） */
+  balance?: boolean;
   used?: number;
   limit?: number;
   suffix?: string;

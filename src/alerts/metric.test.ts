@@ -41,11 +41,11 @@ describe("extractMetric", () => {
     expect(result).toEqual({ value: 72, resetsAt: "2026-09-30T00:00:00Z" });
   });
 
-  it("DeepSeek：取第一个可解析数值的 text 行（账户余额）", () => {
+  it("DeepSeek：取 balance 标记行（账户余额）", () => {
     const result = extractMetric(
       snapshot([
         { type: "badge", label: "可用状态", value: "可用" },
-        { type: "text", label: "账户余额", value: "¥88.40" },
+        { type: "text", label: "账户余额", value: "¥88.40", balance: true },
         { type: "text", label: "充值余额", value: "¥50.00" },
       ]),
     );

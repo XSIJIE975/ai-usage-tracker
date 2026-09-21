@@ -24,7 +24,7 @@ import {
 } from "../../hooks/use-tray-sync";
 import { multiRingLayerSpecs } from "../../lib/ring-layers";
 import { cn } from "../../lib/utils";
-import { useT } from "../../i18n";
+import { useLanguage, useT } from "../../i18n";
 import { SavedHint, useSaveFlash } from "./save-flash";
 
 /** 托盘计量图标（环/柱）的静态色：品牌色不随用量档位变化，仅告警强制红。
@@ -50,6 +50,7 @@ export function TraySettings() {
   const trayFlash = useSaveFlash();
   const glanceFlash = useSaveFlash();
   const t = useT();
+  const language = useLanguage();
 
   async function save(patch: Partial<AppSettings>, target: "tray" | "glance") {
     const current = useAppStore.getState().settings;
@@ -83,6 +84,7 @@ export function TraySettings() {
     refreshing: refreshingInstances,
     loading,
     translate: t,
+    language,
   });
 
   return (

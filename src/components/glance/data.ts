@@ -1,7 +1,8 @@
 import type { MetricLine, ProviderInstance, ProviderKind, ProviderSnapshot } from "../../types/ipc";
 import { displayName, selectOrderedInstances } from "../../lib/instance";
 import { firstBalanceLine, primaryProgressLine } from "../../alerts/metric";
-import { applyParams } from "../../i18n";
+import { applyParams, renderLineValue } from "../../i18n";
+import type { Language } from "../../i18n/translate";
 
 type Translate = (text: string) => string;
 
@@ -42,9 +43,11 @@ export function buildGlanceInstances(
     refreshing: Record<string, boolean>;
     loading: boolean;
     translate: Translate;
+    /** 界面语言：余额行 value 里的 ISO 日期参数按语言格式化 */
+    language: Language;
   },
 ): GlanceInstance[] {
-  const { alertActive, refreshing, loading, translate } = options;
+  const { alertActive, refreshing, loading, translate, language } = options;
   const lineLabel = (line: MetricLine) => applyParams(translate(line.label), line.params);
   return selectOrderedInstances(instances).map((instance) => {
     const snapshot = snapshots.find((item) => item.instanceId === instance.id) ?? null;
@@ -70,7 +73,7 @@ export function buildGlanceInstances(
         resetsAt: line.resetsAt,
         primary: line === primary,
       })),
-      balanceText: balance?.value ?? null,
+      balanceText: balance ? (renderLineValue(balance, translate, language) ?? null) : null,
     };
   });
 }
