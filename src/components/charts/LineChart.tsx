@@ -9,7 +9,7 @@ import { useEffectiveTheme } from "../../lib/theme";
 import { useResizeObserver } from "../../hooks/use-resize-observer";
 import { useChartLegend } from "../../hooks/use-chart-legend";
 import { ChartLegend } from "./ChartLegend";
-import { cn } from "../../lib/utils";
+import { cn, formatPlain } from "../../lib/utils";
 
 echarts.use([LineChart, TooltipComponent, GridComponent, DataZoomComponent, CanvasRenderer]);
 
@@ -34,8 +34,8 @@ interface TooltipParam {
 export function LineChartView({
   labels,
   series,
-  yFormat = (v) => String(v),
-  tooltipFormat = (v) => String(v),
+  yFormat = formatPlain,
+  tooltipFormat = formatPlain,
   height = 240,
   className,
 }: {

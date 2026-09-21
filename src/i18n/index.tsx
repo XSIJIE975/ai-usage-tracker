@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useMemo, type ReactNode } from "react";
 import { useAppStore } from "../store/useAppStore";
 import { resolveLanguage, translateText, type Language } from "./translate";
 
@@ -14,10 +14,14 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
   return <LanguageContext.Provider value={language}>{children}</LanguageContext.Provider>;
 }
 
-/** 翻译函数：返回当前语言的文案；en 缺失键回退中文源文案（实现见 ./translate.ts） */
+/** 翻译函数：返回当前语言的文案；en 缺失键回退中文源文案（实现见 ./translate.ts）
+ *
+ * 按 language 缓存引用：不加 useCallback 时每次渲染都是新函数，任何把它放进
+ * useMemo/useCallback 依赖的组件（图表 option、通知分组等）都会每次渲染重算，
+ * 对 ECharts 而言即每渲染 setOption(notMerge) 重建图形，破坏「hover 不 setOption」铁律。 */
 export function useT() {
   const language = useContext(LanguageContext);
-  return (text: string): string => translateText(text, language);
+  return useCallback((text: string): string => translateText(text, language), [language]);
 }
 
 /** 纯函数从 ./apply-params 转发：保持既有导入路径不变；

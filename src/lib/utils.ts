@@ -60,6 +60,13 @@ export function formatInt(value: number) {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
 }
 
+/**
+ * 图表格式化器兜底（数字原样转字符串）。必须是模块级稳定引用：
+ * 写成组件参数默认值 `format = (v) => String(v)` 时每次渲染都是新函数身份，
+ * 会穿透图表 option 的 useMemo，让 echarts-for-react 每渲染 setOption(notMerge) 重建图形。
+ */
+export const formatPlain = (value: number) => String(value);
+
 /** 字节数可读化：1536 → 1.5 KB；5242880 → 5 MB */
 export function formatBytes(value: number) {
   if (!Number.isFinite(value) || value < 0) return "-";

@@ -8,7 +8,7 @@ import { modelColor, getThemeColors } from "./palette";
 import { useEffectiveTheme } from "../../lib/theme";
 import { useChartLegend } from "../../hooks/use-chart-legend";
 import { ChartLegend } from "./ChartLegend";
-import { cn } from "../../lib/utils";
+import { cn, formatPlain } from "../../lib/utils";
 
 echarts.use([PieChart, TooltipComponent, LegendComponent, CanvasRenderer]);
 
@@ -56,7 +56,7 @@ interface TooltipParam {
 export function Donut({
   segments,
   centerLabel,
-  format = (v) => String(v),
+  format = formatPlain,
   size = 200,
   className,
 }: {
