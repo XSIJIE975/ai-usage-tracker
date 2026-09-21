@@ -34,7 +34,7 @@ pub fn credential_label(kind: &str, slot: &str) -> Option<&'static str> {
         ("opencode-go", "cookie") => Some("OpenCode Auth Cookie"),
         ("opencode-go", "apiKey") => Some("OpenCode Go API Key"),
         ("glm", "planKey") => Some("智谱 Coding Plan API Key"),
-        ("workbuddy", "cookie") => Some("WorkBuddy 登录 Cookie"),
+        ("workbuddy", "cookie") => Some("WorkBuddy 登录凭据（粘贴 Copy as cURL）"),
         _ => None,
     }
 }

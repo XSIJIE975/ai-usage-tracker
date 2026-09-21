@@ -1,6 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
 import { buildUsageQuery } from "./providers/deepseek-stats";
-import { validateWorkbuddySessionValue } from "./lib/utils";
 
 /** 机器可读的诊断结果码，与 src-tauri/src/commands.rs 的 diagnose_request 保持一致 */
 export type DiagnosisCode =
@@ -68,11 +67,13 @@ async function diagnose(
   });
 }
 
-/** WorkBuddy session Value 探测：只传原文，Cookie 头由 Rust 端校验并拼装（与刷新链路同款） */
-async function diagnoseWithSessionValue(url: string, sessionValue: string): Promise<DiagnosisResult> {
+/** WorkBuddy 凭据探测：粘贴原文（curl / Cookie 头 / 裸 session Value）直接透传，
+ *  解析与拼头全在 Rust 端（curl_paste），与刷新链路走同一份实现，
+ *  保证「测得过 ≒ 存得过」；畸形粘贴由 Rust 报出具体缺什么 */
+async function diagnoseWithCredentialText(url: string, credentialText: string): Promise<DiagnosisResult> {
   return invoke<DiagnosisResult>("diagnose_request", {
     url,
-    sessionValue: sessionValue.trim(),
+    credentialText,
   });
 }
 
@@ -126,14 +127,37 @@ export function testGlmCodingPlanKey(key: string): Promise<DiagnosisResult> {
 }
 
 /** WorkBuddy 登录凭据：连登接口探测（activity 族只读端点，Cookie 会话）。
- *  输入就是 session 的 Value，原文透传；合法性校验后由 Rust 端拼 `Cookie: session=<值>`，
- *  与保存后的刷新链路完全同款，保证「测得过 ≒ 存得过」 */
-export function testWorkbuddyCookie(sessionValue: string): Promise<DiagnosisResult> {
-  const value = sessionValue.trim();
-  if (!value)
+ *  输入是粘贴原文，原文透传，解析与拼头由 Rust 端负责 */
+export function testWorkbuddyCredential(credentialText: string): Promise<DiagnosisResult> {
+  const text = credentialText.trim();
+  if (!text)
     return Promise.resolve({ ok: false, status: 0, latencyMs: 0, code: "missing-credential" });
-  const invalid = validateWorkbuddySessionValue(value);
-  if (invalid)
-    return Promise.resolve({ ok: false, status: 0, latencyMs: 0, code: "unknown", detail: invalid });
-  return diagnoseWithSessionValue("https://www.workbuddy.cn/activity/growth/streak", value);
+  return diagnoseWithCredentialText("https://www.workbuddy.cn/activity/growth/streak", text);
+}
+
+/** Rust 端解析结果（curl_paste::WorkbuddyCredential）；值本身不外露，只取有没有 */
+interface ParsedWorkbuddyCredential {
+  session: string;
+  session2?: string;
+  userAgent?: string;
+}
+
+export interface WorkbuddyCredentialParts {
+  session: boolean;
+  session2: boolean;
+  userAgent: boolean;
+}
+
+/** 粘贴内容的解析预览：录入界面据此提示三要素缺哪一项（解析规则与刷新链路同源） */
+export async function inspectWorkbuddyCredential(
+  credentialText: string,
+): Promise<WorkbuddyCredentialParts> {
+  const parsed = await invoke<ParsedWorkbuddyCredential>("parse_workbuddy_credential", {
+    credentialText,
+  });
+  return {
+    session: Boolean(parsed.session),
+    session2: Boolean(parsed.session2),
+    userAgent: Boolean(parsed.userAgent),
+  };
 }

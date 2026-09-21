@@ -85,12 +85,13 @@ _Avoid_：重置额度（与「配额窗口自动重置」易混，说「重置�
 
 ## 腾讯 WorkBuddy / CodeBuddy
 
-第四个受支持的供应商（provider 标识 `workbuddy`），追踪腾讯 WorkBuddy 的积分余量、套餐明细、签到、连登、喵喵旅行与消耗明细（统计抽屉）。WorkBuddy 与 CodeBuddy 是同一账号积分体系下的两个产品，共用一份账务，故不拆成两个供应商。数据来自 workbuddy.cn 国区 web 接口（非公开，凭 WorkBuddy 登录 Cookie 调用，接入边界见 ADR-0029）；国际站（workbuddy.ai）是另一套登录域，架构上预留、暂未接入。
+第四个受支持的供应商（provider 标识 `workbuddy`），追踪腾讯 WorkBuddy 的积分余量、套餐明细、签到、连登、喵喵旅行与消耗明细（统计抽屉）。WorkBuddy 与 CodeBuddy 是同一账号积分体系下的两个产品，共用一份账务，故不拆成两个供应商。数据来自 workbuddy.cn 国区 web 接口（非公开，凭 WorkBuddy 登录凭据调用，接入边界见 ADR-0029）；国际站（workbuddy.ai）是另一套登录域，架构上预留、暂未接入。
 _Avoid_：把 CodeBuddy 当成另一个供应商（同一积分体系）；「CodeBuddy IDE 的编程对话」与本工具无关，本工具只读它的积分账务
 
-## WorkBuddy 登录 Cookie
+## WorkBuddy 登录凭据
 
-workbuddy.cn 网页端的登录态（`session` 与 `session_2` 两个 Cookie，服务端会话而非 JWT）。凭据只存 `session` 的 Value 原文：用户从 F12 复制什么就存什么，前端不做任何改写，仅按 RFC 6265 字符集白名单校验（防 CRLF 头注入与整串误粘），`Cookie: session=<值>` 的拼装统一在 Rust 端（探测与刷新同款）。失效后重新复制即恢复。网页端**没有** Bearer token——Bearer JWT 只存在于官方 IDE 扩展/CLI 的 OAuth 链路（与网页会话是两条通道，社区工具走的正是后者）；不做自动刷新：与官方客户端并存时主动续期会互相踢下线（ADR-0029）。与 DeepSeek UserToken 同属「网页登录态」类凭据，存于凭据库。
+workbuddy.cn 网页端的登录态：`session` + `session_2` 两个服务端会话 Cookie，**加上登录时那一条浏览器 UA**——网关按这三元组同源校验，只发 session、或 UA 与登录时差一个字符，都是 401（2026-09-21 同 Cookie 二分实测）。凭据槽存用户从 F12 Network 面板「Copy as cURL」拿到的整串原文（三者都在里面），解析、拼头与字符集白名单校验统一在 Rust 端 `curl_paste.rs`（探测与刷新共用同一实现），前端不改写用户输入也不参与拼头。只贴 `Cookie:` 头或裸 session Value 也接受，后者缺 session_2 必然 401，属重贴即愈的状态。退出登录、换浏览器或浏览器升版后重贴一次即恢复。网页端**没有** Bearer token——Bearer JWT 只存在于官方 IDE 扩展/CLI 的 OAuth 链路（与网页会话是两条通道，社区工具走的正是后者）；不做自动刷新：与官方客户端并存时主动续期会互相踢下线（ADR-0029）。与 DeepSeek UserToken 同属「网页登录态」类凭据，存于凭据库。
+_Avoid_：只叫它「登录 Cookie」（不完整，UA 是同一条凭据的一部分）；「复制 session 的值」（这正是 401 的成因）
 
 ## 积分
 

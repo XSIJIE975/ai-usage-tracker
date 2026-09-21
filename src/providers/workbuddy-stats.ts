@@ -1,7 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { HttpResult, InstanceCredentialStatus, ProviderInstance } from "../types/ipc";
 import type { StatsResult } from "./stats-result";
-import { EDGE_UA } from "./workbuddy";
 
 // 接口与响应结构依据 2026-09-21 官网控制台实测（workbuddy.cn 登录会话页内直连验证）：
 // - 消耗明细：POST /billing/meter/get-user-request-usage
@@ -78,8 +77,9 @@ const parseUsageEnvelope = (result: HttpResult):
   | { kind: "http"; status: number }
   | { kind: "biz"; detail: string }
   | { kind: "parse"; detail: string } => {
-  // 401/403 与「200 + 登录页 HTML」同义：Cookie 会话失效（与 providers/workbuddy.ts 的
-  // processResource 同判据），重贴 Cookie 即恢复
+  // 401/403 与「200 + 登录页 HTML」同义：网关按 (session, session_2, 登录时 UA) 三元组
+  // 校验，任一不满足都是 401（与 providers/workbuddy.ts 的 processResource 同判据），
+  // 出路同为回设置里重贴 Copy as cURL
   if (result.status === 401 || result.status === 403) return { kind: "expired" };
   if (result.status !== 200) return { kind: "http", status: result.status };
   if (result.bodyText.trimStart().startsWith("<")) return { kind: "expired" };
@@ -121,7 +121,7 @@ export const fetchWorkbuddyUsage = async (
       instanceId: instance.id,
     });
     if (!credentialStatus.cookie) {
-      return { status: "needs_config", message: "请在设置中填写 WorkBuddy 登录 Cookie" };
+      return { status: "needs_config", message: "请在设置中粘贴 WorkBuddy 登录凭据（Copy as cURL）" };
     }
 
     const body = {
@@ -141,7 +141,6 @@ export const fetchWorkbuddyUsage = async (
         headers: {
           Accept: "application/json",
           "Content-Type": "application/json",
-          "User-Agent": EDGE_UA,
           Origin: "https://www.workbuddy.cn",
           Referer: "https://www.workbuddy.cn/profile/plans-usage",
           "x-client-platform": "web",
@@ -150,7 +149,7 @@ export const fetchWorkbuddyUsage = async (
       });
       const parsed = parseUsageEnvelope(result);
       if (parsed.kind === "expired") {
-        return usageError("WorkBuddy 登录已过期，请重新复制 Cookie");
+        return usageError("WorkBuddy 登录凭据无效或已过期，请在设置中重新粘贴 Copy as cURL");
       }
       if (parsed.kind === "http") {
         return usageError("积分明细接口返回 HTTP {status}", { status: parsed.status });

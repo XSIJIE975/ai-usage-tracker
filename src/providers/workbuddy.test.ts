@@ -396,12 +396,12 @@ describe("workbuddyProvider.fetch", () => {
     mockInvoke.mockReset();
   });
 
-  it("无 Cookie 时快照为 needs_config，不发任何请求", async () => {
+  it("无凭据时快照为 needs_config，不发任何请求", async () => {
     const instance = makeInstance();
     mockInvoke.mockResolvedValueOnce(credentialStatus({ cookie: false }));
     const snapshot = await workbuddyProvider.fetch(instance);
     expect(snapshot.status).toBe("needs_config");
-    expect(snapshot.message).toBe("请在设置中填写 WorkBuddy 登录 Cookie");
+    expect(snapshot.message).toBe("请在设置中粘贴 WorkBuddy 登录凭据（Copy as cURL）");
     expect(mockInvoke).toHaveBeenCalledTimes(1);
   });
 
@@ -499,7 +499,7 @@ describe("workbuddyProvider.fetch", () => {
     });
     const snapshot = await workbuddyProvider.fetch(instance);
     expect(snapshot.status).toBe("error");
-    expect(snapshot.message).toBe("WorkBuddy 登录已过期，请重新复制 Cookie");
+    expect(snapshot.message).toBe("WorkBuddy 登录凭据无效或已过期，请在设置中重新粘贴 Copy as cURL");
     expect(snapshot.lines).toHaveLength(0);
   });
 
