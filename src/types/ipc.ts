@@ -117,12 +117,6 @@ export interface AppSettings {
   glanceInstanceScope: "all" | "custom";
   /** 自选实例列表（scope 为 custom 时生效） */
   glanceInstanceIds: string[];
-  /** 速览面板字段：账户余额 */
-  glanceShowBalance: boolean;
-  /** 速览面板字段：重置倒计时 */
-  glanceShowReset: boolean;
-  /** 速览面板字段：多窗口明细（5 小时窗口 + 周配额等） */
-  glanceShowWindows: boolean;
 }
 
 export interface StoredNotification {

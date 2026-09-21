@@ -19,7 +19,7 @@ import { useT } from "../i18n";
 /**
  * 速览面板（ADR-0016）：托盘左键单击唤起，由 Rust 侧锚定到托盘图标旁。
  * 全新布局，不与快速面板共用卡片组件；行列表/迷你卡片两种形态面板内切换并持久化，
- * 实例范围与字段开关在设置页配置。窗口基建（数据同步/失焦隐藏/跨窗口事件/自动刷新）
+ * 实例范围在设置页配置、字段固定全量展示。窗口基建（数据同步/失焦隐藏/跨窗口事件/自动刷新）
  * 与快速面板共用 usePanelWindow。
  */
 export function GlanceWindow() {
@@ -60,12 +60,6 @@ export function GlanceWindow() {
     loading,
     translate: t,
   });
-  const fields = {
-    showAlerts: true,
-    showBalance: settings.glanceShowBalance,
-    showReset: settings.glanceShowReset,
-    showWindows: settings.glanceShowWindows,
-  };
 
   const rootRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -154,9 +148,9 @@ export function GlanceWindow() {
               }
             />
           ) : settings.glanceLayout === "cards" ? (
-            <GlanceCards items={glanceItems} fields={fields} translate={t} />
+            <GlanceCards items={glanceItems} translate={t} />
           ) : (
-            <GlanceRows items={glanceItems} fields={fields} translate={t} />
+            <GlanceRows items={glanceItems} translate={t} />
           )}
         </div>
       </main>

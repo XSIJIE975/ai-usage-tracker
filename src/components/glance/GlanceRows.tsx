@@ -3,33 +3,18 @@ import { cn, formatReset } from "../../lib/utils";
 import { metricColor, statusDotColor, type GlanceInstance } from "./data";
 import type { Translate } from "./data";
 
-export interface GlanceFieldFlags {
-  showAlerts: boolean;
-  showBalance: boolean;
-  showReset: boolean;
-  showWindows: boolean;
-}
-
-/** 紧凑行列表形态：每实例一块，名称+百分比 / 细进度条+重置倒计时 / 可选字段行 */
+/** 紧凑行列表形态：每实例一块，名称+百分比 / 细进度条+重置倒计时 / 明细字段行（全部固定展示） */
 export function GlanceRows({
   items,
-  fields,
   translate,
 }: {
   items: GlanceInstance[];
-  fields: GlanceFieldFlags;
   translate: Translate;
 }) {
   return (
     <div className="space-y-2">
       {items.map((item, index) => (
-        <GlanceRow
-          key={item.id}
-          item={item}
-          index={index}
-          fields={fields}
-          translate={translate}
-        />
+        <GlanceRow key={item.id} item={item} index={index} translate={translate} />
       ))}
     </div>
   );
@@ -38,19 +23,15 @@ export function GlanceRows({
 function GlanceRow({
   item,
   index,
-  fields,
   translate,
 }: {
   item: GlanceInstance;
   index: number;
-  fields: GlanceFieldFlags;
   translate: Translate;
 }) {
   const percent = item.primaryPercent;
   const color = metricColor(percent, item.alertActive);
-  const secondaryWindows = fields.showWindows
-    ? item.windows.filter((window) => !window.primary)
-    : [];
+  const secondaryWindows = item.windows.filter((window) => !window.primary);
   const metaParts: string[] = [];
   if (secondaryWindows.length > 0) {
     metaParts.push(
@@ -59,16 +40,15 @@ function GlanceRow({
   } else if (item.primaryLabel) {
     metaParts.push(item.primaryLabel);
   }
-  const resetText =
-    fields.showReset && item.primaryResetsAt
-      ? formatReset(item.primaryResetsAt, Date.now(), translate)
-      : null;
+  const resetText = item.primaryResetsAt
+    ? formatReset(item.primaryResetsAt, Date.now(), translate)
+    : null;
 
   return (
     <div
       className={cn(
         "panel-enter rounded-lg border bg-surface px-3 py-2",
-        fields.showAlerts && item.alertActive ? "border-warning/40" : "border-line",
+        item.alertActive ? "border-warning/40" : "border-line",
       )}
       // 级联进场：形态切换/范围变化时实例块依次上浮淡入（首挂载才动画，数值更新不重放）
       style={{ animationDelay: `${Math.min(index * 24, 180)}ms` }}
@@ -79,7 +59,7 @@ function GlanceRow({
           style={{ background: statusDotColor(item.status) }}
           aria-hidden
         />
-        {fields.showAlerts && item.alertActive && (
+        {item.alertActive && (
           <TriangleAlert className="h-3.5 w-3.5 shrink-0 text-warning" aria-label={translate("有额度告警")} />
         )}
         <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-fg">{item.label}</span>
@@ -112,7 +92,7 @@ function GlanceRow({
         </div>
       )}
 
-      {fields.showBalance && percent !== null && item.balanceText && (
+      {percent !== null && item.balanceText && (
         <div className="tnum mt-0.5 text-[11px] text-fg-secondary">
           {translate("账户余额")} {item.balanceText}
         </div>

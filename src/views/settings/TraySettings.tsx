@@ -10,7 +10,6 @@ import { Label } from "../../components/ui/label";
 import { Segmented } from "../../components/ui/segmented";
 import { Select } from "../../components/ui/select";
 import { Separator } from "../../components/ui/separator";
-import { Switch } from "../../components/ui/switch";
 import { BrandIcon } from "../../components/BrandIcon";
 import { GlanceCards } from "../../components/glance/GlanceCards";
 import { GlanceRows } from "../../components/glance/GlanceRows";
@@ -19,7 +18,6 @@ import {
   statusDotColor,
   type GlanceInstance,
 } from "../../components/glance/data";
-import type { GlanceFieldFlags } from "../../components/glance/GlanceRows";
 import {
   buildTrayCandidates,
   selectTrayMeter,
@@ -38,7 +36,7 @@ function trayMeterColor(alert: boolean): string {
 /**
  * 托盘与速览设置（ADR-0016），拆为两张卡：
  * 「托盘图标」——方案选择做成预览卡（用量环按真实最紧实例数据渲染）+ 钉选实例（含实时最紧提示）；
- * 「速览面板」——迷你实时预览（复用面板本体组件）+ 展示形态/范围/字段。
+ * 「速览面板」——迷你实时预览（复用面板本体组件）+ 展示形态/范围。
  * 保存即生效：托盘经 useTraySync 推送 Rust 重绘，面板经 settings-changed 广播同步。
  */
 export function TraySettings() {
@@ -86,12 +84,6 @@ export function TraySettings() {
     loading,
     translate: t,
   });
-  const glanceFields: GlanceFieldFlags = {
-    showAlerts: true,
-    showBalance: settings.glanceShowBalance,
-    showReset: settings.glanceShowReset,
-    showWindows: settings.glanceShowWindows,
-  };
 
   return (
     <>
@@ -199,36 +191,36 @@ export function TraySettings() {
         <CardContent className="space-y-5">
           <GlancePreview
             layout={settings.glanceLayout}
-            fields={glanceFields}
             items={glanceItems}
             translate={t}
           />
 
-          <div className="grid max-w-2xl grid-cols-1 gap-4 sm:grid-cols-2">
-            <div className="flex items-center justify-between gap-3">
-              <Label>{t("展示形态")}</Label>
-              <Segmented
-                size="sm"
-                value={settings.glanceLayout}
-                onChange={(value) => void save({ glanceLayout: value }, "glance")}
-                options={[
-                  { value: "list", label: t("列表") },
-                  { value: "cards", label: t("卡片") },
-                ]}
-              />
-            </div>
-            <div className="flex items-center justify-between gap-3">
-              <Label>{t("展示范围")}</Label>
-              <Segmented
-                size="sm"
-                value={settings.glanceInstanceScope}
-                onChange={(value) => void save({ glanceInstanceScope: value }, "glance")}
-                options={[
-                  { value: "all", label: t("全部实例") },
-                  { value: "custom", label: t("自选实例") },
-                ]}
-              />
-            </div>
+          <div className="flex items-center justify-between gap-4">
+            <Label>{t("展示形态")}</Label>
+            <Segmented
+              size="sm"
+              value={settings.glanceLayout}
+              onChange={(value) => void save({ glanceLayout: value }, "glance")}
+              options={[
+                { value: "list", label: t("列表") },
+                { value: "cards", label: t("卡片") },
+              ]}
+            />
+          </div>
+
+          <Separator />
+
+          <div className="flex items-center justify-between gap-4">
+            <Label>{t("展示范围")}</Label>
+            <Segmented
+              size="sm"
+              value={settings.glanceInstanceScope}
+              onChange={(value) => void save({ glanceInstanceScope: value }, "glance")}
+              options={[
+                { value: "all", label: t("全部实例") },
+                { value: "custom", label: t("自选实例") },
+              ]}
+            />
           </div>
 
           {customScope && (
@@ -293,33 +285,6 @@ export function TraySettings() {
               )}
             </div>
           )}
-
-          <Separator />
-
-          <div className="space-y-3">
-            <div className="flex items-center gap-1.5">
-              <Label>{t("展示字段")}</Label>
-              <HintTooltip tip={t("控制每个实例上显示哪些信息。")} />
-            </div>
-            <div className="grid max-w-2xl grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2">
-              <FieldSwitch
-                label={t("账户余额")}
-                checked={settings.glanceShowBalance}
-                onChange={(value) => void save({ glanceShowBalance: value }, "glance")}
-              />
-              <FieldSwitch
-                label={t("重置倒计时")}
-                checked={settings.glanceShowReset}
-                onChange={(value) => void save({ glanceShowReset: value }, "glance")}
-              />
-              <FieldSwitch
-                label={t("多窗口明细")}
-                tip={t("同时显示 5 小时窗口、周配额等多个配额窗口各自的用量。")}
-                checked={settings.glanceShowWindows}
-                onChange={(value) => void save({ glanceShowWindows: value }, "glance")}
-              />
-            </div>
-          </div>
         </CardContent>
       </Card>
     </>
@@ -483,15 +448,13 @@ function TrayBarsPreview({
 }
 
 /** 迷你实时预览：复用速览面板本体组件灌真数据，只读展示（不可滚动不可交互），
-    固定高度 + 底部渐隐示意内容延续。字段/范围/形态开关的效果即时可见 */
+    固定高度 + 底部渐隐示意内容延续。形态/范围开关的效果即时可见 */
 function GlancePreview({
   layout,
-  fields,
   items,
   translate,
 }: {
   layout: "list" | "cards";
-  fields: GlanceFieldFlags;
   items: GlanceInstance[];
   translate: (text: string) => string;
 }) {
@@ -507,34 +470,12 @@ function GlancePreview({
             {translate("暂无展示内容")}
           </div>
         ) : layout === "cards" ? (
-          <GlanceCards items={items} fields={fields} translate={translate} />
+          <GlanceCards items={items} translate={translate} />
         ) : (
-          <GlanceRows items={items} fields={fields} translate={translate} />
+          <GlanceRows items={items} translate={translate} />
         )}
       </div>
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-canvas to-transparent" />
-    </div>
-  );
-}
-
-function FieldSwitch({
-  label,
-  tip,
-  checked,
-  onChange,
-}: {
-  label: string;
-  tip?: string;
-  checked: boolean;
-  onChange: (value: boolean) => void;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-4">
-      <div className="flex items-center gap-1.5">
-        <Label>{label}</Label>
-        {tip && <HintTooltip tip={tip} />}
-      </div>
-      <Switch checked={checked} onCheckedChange={onChange} />
     </div>
   );
 }

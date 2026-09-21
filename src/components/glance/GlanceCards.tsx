@@ -2,27 +2,18 @@ import { LoaderCircle, TriangleAlert } from "lucide-react";
 import { cn, formatReset } from "../../lib/utils";
 import { metricColor, statusDotColor, type GlanceInstance } from "./data";
 import type { Translate } from "./data";
-import type { GlanceFieldFlags } from "./GlanceRows";
-/** 迷你卡片形态：每实例一张小卡，左侧主指标环+大数字，右侧名称与明细 */
+/** 迷你卡片形态：每实例一张小卡，左侧主指标环+大数字，右侧名称与明细（字段全部固定展示） */
 export function GlanceCards({
   items,
-  fields,
   translate,
 }: {
   items: GlanceInstance[];
-  fields: GlanceFieldFlags;
   translate: Translate;
 }) {
   return (
     <div className="space-y-2.5">
       {items.map((item, index) => (
-        <GlanceCard
-          key={item.id}
-          item={item}
-          index={index}
-          fields={fields}
-          translate={translate}
-        />
+        <GlanceCard key={item.id} item={item} index={index} translate={translate} />
       ))}
     </div>
   );
@@ -31,33 +22,30 @@ export function GlanceCards({
 function GlanceCard({
   item,
   index,
-  fields,
   translate,
 }: {
   item: GlanceInstance;
   index: number;
-  fields: GlanceFieldFlags;
   translate: Translate;
 }) {
   const percent = item.primaryPercent;
-  const detail = windowDetail(item, fields);
-  const resetText =
-    fields.showReset && item.primaryResetsAt
-      ? formatReset(item.primaryResetsAt, Date.now(), translate)
-      : null;
+  const detail = windowDetail(item);
+  const resetText = item.primaryResetsAt
+    ? formatReset(item.primaryResetsAt, Date.now(), translate)
+    : null;
 
   return (
     <div
       className={cn(
         "panel-enter rounded-xl border bg-surface p-3",
-        fields.showAlerts && item.alertActive ? "border-warning/40" : "border-line",
+        item.alertActive ? "border-warning/40" : "border-line",
       )}
       // 级联进场：形态切换/范围变化时卡片依次上浮淡入（首挂载才动画，数值更新不重放）
       style={{ animationDelay: `${Math.min(index * 24, 180)}ms` }}
     >
       <div className="flex items-center gap-3">
         {percent !== null ? (
-          <UsageRing percent={percent} alert={fields.showAlerts && item.alertActive} />
+          <UsageRing percent={percent} alert={item.alertActive} />
         ) : item.balanceText ? (
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border-[3px] border-line-strong">
             <span className="text-[15px] font-semibold text-fg-muted">¥</span>
@@ -74,7 +62,7 @@ function GlanceCard({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-fg">{item.label}</span>
-            {fields.showAlerts && item.alertActive && (
+            {item.alertActive && (
               <TriangleAlert className="h-3.5 w-3.5 shrink-0 text-warning" aria-label={translate("有额度告警")} />
             )}
             {item.refreshing && (
@@ -88,12 +76,10 @@ function GlanceCard({
           </div>
         </div>
       </div>
-      {(resetText || (fields.showBalance && percent !== null && item.balanceText)) && (
+      {(resetText || (percent !== null && item.balanceText)) && (
         <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-fg-muted">
           <span className="tnum min-w-0 truncate">
-            {fields.showBalance && percent !== null && item.balanceText
-              ? `${translate("账户余额")} ${item.balanceText}`
-              : ""}
+            {percent !== null && item.balanceText ? `${translate("账户余额")} ${item.balanceText}` : ""}
           </span>
           {resetText && <span className="tnum shrink-0">{resetText}</span>}
         </div>
@@ -102,11 +88,8 @@ function GlanceCard({
   );
 }
 
-function windowDetail(item: GlanceInstance, fields: GlanceFieldFlags): string {
-  const windows = fields.showWindows
-    ? item.windows
-    : item.windows.filter((window) => window.primary);
-  return windows.map((window) => `${window.label} ${Math.round(window.percent)}%`).join(" · ");
+function windowDetail(item: GlanceInstance): string {
+  return item.windows.map((window) => `${window.label} ${Math.round(window.percent)}%`).join(" · ");
 }
 
 /**

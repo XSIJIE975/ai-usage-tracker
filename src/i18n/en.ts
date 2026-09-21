@@ -438,10 +438,6 @@ export const en: Record<string, string> = {
   "速览面板展示全部实例，或仅展示勾选的实例。": "The glance panel shows all instances, or only the ones you pick.",
   "全部实例": "All instances",
   "自选实例": "Custom selection",
-  "展示字段": "Shown fields",
-  "重置倒计时": "Reset countdown",
-  "多窗口明细": "Window details",
-  "同时展示 5 小时窗口与周配额等多个配额窗口的用量。": "Show usage of every quota window, e.g. the 5-hour window and the weekly quota.",
   "未选择展示的实例": "No instances selected",
   "可在「设置 → 托盘与速览」中勾选要在此展示的实例":
     "Pick which instances to show here in Settings → Tray & glance.",
@@ -470,9 +466,6 @@ export const en: Record<string, string> = {
   "暂无用量数据": "No usage data",
   "默认自动选择用量最高的实例（谁最接近用完就显示谁）。也可以固定显示某个实例；如果它暂时没有数据，会自动退回显示用量最高的实例。":
     "By default the icon automatically shows the instance with the highest usage (the one closest to its limit). You can also pin a specific instance — if it temporarily has no data, the icon falls back to the highest-usage one.",
-  "控制每个实例上显示哪些信息。": "Controls what details appear on each instance.",
-  "同时显示 5 小时窗口、周配额等多个配额窗口各自的用量。":
-    "Show usage of every quota window side by side, e.g. the 5-hour window and the weekly quota.",
   "可在设置的「速览面板」中勾选要在此展示的实例":
     "Pick which instances to show here in Settings → Glance panel.",
   // ── 2026-09 i18n 清剿补键 ──
