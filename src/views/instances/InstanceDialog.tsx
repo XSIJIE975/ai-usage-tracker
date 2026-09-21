@@ -19,12 +19,14 @@ import { DiagnosisButton } from "../settings/DiagnosisButton";
 import { useVaultCredentials } from "../settings/use-vault-credentials";
 import { SaveMessageBanner, type SaveMessage } from "../settings/provider-settings";
 import {
+  inspectWorkbuddyCredential,
   testDeepSeekApiKey,
   testDeepSeekUserToken,
   testGlmCodingPlanKey,
   testOpenCodeApiKey,
   testOpenCodeConnection,
-  testWorkbuddyCookie,
+  testWorkbuddyCredential,
+  type WorkbuddyCredentialParts,
 } from "../../diagnostics";
 import { useAppStore } from "../../store/useAppStore";
 import { normalizeOpenCodeAuthCookie } from "../../lib/utils";
@@ -37,6 +39,10 @@ interface CredentialFieldSpec {
   label: string;
   placeholder?: string;
   help?: string;
+  /** 长凭据（整段 Copy as cURL）用多行框，单行 input 粘贴会吃掉换行 */
+  multiline?: boolean;
+  /** 粘贴原文的解析预览：按 Rust 端同一份规则回显三要素是否齐全 */
+  preview?: "workbuddy-credential";
   /** 展示前归一化（auth cookie 兼容多种粘贴格式） */
   normalize?: (value: string) => string;
 }
@@ -103,9 +109,11 @@ const KIND_CONFIGS: Record<ProviderKind, KindConfig> = {
     fields: [
       {
         slot: "cookie",
-        label: "WorkBuddy 登录 Cookie",
-        placeholder: "只粘贴 session 的 Value",
-        help: "获取方式：登录 workbuddy.cn → F12 开发者工具 → Application(应用) → Cookies → 选 workbuddy.cn → 复制名为 session 项的 Value 粘贴到上方（不带 session= 前缀）。退出登录或会话轮换后失效，重新复制即可。",
+        label: "WorkBuddy 登录凭据",
+        placeholder: "粘贴浏览器 DevTools 的 Copy as cURL 整串",
+        help: "获取方式：登录 workbuddy.cn → F12 → Network(网络) → 刷新页面，右键任意一条 www.workbuddy.cn 请求 → Copy as cURL，整串粘贴到上方。",
+        multiline: true,
+        preview: "workbuddy-credential",
       },
     ],
     threshold: { label: "积分已用告警阈值（%）", hint: "积分已用达到该百分比时发送系统通知；留空不告警。", min: 1, max: 100 },
@@ -132,10 +140,77 @@ function diagnosisFor(kind: ProviderKind, slot: string, values: Record<string, s
     case "glm/planKey":
       return { test: () => testGlmCodingPlanKey(value), disabled: !value.trim() };
     case "workbuddy/cookie":
-      return { test: () => testWorkbuddyCookie(value), disabled: !value.trim() };
+      return { test: () => testWorkbuddyCredential(value), disabled: !value.trim() };
     default:
       return null;
   }
+}
+
+const WORKBUDDY_PART_LABELS: Record<keyof WorkbuddyCredentialParts, string> = {
+  session: "session",
+  session2: "session_2",
+  userAgent: "UA",
+};
+
+/** 粘贴原文的即时回显：三要素缺哪一项直接说，避免「保存后只见 401」。
+ *  判定走 Rust 端的 parse_workbuddy_credential——与刷新链路同一份实现 */
+function WorkbuddyCredentialPreview({ raw }: { raw: string }) {
+  const t = useT();
+  const text = raw.trim();
+  const [parts, setParts] = useState<WorkbuddyCredentialParts | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!text) {
+      setParts(null);
+      setError(null);
+      return;
+    }
+    let settled = false;
+    // 粘贴是一次性动作，300ms 去抖足够；每次按键都打 IPC 反而先看到旧结果
+    const timer = setTimeout(() => {
+      inspectWorkbuddyCredential(text)
+        .then((next) => {
+          if (!settled) {
+            setParts(next);
+            setError(null);
+          }
+        })
+        .catch((reason: unknown) => {
+          if (!settled) {
+            setParts(null);
+            setError(reason instanceof Error ? reason.message : String(reason));
+          }
+        });
+    }, 300);
+    return () => {
+      settled = true;
+      clearTimeout(timer);
+    };
+  }, [text]);
+
+  if (!text) return null;
+  if (error) {
+    return <p className="text-xs leading-relaxed text-danger">{error}</p>;
+  }
+  if (!parts) return null;
+  const keys = Object.keys(WORKBUDDY_PART_LABELS) as (keyof WorkbuddyCredentialParts)[];
+  return (
+    <div className="space-y-1">
+      <p className="flex flex-wrap items-center gap-x-3 text-xs">
+        {keys.map((key) => (
+          <span key={key} className={parts[key] ? "text-success" : "text-danger"}>
+            {parts[key] ? "✓" : "✗"} {WORKBUDDY_PART_LABELS[key]}
+          </span>
+        ))}
+      </p>
+      {!parts.session2 || !parts.userAgent ? (
+        <p className="text-xs leading-relaxed text-fg-muted">
+          {t("缺 session_2 或 UA 仍会被网关判 401：请贴 Copy as cURL 整串，不要只贴 Cookie。")}
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 /**
@@ -340,6 +415,7 @@ export function InstanceDialog({
                   id={`slot-${field.slot}`}
                   value={values[field.slot] ?? ""}
                   placeholder={field.placeholder ? t(field.placeholder) : undefined}
+                  multiline={field.multiline}
                   disabled={saveDisabled || saving}
                   onChange={(value) =>
                     setValues((current) => ({ ...current, [field.slot]: value }))
@@ -349,6 +425,9 @@ export function InstanceDialog({
                 />
                 {field.help && (
                   <p className="text-xs leading-relaxed text-fg-muted">{t(field.help)}</p>
+                )}
+                {field.preview === "workbuddy-credential" && (
+                  <WorkbuddyCredentialPreview raw={values[field.slot] ?? ""} />
                 )}
                 {(() => {
                   const diagnosis = diagnosisFor(kind, field.slot, values);

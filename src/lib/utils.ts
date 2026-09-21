@@ -27,27 +27,6 @@ export function normalizeOpenCodeAuthCookie(value: string): string {
   return cookie;
 }
 
-/** WorkBuddy session Cookie Value 校验（只判合法性、不改写内容）：
- *  白名单为 RFC 6265 cookie-value 字符集（可见 ASCII，排除空白/引号/逗号/分号），
- *  挡住 CRLF 头注入与畸形粘贴；`Cookie: session=<值>` 的拼装统一在 Rust 端做 */
-export const WORKBUDDY_SESSION_MAX_LENGTH = 16_384;
-
-export function validateWorkbuddySessionValue(value: string): string | null {
-  if (!value) return "请填写 WorkBuddy session Cookie 的 Value";
-  if (value.length > WORKBUDDY_SESSION_MAX_LENGTH)
-    return `WorkBuddy session 值过长（超过 ${WORKBUDDY_SESSION_MAX_LENGTH} 字符），请确认只粘贴了 session 的 Value`;
-  for (const ch of value) {
-    const legal =
-      ch === "!" ||
-      (ch >= "#" && ch <= "+") ||
-      (ch >= "-" && ch <= ":") ||
-      (ch >= "<" && ch <= "~");
-    if (!legal)
-      return "WorkBuddy session 值包含非法字符（不能带空格、引号、分号或整串 Cookie），请只粘贴 Value 本体";
-  }
-  return null;
-}
-
 export function formatRefreshLabel(minutes: number, translate?: (s: string) => string) {
   const t = translate ?? ((s: string) => s);
   if (minutes < 1) return t("已禁用");

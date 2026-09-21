@@ -137,7 +137,7 @@ describe("fetchWorkbuddyUsage", () => {
     const result = await fetchWorkbuddyUsage(makeInstance(), range().startMs, range().endMs);
     expect(result.status).toBe("needs_config");
     if (result.status !== "needs_config") return;
-    expect(result.message).toBe("请在设置中填写 WorkBuddy 登录 Cookie");
+    expect(result.message).toBe("请在设置中粘贴 WorkBuddy 登录凭据（Copy as cURL）");
     expect(mockInvoke).toHaveBeenCalledTimes(1);
   });
 
@@ -174,7 +174,9 @@ describe("fetchWorkbuddyUsage", () => {
     };
     expect(request.url).toBe("https://www.workbuddy.cn/billing/meter/get-user-request-usage");
     expect(request.method).toBe("POST");
-    expect(request.headers["User-Agent"]).toContain("Edg/");
+        // UA 与 Cookie 头都由 Rust 端按凭据解析结果注入，前端只出 web 客户端特征
+    expect(request.headers).not.toHaveProperty("User-Agent");
+    expect(request.headers["x-client-platform"]).toBe("web");
     expect(JSON.parse(request.bodyText)).toEqual({
       startTime: "2026-09-08 00:00:00",
       endTime: "2026-09-15 23:59:59",
@@ -218,18 +220,18 @@ describe("fetchWorkbuddyUsage", () => {
     expect(mockInvoke.mock.calls).toHaveLength(21);
   });
 
-  it("401 / 登录页 HTML → 登录已过期指引", async () => {
+  it("401 / 登录页 HTML → 凭据无效或已过期指引", async () => {
     mockInvoke.mockResolvedValueOnce({ cookie: true }).mockResolvedValueOnce(httpResult("unauthorized", 401));
     const expired = await fetchWorkbuddyUsage(makeInstance(), range().startMs, range().endMs);
     expect(expired.status).toBe("error");
     if (expired.status !== "error") return;
-    expect(expired.message).toBe("WorkBuddy 登录已过期，请重新复制 Cookie");
+    expect(expired.message).toBe("WorkBuddy 登录凭据无效或已过期，请在设置中重新粘贴 Copy as cURL");
 
     mockInvoke.mockReset().mockResolvedValueOnce({ cookie: true }).mockResolvedValueOnce(httpResult("<html>"));
     const html = await fetchWorkbuddyUsage(makeInstance(), range().startMs, range().endMs);
     expect(html.status).toBe("error");
     if (html.status !== "error") return;
-    expect(html.message).toBe("WorkBuddy 登录已过期，请重新复制 Cookie");
+    expect(html.message).toBe("WorkBuddy 登录凭据无效或已过期，请在设置中重新粘贴 Copy as cURL");
   });
 
   it("业务失败 / 非 200 → 模板错误带实参", async () => {

@@ -12,10 +12,12 @@ import type { ProviderModule } from "./types";
 // 非公开 web 接口、随官方改版需跟随维护，接入边界见 ADR-0029）：
 // - Sliverkiss/workbuddy2api internal/upstream/client.go 与 wwenc6621/CodeBuddy-Usage
 //   src/extension.ts 揭示了接口族与响应形态；
-// - 用户从 workbuddy.cn 抓包证实：**网页端不用 Bearer JWT，身份是 Cookie 会话**
-//   （session + session_2），请求体也带真实 PackageCodes（与 CodeBuddy-Usage 的
-//   内置清单一致）。鉴权因此走 session_cookie 通道：凭据只存 session 的 Value
-//   （原文存、不加工），Rust 端校验字符集后拼 `Cookie: session=<值>`。
+// - 用户从 workbuddy.cn 抓包证实：**网页端不用 Bearer JWT，身份是 Cookie 会话**，
+//   请求体也带真实 PackageCodes（与 CodeBuddy-Usage 的内置清单一致）。
+// - 网关放行的是 (session, session_2, 登录时 UA) 三元组，缺一即 401：只发 session
+//   被 APISIX 拒，UA 改一位（`Edg/153.0.0.0`→`153.0.0.1`）同一有效 Cookie 也被拒。
+//   所以凭据槽存用户粘贴的 Copy as cURL 原文，**Cookie 与 UA 都由 Rust 端解析注入**
+//   （src-tauri/src/curl_paste.rs），前端既不出 UA 也不拼 Cookie 头。
 // - 余额/套餐：POST /billing/meter/get-user-resource（与两个社区实现同端点同主机：
 //   CodeBuddy-Usage 逐字同路径，workbuddy2api 在 codebuddy.cn 走 /v2 前缀同族；
 //   网页端 plans-usage 页用的同族 -free-packages 实测也可用，但顾名思义只覆盖免费包，
@@ -28,7 +30,7 @@ import type { ProviderModule } from "./types";
 //   到站领奖）+ POST .../depart（location_id 1~4 收益/时长区间相同）。领奖与出发都是
 //   非消耗写操作（积分只会进不会出）；出发由服务端 daily_limit_reached 节流
 //   （workbuddy2api：按 CST 自然日重置的一日一出），领奖按行程 depart_at 判重
-// billing/activity 族只要求 web 客户端特征（浏览器 UA + x-client-platform + referer），
+// billing/activity 族只要求 web 客户端特征（referer + x-client-platform），
 // 不触碰聊天补全的 CLI 指纹门禁。
 const API_BASE = "https://www.workbuddy.cn"; // 国区；国际站 workbuddy.ai 是另一套登录域（ADR-0029 预留）
 const RESOURCE_URL = `${API_BASE}/billing/meter/get-user-resource`;
@@ -38,17 +40,12 @@ const TRAVEL_URL = `${API_BASE}/activity/growth/buddy/travel`;
 
 const PROVIDER_NAME = "腾讯 WorkBuddy / CodeBuddy";
 
-// UA 必须带 Edg/ 后缀（2026-09-21 实测二分：同一有效 Cookie，纯 Chrome UA 即使
-// 补齐 sec-ch-ua 等全套浏览器头仍被 WAF 拒 401，仅 Cookie + Edge UA 即 200）——
-// EdgeOne 侧对非 Edge UA 一律按未授权处理，与 Cookie 有效性无关
-export const EDGE_UA =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36 Edg/153.0.0.0";
-/** billing 族（余额/签到）请求头：referer 对应官网「套餐用量」页（Cookie 头由 Rust 端按槽位注入）；
- *  Content-Type 显式带上（Rust 端 body() 不自动补，两个社区实现均显式声明） */
+/** billing 族（余额/签到）请求头：referer 对应官网「套餐用量」页（Cookie 与 UA 头由
+ *  Rust 端按凭据解析结果注入）；Content-Type 显式带上（Rust 端 body() 不自动补，
+ *  两个社区实现均显式声明） */
 const BILLING_HEADERS: Record<string, string> = {
   Accept: "application/json",
   "Content-Type": "application/json",
-  "User-Agent": EDGE_UA,
   Origin: API_BASE,
   Referer: `${API_BASE}/profile/plans-usage`,
   "x-client-platform": "web",
@@ -56,7 +53,6 @@ const BILLING_HEADERS: Record<string, string> = {
 /** activity 族（连登/旅行）请求头：referer 对应官网「成长中心」页 */
 const ACTIVITY_HEADERS: Record<string, string> = {
   Accept: "application/json",
-  "User-Agent": EDGE_UA,
   Origin: API_BASE,
   Referer: `${API_BASE}/profile/growth-center`,
   "x-client-platform": "web",
@@ -435,11 +431,16 @@ interface ResourceOutcome {
   errorParams?: Record<string, string | number>;
 }
 
-/** 余额/套餐响应整体处理：401/403 或返回登录页 HTML 映射为「登录已过期」（重贴 Cookie 即恢复） */
+/** 余额/套餐响应整体处理：401/403 或返回登录页 HTML 映射为「凭据无效或已过期」——
+ *  网关对 session 成对与 UA 一致性任一不满足都回 401，出路同为重贴 Copy as cURL */
 function processResource(result: HttpResult): ResourceOutcome {
   const looksHtml = result.bodyText.trimStart().startsWith("<");
   if (result.status === 401 || result.status === 403 || (result.status === 200 && looksHtml)) {
-    return { ok: false, lines: [], error: "WorkBuddy 登录已过期，请重新复制 Cookie" };
+    return {
+      ok: false,
+      lines: [],
+      error: "WorkBuddy 登录凭据无效或已过期，请在设置中重新粘贴 Copy as cURL",
+    };
   }
   if (result.status !== 200) {
     const detail = result.bodyText?.trim() || "";
@@ -513,7 +514,7 @@ async function fetchWorkbuddySnapshot(instance: ProviderInstance): Promise<Provi
       providerName: PROVIDER_NAME,
       status: "needs_config",
       updatedAt,
-      message: "请在设置中填写 WorkBuddy 登录 Cookie",
+      message: "请在设置中粘贴 WorkBuddy 登录凭据（Copy as cURL）",
       lines: [],
     };
   }

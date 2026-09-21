@@ -74,8 +74,10 @@ export const en: Record<string, string> = {
   "积分套餐接口返回 HTTP {status}{detail}": "Packages API returned HTTP {status}{detail}",
   "积分套餐查询失败：{detail}": "Package query failed: {detail}",
   "积分套餐返回数据解析失败：{detail}": "Failed to parse packages response: {detail}",
-  "WorkBuddy 登录已过期，请重新复制 Cookie": "WorkBuddy session expired — copy the Cookie again",
-  "请在设置中填写 WorkBuddy 登录 Cookie": "Fill in the WorkBuddy login Cookie in Settings",
+  "WorkBuddy 登录凭据无效或已过期，请在设置中重新粘贴 Copy as cURL":
+    "WorkBuddy credentials are invalid or expired — paste the Copy as cURL again in Settings",
+  "请在设置中粘贴 WorkBuddy 登录凭据（Copy as cURL）":
+    "Paste the WorkBuddy login credentials (Copy as cURL) in Settings",
   "DeepSeek 余额字段无法解析：{detail}": "Failed to parse the DeepSeek balance field: {detail}",
   "字段缺失": "field missing",
   "积分余量": "Credits",
@@ -344,10 +346,12 @@ export const en: Record<string, string> = {
   "粘贴 API Key": "Paste API key",
   "获取方式：打开 bigmodel.cn 控制台 → Coding Plan 页 → 「生成 API Key」，复制生成的 API Key 粘贴到上方。":
     "How to get: open the bigmodel.cn console → Coding Plan page → \"Generate API Key\", then copy the generated API Key and paste it above.",
-  "WorkBuddy 登录 Cookie": "WorkBuddy login Cookie",
-  "只粘贴 session 的 Value": "Paste only the session cookie's Value",
-  "获取方式：登录 workbuddy.cn → F12 开发者工具 → Application(应用) → Cookies → 选 workbuddy.cn → 复制名为 session 项的 Value 粘贴到上方（不带 session= 前缀）。退出登录或会话轮换后失效，重新复制即可。":
-    "How to get: sign in to workbuddy.cn → F12 dev tools → Application → Cookies → workbuddy.cn → copy the Value of the session item and paste it above (no \"session=\" prefix). It expires on sign-out or session rotation — copy it again.",
+  "WorkBuddy 登录凭据": "WorkBuddy login credentials",
+  "粘贴浏览器 DevTools 的 Copy as cURL 整串": "Paste the whole Copy as cURL from browser dev tools",
+  "获取方式：登录 workbuddy.cn → F12 → Network(网络) → 刷新页面，右键任意一条 www.workbuddy.cn 请求 → Copy as cURL，整串粘贴到上方。":
+    "How to get: sign in to workbuddy.cn → F12 → Network → reload the page, then right-click any www.workbuddy.cn request → Copy as cURL and paste it above in full.",
+  "缺 session_2 或 UA 仍会被网关判 401：请贴 Copy as cURL 整串，不要只贴 Cookie。":
+    "A missing session_2 or UA still gets a 401 from the gateway — paste the whole Copy as cURL, not just the Cookie",
   "积分已用告警阈值（%）": "Credits usage alert threshold (%)",
   "积分已用达到该百分比时发送系统通知；留空不告警。":
     "Notify when credits usage reaches this percent; leave empty to disable alerts.",
@@ -391,7 +395,8 @@ export const en: Record<string, string> = {
   "消耗明细": "Usage log",
   "逐条请求的积分消耗；摘要为官网截断版原文。": "Per-request credit usage; summaries are the official truncated text.",
   "各模型的请求次数与积分消耗。": "Requests and credits used per model.",
-  "调整时间范围，或确认 WorkBuddy 登录 Cookie 有效。": "Adjust the time range, or make sure the WorkBuddy login Cookie is valid.",
+  "调整时间范围，或确认 WorkBuddy 登录凭据有效。":
+    "Adjust the time range, or make sure the WorkBuddy login credentials are valid.",
   "总积分消耗": "Total credits used",
   "日均积分消耗": "Daily credits used",
   "单次平均消耗": "Avg. per request",

@@ -111,7 +111,7 @@ export function WorkbuddyStats({ instance }: { instance: ProviderInstance }) {
     <EmptyState
       icon={<Activity className="h-5 w-5" />}
       title={t("所选时间范围内暂无用量数据")}
-      description={t("调整时间范围，或确认 WorkBuddy 登录 Cookie 有效。")}
+      description={t("调整时间范围，或确认 WorkBuddy 登录凭据有效。")}
     />
   );
 
