@@ -6,7 +6,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 import { invoke } from "@tauri-apps/api/core";
 import { renderLineValue } from "../i18n/apply-params";
-import type { HttpResult, ProviderInstance } from "../types/ipc";
+import type { HttpResult, ProviderInstance, ProviderSite } from "../types/ipc";
 import {
   cstDateString,
   parseCheckinResult,
@@ -15,7 +15,9 @@ import {
   parseResourceLines,
   parseStreakLine,
   parseTravelLine,
+  workbuddyApi,
   workbuddyProvider,
+  workbuddySiteOf,
 } from "./workbuddy";
 import type { WorkbuddyPackage, WorkbuddyResourceData } from "./workbuddy";
 
@@ -426,7 +428,8 @@ describe("workbuddyProvider.fetch", () => {
       "https://www.workbuddy.cn/activity/growth/streak",
     ]);
     // 请求体/头与参考实现对齐（审查修正）：通用端点 + Status [0,3] + 服务端滤过期 +
-    // 显式 Content-Type（Rust body() 不自动补）
+    // 显式 Content-Type（Rust body() 不自动补）；目录码与 NeedInUsage 已确认不参与结果，
+    // 完整形态由「两站请求体同款骨架」那条用例用 toEqual 钉住
     const resourceCall = mockInvoke.mock.calls.find(
       (call) => (call[1] as { url?: string }).url === "https://www.workbuddy.cn/billing/meter/get-user-resource",
     )?.[1] as { headers?: Record<string, string>; bodyText?: string };
@@ -435,7 +438,6 @@ describe("workbuddyProvider.fetch", () => {
       ProductCode: "p_tcaca",
       Status: [0, 3],
       OnlyValidPeriod: true,
-      NeedInUsage: true,
     });
     expect(resourceCall.headers).toMatchObject({ "Content-Type": "application/json" });
     // 卡片行：主行 + 明细 + 连登
@@ -638,5 +640,84 @@ describe("workbuddyProvider.fetch 喵喵旅行", () => {
     const snapshot = await workbuddyProvider.fetch(instance);
     expect(snapshot.status).toBe("error");
     expect(snapshot.travel).toEqual({ tripKey: "1789370635", credited: 9 });
+  });
+});
+
+describe("站点端点与能力表（ADR-0031）", () => {
+  // 本文件只有部分 describe 重置 invoke mock；这里要断言调用次数，自己重置
+  beforeEach(() => {
+    mockInvoke.mockReset();
+  });
+
+  it("中国站：端点与 referer 指向 www.workbuddy.cn，四件套能力全开", () => {
+    const api = workbuddyApi("china");
+    expect(api.urls.resource).toBe("https://www.workbuddy.cn/billing/meter/get-user-resource");
+    expect(api.urls.usage).toBe("https://www.workbuddy.cn/billing/meter/get-user-request-usage");
+    expect(api.headers.billing.Referer).toBe("https://www.workbuddy.cn/profile/plans-usage");
+    expect(api.headers.activity.Referer).toBe("https://www.workbuddy.cn/profile/growth-center");
+    expect(api.capabilities).toEqual({ checkin: true, streak: true, travel: true, stats: true });
+  });
+
+  it("国际站：Origin/Referer 随域切换，成长运营关掉、消耗明细保留", () => {
+    const api = workbuddyApi("international");
+    expect(api.urls.resource).toBe("https://www.workbuddy.ai/billing/meter/get-user-resource");
+    expect(api.headers.billing.Origin).toBe("https://www.workbuddy.ai");
+    expect(api.headers.travel.Referer).toBe("https://www.workbuddy.ai/profile/growth-center");
+    expect(api.capabilities).toEqual({ checkin: false, streak: false, travel: false, stats: true });
+  });
+
+  it("site 缺失或未知值回退中国站", () => {
+    expect(workbuddySiteOf({ site: "china" })).toBe("china");
+    expect(workbuddySiteOf({ site: "international" })).toBe("international");
+    expect(workbuddySiteOf({ site: undefined as unknown as ProviderSite })).toBe("china");
+  });
+
+  it("两站请求体同款骨架：目录码与 SlicePeriod 都不参与结果（真机回放四变体一致）", () => {
+    for (const site of ["china", "international"] as const) {
+      const body = JSON.parse(workbuddyApi(site).resourceBody) as Record<string, unknown>;
+      expect(body).toEqual({
+        PageNumber: 1,
+        PageSize: 200,
+        ProductCode: "p_tcaca",
+        Status: [0, 3],
+        OnlyValidPeriod: true,
+      });
+    }
+  });
+
+  it("国际站刷新只打取数接口：签到、连登、旅行一个都不发", async () => {
+    mockInvoke.mockImplementation(async (command: string) => {
+      if (command === "vault_credential_status") return { cookie: true };
+      return httpResult(
+        resourcePayload([
+          {
+            PackageName: "Bonus Pack",
+            Status: 0,
+            CapacitySizePrecise: "250",
+            CapacityUsedPrecise: "0",
+            CapacityRemainPrecise: "250",
+            CycleCapacitySizePrecise: "250",
+            CycleCapacityRemainPrecise: "250",
+            CycleEndTime: "2026-10-06 14:51:00",
+          },
+        ]),
+      );
+    });
+
+    const snapshot = await workbuddyProvider.fetch({ ...makeInstance(), site: "international" });
+    const urls = mockInvoke.mock.calls
+      .filter((call) => call[0] === "provider_request")
+      .map((call) => (call[1] as { url: string }).url);
+
+    expect(snapshot.status).toBe("ok");
+    expect(urls).toEqual(["https://www.workbuddy.ai/billing/meter/get-user-resource"]);
+    // 周期制套餐按 CycleCapacitySize 口径出进度行
+    expect(snapshot.lines[0].limit).toBe(250);
+  });
+
+  it("国际站缺凭据仍是 needs_config", async () => {
+    mockInvoke.mockResolvedValueOnce({});
+    const snapshot = await workbuddyProvider.fetch({ ...makeInstance(), site: "international" });
+    expect(snapshot.status).toBe("needs_config");
   });
 });

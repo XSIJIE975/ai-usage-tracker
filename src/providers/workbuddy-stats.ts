@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { HttpResult, InstanceCredentialStatus, ProviderInstance } from "../types/ipc";
 import type { StatsResult } from "./stats-result";
+import { workbuddyApi, workbuddySiteOf } from "./workbuddy";
 
 // 接口与响应结构依据 2026-09-21 官网控制台实测（workbuddy.cn 登录会话页内直连验证）：
 // - 消耗明细：POST /billing/meter/get-user-request-usage
@@ -11,7 +12,7 @@ import type { StatsResult } from "./stats-result";
 //   input 全文刻意不取，只取截断版 inputTrunc——统计页的隐私面和内存都更小。
 // - get-user-resource-summary / get-user-resource-paid-packages 仅记录于 ADR-0029，
 //   本期不做 UI（套餐明细已在卡片常驻，购买积分免费账号为空）。
-const USAGE_URL = "https://www.workbuddy.cn/billing/meter/get-user-request-usage";
+// 端点与请求头按实例站点取（ADR-0031），见 workbuddy.ts 的 workbuddyApi。
 
 const PAGE_SIZE = 100;
 /** 分页防御上限：20 页 ×100 条；正常 30 天 ≈3 页，越界视为异常按已得数据收口 */
@@ -124,6 +125,7 @@ export const fetchWorkbuddyUsage = async (
       return { status: "needs_config", message: "请在设置中粘贴 WorkBuddy 登录凭据（Copy as cURL）" };
     }
 
+    const api = workbuddyApi(workbuddySiteOf(instance));
     const body = {
       startTime: formatUsageTime(startMs),
       endTime: formatUsageTime(endMs, true),
@@ -134,17 +136,11 @@ export const fetchWorkbuddyUsage = async (
     for (let pageNum = 1; pageNum <= MAX_PAGES; pageNum += 1) {
       const result = await invoke<HttpResult>("provider_request", {
         instanceId: instance.id,
-        url: USAGE_URL,
+        url: api.urls.usage,
         method: "POST",
         auth: "session_cookie",
         credentialSlot: "cookie",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
-          Origin: "https://www.workbuddy.cn",
-          Referer: "https://www.workbuddy.cn/profile/plans-usage",
-          "x-client-platform": "web",
-        },
+        headers: api.headers.billing,
         bodyText: JSON.stringify({ ...body, pageNum }),
       });
       const parsed = parseUsageEnvelope(result);

@@ -4,6 +4,7 @@ import type {
   InstanceCredentialStatus,
   MetricLine,
   ProviderInstance,
+  ProviderSite,
   ProviderSnapshot,
 } from "../types/ipc";
 import type { ProviderModule } from "./types";
@@ -32,64 +33,120 @@ import type { ProviderModule } from "./types";
 //   （workbuddy2api：按 CST 自然日重置的一日一出），领奖按行程 depart_at 判重
 // billing/activity 族只要求 web 客户端特征（referer + x-client-platform），
 // 不触碰聊天补全的 CLI 指纹门禁。
-const API_BASE = "https://www.workbuddy.cn"; // 国区；国际站 workbuddy.ai 是另一套登录域（ADR-0029 预留）
-const RESOURCE_URL = `${API_BASE}/billing/meter/get-user-resource`;
-const CHECKIN_URL = `${API_BASE}/billing/meter/daily-checkin`;
-const STREAK_URL = `${API_BASE}/activity/growth/streak`;
-const TRAVEL_URL = `${API_BASE}/activity/growth/buddy/travel`;
-
 const PROVIDER_NAME = "腾讯 WorkBuddy / CodeBuddy";
 
-/** billing 族（余额/签到）请求头：referer 对应官网「套餐用量」页（Cookie 与 UA 头由
- *  Rust 端按凭据解析结果注入）；Content-Type 显式带上（Rust 端 body() 不自动补，
- *  两个社区实现均显式声明） */
-const BILLING_HEADERS: Record<string, string> = {
-  Accept: "application/json",
-  "Content-Type": "application/json",
-  Origin: API_BASE,
-  Referer: `${API_BASE}/profile/plans-usage`,
-  "x-client-platform": "web",
-};
-/** activity 族（连登/旅行）请求头：referer 对应官网「成长中心」页 */
-const ACTIVITY_HEADERS: Record<string, string> = {
-  Accept: "application/json",
-  Origin: API_BASE,
-  Referer: `${API_BASE}/profile/growth-center`,
-  "x-client-platform": "web",
-};
-/** 旅行接口（CodeBuddy-Usage buddyHeaders 同款）带 Content-Type：depart/claim 是 JSON POST */
-const TRAVEL_HEADERS: Record<string, string> = {
-  ...ACTIVITY_HEADERS,
-  "Content-Type": "application/json",
-};
-/** get-user-resource 请求体：ProductCode/Status/OnlyValidPeriod 与两个社区实现对齐——
- *  workbuddy2api client.go 与 CodeBuddy-Usage extension.ts 都发 Status:[0,3]（状态 3 的
- *  周期进行中套餐会被 [0] 滤掉而少算余量），并各自用 OnlyValidPeriod/到期时间范围让
- *  服务端滤掉已过期套餐（防作废积分虚增余量、阈值告警失明）。PackageCodes 是
- *  2026-09-21 网页抓包的目录码快照，CodeBuddy-Usage 同样随请求附带；workbuddy2api
- *  证明码可省（仅 ProductCode），但在本主机去码未单独验证，暂保留——官方扩充目录时
- *  需跟随维护，去码是备选 */
+/** 按站能力位（ADR-0031）：国际站没有国区这套成长运营，取数链据此跳过对应请求——
+ *  不发注定失败的调用，也就不会把「本站没这个功能」误报成「凭据失效」 */
+export interface WorkbuddyCapabilities {
+  /** 每日签到（billing/meter/daily-checkin） */
+  checkin: boolean;
+  /** 连登天数（activity/growth/streak） */
+  streak: boolean;
+  /** 喵喵旅行领奖与出发（activity/growth/buddy/travel） */
+  travel: boolean;
+  /** 消耗明细统计页（billing/meter/get-user-request-usage） */
+  stats: boolean;
+}
+
+interface WorkbuddySiteConfig {
+  origin: string;
+  capabilities: WorkbuddyCapabilities;
+}
+
+/** 实例的取数站点：site 缺失/未知值回退中国站（与 qoder 同口径） */
+export function workbuddySiteOf(instance: Pick<ProviderInstance, "site">): ProviderSite {
+  return instance.site === "international" ? "international" : "china";
+}
+
+/** get-user-resource 请求体（两站共用）：ProductCode/Status/OnlyValidPeriod 与两个社区实现
+ *  对齐——workbuddy2api client.go 与 CodeBuddy-Usage extension.ts 都发 Status:[0,3]（状态 3
+ *  的周期进行中套餐会被 [0] 滤掉而少算余量），并用 OnlyValidPeriod 让服务端滤掉已过期套餐
+ *  （防作废积分虚增余量、阈值告警失明）。
+ *  刻意不带网页抓包里的 PackageCodes 快照与 NeedInUsage：2026-09-22 两站真机回放四变体
+ *  （带码+SlicePeriod / 带码 / 去码 / 去码+NeedInUsage）结果完全一致——国区 53 个套餐、
+ *  周期总额 4394，国际站 2 个、350，四个变体一条不差。目录码不参与结果，留着它只是
+ *  一份要跟随官方扩目录维护的清单（ADR-0029 §2 的备选方案就此落地） */
 const RESOURCE_BODY = JSON.stringify({
   PageNumber: 1,
   PageSize: 200,
   ProductCode: "p_tcaca",
   Status: [0, 3],
   OnlyValidPeriod: true,
-  PackageCodes: [
-    "TCACA_code_002_AkiJS3ZHF5",
-    "TCACA_code_023_4xbGhMrE6q",
-    "TCACA_code_026_BaESVICNoi",
-    "TCACA_code_027_0FCGVA6vSa",
-    "TCACA_code_009_0XmEQc2xOf",
-    "TCACA_code_038_OhvqZtiPKr",
-    "TCACA_code_008_cfWoLwvjU4",
-    "TCACA_code_007_nzdH5h4Nl0",
-    "TCACA_code_029_6wCGEWquYy",
-    "TCACA_code_030_BjSt89qTvr",
-    "TCACA_code_028_NtpWi0jzXs",
-  ],
-  NeedInUsage: true,
 });
+
+const SITES: Record<ProviderSite, WorkbuddySiteConfig> = {
+  china: {
+    origin: "https://www.workbuddy.cn",
+    // 国区四件套 2026-09-21 实测在用（ADR-0029）
+    capabilities: { checkin: true, streak: true, travel: true, stats: true },
+  },
+  international: {
+    origin: "https://www.workbuddy.ai",
+    // 2026-09-22 真机确认：国际站没有签到与成长中心（连登、喵喵旅行都不存在）；
+    // 用量页与中国站同款，消耗明细按同族端点接入
+    capabilities: { checkin: false, streak: false, travel: false, stats: true },
+  },
+};
+
+/** 一站的取数面：URL、请求头与能力位。路径与请求体两站同构（2026-09-22 真机确认），
+ *  实测出差异再拆进站点配置 */
+export interface WorkbuddyApi {
+  origin: string;
+  resourceBody: string;
+  capabilities: WorkbuddyCapabilities;
+  urls: {
+    resource: string;
+    checkin: string;
+    streak: string;
+    travel: string;
+    usage: string;
+  };
+  headers: {
+    billing: Record<string, string>;
+    activity: Record<string, string>;
+    travel: Record<string, string>;
+  };
+}
+
+export function workbuddyApi(site: ProviderSite): WorkbuddyApi {
+  const config = SITES[site];
+  const origin = config.origin;
+  /** billing 族（余额/签到）请求头：referer 对应官网「套餐用量」页（Cookie 与 UA 头由
+   *  Rust 端按凭据解析结果注入）；Content-Type 显式带上（Rust 端 body() 不自动补，
+   *  两个社区实现均显式声明） */
+  const billingHeaders: Record<string, string> = {
+    Accept: "application/json",
+    "Content-Type": "application/json",
+    Origin: origin,
+    Referer: `${origin}/profile/plans-usage`,
+    "x-client-platform": "web",
+  };
+  /** activity 族（连登/旅行）请求头：referer 对应官网「成长中心」页 */
+  const activityHeaders: Record<string, string> = {
+    Accept: "application/json",
+    Origin: origin,
+    Referer: `${origin}/profile/growth-center`,
+    "x-client-platform": "web",
+  };
+  return {
+    origin,
+    resourceBody: RESOURCE_BODY,
+    capabilities: config.capabilities,
+    urls: {
+      resource: `${origin}/billing/meter/get-user-resource`,
+      checkin: `${origin}/billing/meter/daily-checkin`,
+      streak: `${origin}/activity/growth/streak`,
+      travel: `${origin}/activity/growth/buddy/travel`,
+      usage: `${origin}/billing/meter/get-user-request-usage`,
+    },
+    headers: {
+      billing: billingHeaders,
+      activity: activityHeaders,
+      /** 旅行接口（CodeBuddy-Usage buddyHeaders 同款）带 Content-Type：depart/claim 是 JSON POST */
+      travel: { ...activityHeaders, "Content-Type": "application/json" },
+    },
+  };
+}
 
 /** 凭据槽（workbuddy 实例存的 session Cookie 的 Value 原文） */
 const CREDENTIAL_SLOT = "cookie";
@@ -485,15 +542,15 @@ const buddyClaimedKeys = new Map<string, string>();
 
 /** 派出喵喵（location_id 1~4 收益/时长区间相同，workbuddy2api 实测，固定 1）；
  *  结果静默——失败不重试不标记，服务端 daily_limit 与行程状态天然节流 */
-async function departTravel(instanceId: string): Promise<boolean> {
+async function departTravel(instanceId: string, api: WorkbuddyApi): Promise<boolean> {
   try {
     const result = await invoke<HttpResult>("provider_request", {
       instanceId,
-      url: `${TRAVEL_URL}/depart`,
+      url: `${api.urls.travel}/depart`,
       method: "POST",
       auth: "session_cookie",
       credentialSlot: CREDENTIAL_SLOT,
-      headers: TRAVEL_HEADERS,
+      headers: api.headers.travel,
       bodyText: JSON.stringify({ location_id: 1 }),
     });
     return result.status === 200 && isEnvelopeOk(JSON.parse(result.bodyText) as WorkbuddyEnvelope<unknown>);
@@ -519,19 +576,23 @@ async function fetchWorkbuddySnapshot(instance: ProviderInstance): Promise<Provi
     };
   }
 
+  const site = workbuddySiteOf(instance);
+  const api = workbuddyApi(site);
+  const { capabilities } = api;
+
   // 先签到后取数（ADR-0029）：签到到账的积分当轮即可见。签到失败不打断取数——
-  // 余额是快照的主数据，签到下轮刷新会自动重试
+  // 余额是快照的主数据，签到下轮刷新会自动重试。本站无签到能力时整段跳过（ADR-0031）
   let checkin: { date: string; credited: number } | undefined;
   const today = cstDateString(updatedAt);
-  if (checkedInToday.get(instance.id) !== today) {
+  if (capabilities.checkin && checkedInToday.get(instance.id) !== today) {
     try {
       const result = await invoke<HttpResult>("provider_request", {
         instanceId: instance.id,
-        url: CHECKIN_URL,
+        url: api.urls.checkin,
         method: "POST",
         auth: "session_cookie",
         credentialSlot: CREDENTIAL_SLOT,
-        headers: BILLING_HEADERS,
+        headers: api.headers.billing,
         bodyText: "{}",
       });
       const outcome = parseCheckinResult(result);
@@ -552,78 +613,83 @@ async function fetchWorkbuddySnapshot(instance: ProviderInstance): Promise<Provi
   // 任何失败静默跳过不影响快照状态，只有「本轮真实领到」才写 travel 字段喂通知检测器
   let travel: { tripKey: string; credited: number } | undefined;
   let travelLine: MetricLine | null = null;
-  try {
-    const requestInit = {
-      instanceId: instance.id,
-      auth: "session_cookie" as const,
-      credentialSlot: CREDENTIAL_SLOT,
-      headers: TRAVEL_HEADERS,
-    };
-    const travelStatus = parseTravelStatus(
-      await invoke<HttpResult>("provider_request", {
-        ...requestInit,
-        url: `${TRAVEL_URL}/status`,
-        method: "GET",
-      }),
-    );
-    if (travelStatus?.state === "traveling") {
-      travelLine = parseTravelLine(travelStatus);
-    } else if (travelStatus?.state === "arrived" || travelStatus?.state === "idle") {
-      // 领奖只对到站记录发起（idle 无 record_id，跳过）；同一行程只尝试一次
-      if (travelStatus.record_id != null) {
-        const tripKey = String(travelStatus.depart_at ?? travelStatus.record_id);
-        if (buddyClaimedKeys.get(instance.id) !== tripKey) {
-          const claim = await invoke<HttpResult>("provider_request", {
-            ...requestInit,
-            url: `${TRAVEL_URL}/claim`,
-            method: "POST",
-            bodyText: JSON.stringify({ record_id: travelStatus.record_id }),
-          });
-          const outcome = parseClaimResult(claim);
-          if (outcome.kind !== "fail") {
-            buddyClaimedKeys.set(instance.id, tripKey);
-            if (outcome.kind === "claimed") {
-              travel = { tripKey, credited: outcome.credit };
+  if (capabilities.travel) {
+    try {
+      const requestInit = {
+        instanceId: instance.id,
+        auth: "session_cookie" as const,
+        credentialSlot: CREDENTIAL_SLOT,
+        headers: api.headers.travel,
+      };
+      const travelStatus = parseTravelStatus(
+        await invoke<HttpResult>("provider_request", {
+          ...requestInit,
+          url: `${api.urls.travel}/status`,
+          method: "GET",
+        }),
+      );
+      if (travelStatus?.state === "traveling") {
+        travelLine = parseTravelLine(travelStatus);
+      } else if (travelStatus?.state === "arrived" || travelStatus?.state === "idle") {
+        // 领奖只对到站记录发起（idle 无 record_id，跳过）；同一行程只尝试一次
+        if (travelStatus.record_id != null) {
+          const tripKey = String(travelStatus.depart_at ?? travelStatus.record_id);
+          if (buddyClaimedKeys.get(instance.id) !== tripKey) {
+            const claim = await invoke<HttpResult>("provider_request", {
+              ...requestInit,
+              url: `${api.urls.travel}/claim`,
+              method: "POST",
+              bodyText: JSON.stringify({ record_id: travelStatus.record_id }),
+            });
+            const outcome = parseClaimResult(claim);
+            if (outcome.kind !== "fail") {
+              buddyClaimedKeys.set(instance.id, tripKey);
+              if (outcome.kind === "claimed") {
+                travel = { tripKey, credited: outcome.credit };
+              }
             }
           }
         }
+        // 出发：名额已用尽（daily_limit_reached）或刚出发失败时不动；出发响应不含行程
+        // 信息，回查 status 换旅行中行
+        if (travelStatus.daily_limit_reached !== true && (await departTravel(instance.id, api))) {
+          travelLine = parseTravelLine(
+            parseTravelStatus(
+              await invoke<HttpResult>("provider_request", {
+                ...requestInit,
+                url: `${api.urls.travel}/status`,
+                method: "GET",
+              }),
+            ),
+          );
+        }
       }
-      // 出发：名额已用尽（daily_limit_reached）或刚出发失败时不动；出发响应不含行程
-      // 信息，回查 status 换旅行中行
-      if (travelStatus.daily_limit_reached !== true && (await departTravel(instance.id))) {
-        travelLine = parseTravelLine(
-          parseTravelStatus(
-            await invoke<HttpResult>("provider_request", {
-              ...requestInit,
-              url: `${TRAVEL_URL}/status`,
-              method: "GET",
-            }),
-          ),
-        );
-      }
+    } catch {
+      // 静默：旅行是辅助源，下轮刷新重走状态机
     }
-  } catch {
-    // 静默：旅行是辅助源，下轮刷新重走状态机
   }
 
+  // 连登按能力位取数：本站没有就把这一路置为 null，下游 value?.status 的判断自然出局
   const [resourceSettled, streakSettled] = await Promise.allSettled([
     invoke<HttpResult>("provider_request", {
       instanceId: instance.id,
-      url: RESOURCE_URL,
+      url: api.urls.resource,
       method: "POST",
       auth: "session_cookie",
       credentialSlot: CREDENTIAL_SLOT,
-      headers: BILLING_HEADERS,
-      bodyText: RESOURCE_BODY,
+      headers: api.headers.billing,
+      bodyText: api.resourceBody,
     }),
-    invoke<HttpResult>("provider_request", {
-      instanceId: instance.id,
-      url: STREAK_URL,
-      method: "GET",
-      auth: "session_cookie",
-      credentialSlot: CREDENTIAL_SLOT,
-      headers: ACTIVITY_HEADERS,
-    }),
+    capabilities.streak
+      ? invoke<HttpResult>("provider_request", {
+          instanceId: instance.id,
+          url: api.urls.streak,
+          method: "GET",
+          auth: "session_cookie",
+          credentialSlot: CREDENTIAL_SLOT,
+          headers: api.headers.activity,
+        })
+      : Promise.resolve(null),
   ]);
 
   let resourceOutcome: ResourceOutcome;
