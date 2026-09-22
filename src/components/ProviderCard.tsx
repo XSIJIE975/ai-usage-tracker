@@ -29,6 +29,7 @@ import {
 } from "./ui/dropdown-menu";
 import { ErrorDetailsDialog } from "./ErrorDetailsDialog";
 import { DeepSeekLogo, GlmLogo, OpenCodeLogo, QoderLogo, WorkbuddyLogo } from "./brand/provider-logo";
+import { SiteBadge } from "./SiteBadge";
 import { displayName } from "../lib/instance";
 import { providerName } from "../providers";
 import { useAppStore } from "../store/useAppStore";
@@ -308,6 +309,8 @@ function CardBody({
           <ProviderAvatar providerId={instance.providerId} name={kindName} />
           <div className="min-w-0">
             <CardTitle className="flex items-center gap-1.5 truncate text-sm">
+              {/* 徽标紧跟头像：夹在标题与置顶图标之间会把长供应商名挤成截断（紧凑模式尤甚） */}
+              <SiteBadge providerId={instance.providerId} site={instance.site} translate={t} />
               <span className="truncate">{title}</span>
               {instance.pinned && !compact && (
                 <Pin className="h-3 w-3 shrink-0 fill-brand text-brand" aria-label={t("已置顶")} />

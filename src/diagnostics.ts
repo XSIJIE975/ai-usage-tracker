@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { buildUsageQuery } from "./providers/deepseek-stats";
+import { isValidQoderCookie } from "./lib/utils";
 import { qoderUsageHeaders, qoderUsageUrl } from "./providers/qoder";
+import { workbuddyApi, workbuddySiteOf } from "./providers/workbuddy";
 import type { ProviderSite } from "./types/ipc";
 
 /** 机器可读的诊断结果码，与 src-tauri/src/commands.rs 的 diagnose_request 保持一致 */
@@ -10,6 +12,8 @@ export type DiagnosisCode =
   | "missing-user-token"
   | "missing-workspace-cookie"
   | "missing-credential"
+  /** 凭据原文没过保存侧同一份白名单（探测与保存同口径，ADR-0030 §2） */
+  | "invalid-credential-format"
   | "network-error"
   | "login-redirect"
   | "invalid-credentials"
@@ -39,6 +43,9 @@ export function describeDiagnosis(result: DiagnosisResult, t: TFn): string {
       return t("请先填写 Workspace ID 和 Auth Cookie");
     case "missing-credential":
       return t("请先填写凭据值");
+    case "invalid-credential-format":
+      // 与保存时拦下的是同一条文案：探测不该比保存宽松
+      return t("只粘贴 Cookie 的值：不能带「Cookie:」前缀，也不能包含换行等控制字符或中文");
     case "network-error":
       return t("网络请求失败：{detail}").replace("{detail}", result.detail ?? "");
     case "login-redirect":
@@ -66,16 +73,6 @@ async function diagnose(
     auth,
     credential,
     expectHtml,
-  });
-}
-
-/** WorkBuddy 凭据探测：粘贴原文（curl / Cookie 头 / 裸 session Value）直接透传，
- *  解析与拼头全在 Rust 端（curl_paste），与刷新链路走同一份实现，
- *  保证「测得过 ≒ 存得过」；畸形粘贴由 Rust 报出具体缺什么 */
-async function diagnoseWithCredentialText(url: string, credentialText: string): Promise<DiagnosisResult> {
-  return invoke<DiagnosisResult>("diagnose_request", {
-    url,
-    credentialText,
   });
 }
 
@@ -128,13 +125,24 @@ export function testGlmCodingPlanKey(key: string): Promise<DiagnosisResult> {
   return diagnose("https://open.bigmodel.cn/api/monitor/usage/quota/limit", "bearer", key);
 }
 
-/** WorkBuddy 登录凭据：连登接口探测（activity 族只读端点，Cookie 会话）。
- *  输入是粘贴原文，原文透传，解析与拼头由 Rust 端负责 */
-export function testWorkbuddyCredential(credentialText: string): Promise<DiagnosisResult> {
+/** WorkBuddy 登录凭据：billing 族 get-user-resource 探测（POST + 与刷新链路同一请求体与
+ *  头）。探测与取数同法同族，一次问清「本站有没有这个端点」与「凭据过不过三元组同源」
+ *  （ADR-0031）；粘贴原文透传，解析与拼头由 Rust 端 curl_paste 负责 */
+export function testWorkbuddyCredential(
+  credentialText: string,
+  site: ProviderSite,
+): Promise<DiagnosisResult> {
   const text = credentialText.trim();
   if (!text)
     return Promise.resolve({ ok: false, status: 0, latencyMs: 0, code: "missing-credential" });
-  return diagnoseWithCredentialText("https://www.workbuddy.cn/activity/growth/streak", text);
+  const api = workbuddyApi(workbuddySiteOf({ site }));
+  return invoke<DiagnosisResult>("diagnose_request", {
+    url: api.urls.resource,
+    method: "POST",
+    bodyText: api.resourceBody,
+    headers: api.headers.billing,
+    credentialText: text,
+  });
 }
 
 /** Qoder Cookie：大模型积分接口探测（raw_cookie 通道，与刷新链路同一拼装口径——
@@ -144,6 +152,14 @@ export function testQoderCookie(cookie: string, site: ProviderSite): Promise<Dia
   const text = cookie.trim();
   if (!text)
     return Promise.resolve({ ok: false, status: 0, latencyMs: 0, code: "missing-credential" });
+  // 探测与保存过同一份白名单：否则非法输入会真发出去，撞成一句查不出原因的 network-error
+  if (!isValidQoderCookie(text))
+    return Promise.resolve({
+      ok: false,
+      status: 0,
+      latencyMs: 0,
+      code: "invalid-credential-format",
+    });
   return invoke<DiagnosisResult>("diagnose_request", {
     url: qoderUsageUrl(site),
     auth: "raw_cookie",

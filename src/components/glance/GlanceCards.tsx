@@ -3,6 +3,7 @@ import { cn, formatReset } from "../../lib/utils";
 import { metricColor, statusDotColor, type GlanceInstance } from "./data";
 import type { Translate } from "./data";
 import { ProviderLogo } from "../brand/provider-logo";
+import { SiteBadge } from "../SiteBadge";
 /** 迷你卡片形态：每实例一张小卡，左侧主指标环+大数字，右侧名称与明细（字段全部固定展示） */
 export function GlanceCards({
   items,
@@ -63,6 +64,8 @@ function GlanceCard({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <ProviderLogo providerId={item.providerId} className="h-4 w-4 shrink-0" />
+            {/* 徽标紧跟 logo：放在标题与百分比之间会把长供应商名挤成截断 */}
+            <SiteBadge providerId={item.providerId} site={item.site} translate={translate} />
             <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-fg">{item.label}</span>
             {item.alertActive && (
               <TriangleAlert className="h-3.5 w-3.5 shrink-0 text-warning" aria-label={translate("有额度告警")} />

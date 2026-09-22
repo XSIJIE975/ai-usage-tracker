@@ -3,10 +3,12 @@ import { DeepSeekStats } from "./DeepSeekStats";
 import { OpenCodeStats } from "./OpenCodeStats";
 import { GlmStats } from "./GlmStats";
 import { WorkbuddyStats } from "./workbuddy/WorkbuddyStats";
+import { SiteBadge } from "../../components/SiteBadge";
 import { displayName } from "../../lib/instance";
 import { providerName } from "../../providers";
+import { workbuddyApi, workbuddySiteOf } from "../../providers/workbuddy";
 import { useT } from "../../i18n";
-import type { ProviderInstance, ProviderKind } from "../../types/ipc";
+import type { ProviderInstance } from "../../types/ipc";
 
 const STATS_COMPONENTS = {
   deepseek: DeepSeekStats,
@@ -17,10 +19,16 @@ const STATS_COMPONENTS = {
   workbuddy: WorkbuddyStats,
 } as const;
 
-/** 该种类是否挂了统计模块（qoder 无历史/明细数据源，ADR-0030：卡片即全部展示面）；
- *  卡片「查看统计」入口据此隐藏 */
-export function providerHasStats(providerId: ProviderKind): boolean {
-  return providerId in STATS_COMPONENTS;
+/** 该实例有没有统计面：种类没挂统计模块（qoder 无历史/明细数据源，ADR-0030），或本站
+ *  没有那个数据源（workbuddy 国际站无消耗明细，ADR-0031 能力表）都不出「查看统计」入口 */
+export function providerHasStats(
+  instance: Pick<ProviderInstance, "providerId" | "site">,
+): boolean {
+  if (!(instance.providerId in STATS_COMPONENTS)) return false;
+  if (instance.providerId === "workbuddy") {
+    return workbuddyApi(workbuddySiteOf(instance)).capabilities.stats;
+  }
+  return true;
 }
 
 /** 实例统计抽屉：按实例种类挂载对应统计模块（卡片「查看统计」入口） */
@@ -35,9 +43,10 @@ export function StatsSheet({
 }) {
   const t = useT();
   if (!instance) return null;
-  // 无统计模块的种类（qoder）入口已在卡片侧隐藏；此处兜底直接不渲染，防误开空抽屉
+  // 无统计面的实例（qoder，或本站没有明细数据源的 workbuddy 国际站）入口已隐藏；
+  // 此处兜底直接不渲染，防误开空抽屉
   const StatsComponent = STATS_COMPONENTS[instance.providerId as keyof typeof STATS_COMPONENTS];
-  if (!StatsComponent) return null;
+  if (!StatsComponent || !providerHasStats(instance)) return null;
   const kindName = t(providerName(instance.providerId));
   const title = displayName(instance, kindName);
   const hasNote = instance.note.trim().length > 0;
@@ -51,6 +60,7 @@ export function StatsSheet({
             {hasNote && (
               <span className="text-[13px] font-normal text-fg-muted">{kindName}</span>
             )}
+            <SiteBadge providerId={instance.providerId} site={instance.site} translate={t} />
           </SheetTitle>
           <SheetDescription>{t("用量统计")}</SheetDescription>
         </SheetHeader>

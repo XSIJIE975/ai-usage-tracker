@@ -31,6 +31,7 @@ import {
 } from "../../diagnostics";
 import { useAppStore } from "../../store/useAppStore";
 import { isValidQoderCookie, normalizeOpenCodeAuthCookie } from "../../lib/utils";
+import { hasMultipleSites, providerSites, SITE_LABELS } from "../../lib/instance";
 import { providerName } from "../../providers";
 import { useT } from "../../i18n";
 import { Select } from "../../components/ui/select";
@@ -113,7 +114,7 @@ const KIND_CONFIGS: Record<ProviderKind, KindConfig> = {
         slot: "cookie",
         label: "WorkBuddy 登录凭据",
         placeholder: "粘贴浏览器 DevTools 的 Copy as cURL 整串",
-        help: "获取方式：登录 workbuddy.cn → F12 → Network(网络) → 刷新页面，右键任意一条 www.workbuddy.cn 请求 → Copy as cURL，整串粘贴到上方。",
+        // help 按选中站点动态生成，见 SITE_PROFILES
         multiline: true,
         preview: "workbuddy-credential",
       },
@@ -126,25 +127,52 @@ const KIND_CONFIGS: Record<ProviderKind, KindConfig> = {
         slot: "cookie",
         label: "Qoder Cookie",
         placeholder: "粘贴 Cookie 的值，如 key1=xxx;key2=xxx",
-        // help 按选中站点动态生成，见 QODER_COOKIE_HELP
+        // help 按选中站点动态生成，见 SITE_PROFILES
       },
     ],
     threshold: { label: "积分已用告警阈值（%）", hint: "积分已用达到该百分比时发送系统通知；留空不告警。", min: 1, max: 100 },
   },
 };
 
-/** Qoder Cookie 获取方式按选中站点收窄（并列两个域名会让显式判站失去意义） */
-const QODER_COOKIE_HELP: Record<ProviderSite, string> = {
-  china: "获取方式：登录 qoder.com.cn → F12 → Network(网络) → 刷新页面 → 任选一条请求 → Request Headers(请求标头) → 只复制 Cookie 的值粘贴（不要带「Cookie:」前缀）。",
-  international:
-    "获取方式：登录 qoder.com → F12 → Network(网络) → 刷新页面 → 任选一条请求 → Request Headers(请求标头) → 只复制 Cookie 的值粘贴（不要带「Cookie:」前缀）。",
+/**
+ * 多站供应商的站点档案（ADR-0031）：域名是判站与重贴凭据的唯一线索，所以下拉标签与
+ * 凭据获取文案都按 (种类, 站点) 给——并列两个域名会让显式判站失去意义。
+ * 可选站点集本身在 lib/instance.ts 的 providerSites，弹窗与卡片徽标共用那一个判据。
+ */
+const SITE_PROFILES: Partial<
+  Record<ProviderKind, Record<ProviderSite, { domain: string; help: string }>>
+> = {
+  qoder: {
+    china: {
+      domain: "qoder.com.cn",
+      help: "获取方式：登录 qoder.com.cn → F12 → Network(网络) → 刷新页面 → 任选一条请求 → Request Headers(请求标头) → 只复制 Cookie 的值粘贴（不要带「Cookie:」前缀）。",
+    },
+    international: {
+      domain: "qoder.com",
+      help: "获取方式：登录 qoder.com → F12 → Network(网络) → 刷新页面 → 任选一条请求 → Request Headers(请求标头) → 只复制 Cookie 的值粘贴（不要带「Cookie:」前缀）。",
+    },
+  },
+  workbuddy: {
+    china: {
+      domain: "workbuddy.cn",
+      help: "获取方式：登录 www.workbuddy.cn → F12 → Network(网络) → 刷新页面，右键任意一条 www.workbuddy.cn 请求 → Copy as cURL，整串粘贴到上方。",
+    },
+    international: {
+      domain: "workbuddy.ai",
+      help: "获取方式：登录 www.workbuddy.ai → F12 → Network(网络) → 刷新页面，右键任意一条 www.workbuddy.ai 请求 → Copy as cURL，整串粘贴到上方。",
+    },
+  },
 };
 
-/** qoder 的站点选项（ADR-0030：两套登录域 Cookie 不互通，站点是实例显式属性） */
-const QODER_SITE_OPTIONS: { value: ProviderSite; label: string }[] = [
-  { value: "china", label: "中国站（qoder.com.cn）" },
-  { value: "international", label: "国际站（qoder.com）" },
-];
+/** 站点下拉的选项：标签=短名（域名），中文标签同时是 i18n 键 */
+function siteOptions(kind: ProviderKind): { value: ProviderSite; label: string }[] {
+  const profiles = SITE_PROFILES[kind];
+  if (!profiles) return [];
+  return providerSites(kind).map((site) => ({
+    value: site,
+    label: `${SITE_LABELS[site]}（${profiles[site].domain}）`,
+  }));
+}
 
 /** 连通性诊断在表单层组队：workspaceId+cookie 成对探测，其余单字段探测刚输入的值 */
 function diagnosisFor(
@@ -171,7 +199,7 @@ function diagnosisFor(
     case "glm/planKey":
       return { test: () => testGlmCodingPlanKey(value), disabled: !value.trim() };
     case "workbuddy/cookie":
-      return { test: () => testWorkbuddyCredential(value), disabled: !value.trim() };
+      return { test: () => testWorkbuddyCredential(value, site), disabled: !value.trim() };
     case "qoder/cookie":
       return {
         test: () => testQoderCookie(value, site),
@@ -387,7 +415,7 @@ export function InstanceDialog({
           ...(config.balanceThreshold
             ? { balanceThreshold: balanceThreshold.trim() === "" ? null : balanceThresholdValue }
             : {}),
-          ...(kind === "qoder" ? { site } : {}),
+          ...(hasMultipleSites(kind) ? { site } : {}),
         });
         if (Object.keys(filledCredentials).length > 0) {
           await saveInstanceCredentials(instance.id, filledCredentials);
@@ -401,7 +429,7 @@ export function InstanceDialog({
           threshold: threshold.trim() === "" ? null : thresholdValue,
           balanceThreshold:
             config.balanceThreshold && balanceThreshold.trim() !== "" ? balanceThresholdValue : null,
-          ...(kind === "qoder" ? { site } : {}),
+          ...(hasMultipleSites(kind) ? { site } : {}),
         });
         await refreshInstance(created.id);
       }
@@ -455,20 +483,20 @@ export function InstanceDialog({
             <p className="text-xs text-fg-muted">{t("备注会作为卡片标题；留空时显示供应商名。")}</p>
           </div>
 
-          {kind === "qoder" && (
+          {hasMultipleSites(kind) && (
             <>
               <Separator />
               <div className="flex items-center justify-between gap-4">
                 <div>
                   <Label htmlFor="instance-site">{t("站点")}</Label>
                   <p className="mt-1 text-[13px] text-fg-muted">
-                    {t("两套登录域的 Cookie 不互通，请选择账号所在的站点；换站后需重新粘贴对应站点的 Cookie。")}
+                    {t("两套登录域互不相通，请选择账号所在的站点；换站后需重新粘贴对应站点的凭据。")}
                   </p>
                 </div>
                 <Select
                   id="instance-site"
                   // label 是中文源文案（i18n 键），渲染时按界面语言翻译
-                  options={QODER_SITE_OPTIONS.map((option) => ({ ...option, label: t(option.label) }))}
+                  options={siteOptions(kind).map((option) => ({ ...option, label: t(option.label) }))}
                   value={site}
                   onChange={setSite}
                   disabled={saving}
@@ -499,8 +527,10 @@ export function InstanceDialog({
                   clearDisabled={!(values[field.slot] ?? "").trim() || !editing}
                 />
                 {(() => {
-                  const help =
-                    kind === "qoder" && field.slot === "cookie" ? QODER_COOKIE_HELP[site] : field.help;
+                  // 多站供应商的凭据获取文案随选中站点走（域名是判站与重贴的唯一线索）；
+                  // 单站种类（如 opencode-go 的 cookie 槽）继续用字段自带的静态文案
+                  const profile = SITE_PROFILES[kind]?.[site];
+                  const help = field.slot === "cookie" && profile ? profile.help : field.help;
                   return help ? (
                     <p className="text-xs leading-relaxed text-fg-muted">{t(help)}</p>
                   ) : null;

@@ -1,4 +1,4 @@
-import type { MetricLine, ProviderInstance, ProviderKind, ProviderSnapshot } from "../../types/ipc";
+import type { MetricLine, ProviderInstance, ProviderKind, ProviderSite, ProviderSnapshot } from "../../types/ipc";
 import { displayName, selectOrderedInstances } from "../../lib/instance";
 import { firstBalanceLine, primaryProgressLine } from "../../alerts/metric";
 import { applyParams, renderLineValue } from "../../i18n";
@@ -21,6 +21,8 @@ export interface GlanceInstance {
   id: string;
   /** 供应商类型，用于取官方标识（ProviderKind 是封闭联合，五家都有现成 logo） */
   providerId: ProviderKind;
+  /** 实例站点，多站供应商的徽标要用（ADR-0031） */
+  site: ProviderSite;
   label: string;
   status: ProviderSnapshot["status"] | "no_data";
   refreshing: boolean;
@@ -60,6 +62,7 @@ export function buildGlanceInstances(
     return {
       id: instance.id,
       providerId: instance.providerId,
+      site: instance.site,
       label: displayName(instance, snapshot ? translate(snapshot.providerName) : ""),
       status: snapshot ? snapshot.status : "no_data",
       refreshing: loading || refreshing[instance.id] === true,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderInstance } from "../types/ipc";
-import { displayName, selectOrderedInstances } from "./instance";
+import { displayName, hasMultipleSites, providerSites, selectOrderedInstances, SITE_LABELS } from "./instance";
 
 const instance = (note: string): ProviderInstance => ({
   id: "deepseek",
@@ -56,5 +56,21 @@ describe("selectOrderedInstances", () => {
     const input = [item("a", 1, false, 0), item("b", 0, false, 0)];
     selectOrderedInstances(input);
     expect(input.map((i) => i.id)).toEqual(["a", "b"]);
+  });
+});
+
+describe("providerSites / hasMultipleSites（ADR-0031）", () => {
+  it("多站种类给出可选站点集，单站种类为空", () => {
+    expect(providerSites("qoder")).toEqual(["china", "international"]);
+    expect(providerSites("workbuddy")).toEqual(["china", "international"]);
+    expect(providerSites("deepseek")).toEqual([]);
+    expect(hasMultipleSites("qoder")).toBe(true);
+    expect(hasMultipleSites("workbuddy")).toBe(true);
+    expect(hasMultipleSites("glm")).toBe(false);
+  });
+
+  it("站点短名可直接当 i18n 键", () => {
+    expect(SITE_LABELS.china).toBe("中国站");
+    expect(SITE_LABELS.international).toBe("国际站");
   });
 });

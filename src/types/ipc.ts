@@ -1,6 +1,7 @@
 export type ProviderKind = "deepseek" | "opencode-go" | "glm" | "workbuddy" | "qoder";
 
-/** 供应商站点（仅 qoder 使用，ADR-0030）：两套登录域 Cookie 不互通 */
+/** 供应商站点（ADR-0031）：同一供应商的两套登录域，Cookie/凭据不互通。
+ *  哪些种类是多站，单一判据见 lib/instance.ts 的 providerSites */
 export type ProviderSite = "china" | "international";
 
 export interface ProviderInstance {
@@ -14,7 +15,7 @@ export interface ProviderInstance {
   threshold: number | null;
   /** 余额告警阈值（元，低于触发）；仅 glm 使用，null=不告警 */
   balanceThreshold: number | null;
-  /** 站点（仅 qoder 使用；其余种类忽略，缺省中国站） */
+  /** 站点（仅多站种类有意义，单站种类一律忽略并按 china 处理） */
   site: ProviderSite;
   createdAt: number;
 }

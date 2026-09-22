@@ -3,6 +3,7 @@ import { cn, formatReset } from "../../lib/utils";
 import { metricColor, type GlanceInstance } from "./data";
 import type { Translate } from "./data";
 import { ProviderLogo } from "../brand/provider-logo";
+import { SiteBadge } from "../SiteBadge";
 
 /** 紧凑行列表形态：每实例一块，名称+百分比 / 细进度条+重置倒计时 / 明细字段行（全部固定展示） */
 export function GlanceRows({
@@ -56,6 +57,8 @@ function GlanceRow({
     >
       <div className="flex items-center gap-2">
         <ProviderLogo providerId={item.providerId} className="h-4 w-4 shrink-0" />
+        {/* 徽标紧跟 logo：放在标题与百分比之间会把长供应商名挤成截断 */}
+        <SiteBadge providerId={item.providerId} site={item.site} translate={translate} />
         {item.alertActive && (
           <TriangleAlert className="h-3.5 w-3.5 shrink-0 text-warning" aria-label={translate("有额度告警")} />
         )}

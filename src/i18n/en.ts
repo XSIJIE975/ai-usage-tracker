@@ -86,10 +86,18 @@ export const en: Record<string, string> = {
   "积分接口返回数据解析失败：{detail}": "Failed to parse credits response: {detail}",
   "quota_summary 结构缺失": "quota_summary structure missing",
   "站点": "Site",
+  "中国站": "China",
+  "国际站": "Intl",
   "中国站（qoder.com.cn）": "China site (qoder.com.cn)",
   "国际站（qoder.com）": "International site (qoder.com)",
-  "两套登录域的 Cookie 不互通，请选择账号所在的站点；换站后需重新粘贴对应站点的 Cookie。":
-    "The two login domains don't share cookies — pick the site your account is on. After switching sites, paste that site's Cookie again.",
+  "中国站（workbuddy.cn）": "China site (workbuddy.cn)",
+  "国际站（workbuddy.ai）": "International site (workbuddy.ai)",
+  "两套登录域互不相通，请选择账号所在的站点；换站后需重新粘贴对应站点的凭据。":
+    "The two login domains are separate — pick the site your account is on, and paste that site's credentials again after switching.",
+  "获取方式：登录 www.workbuddy.cn → F12 → Network(网络) → 刷新页面，右键任意一条 www.workbuddy.cn 请求 → Copy as cURL，整串粘贴到上方。":
+    "How to get it: sign in at www.workbuddy.cn → open DevTools (F12) → Network → reload → right-click any www.workbuddy.cn request → Copy as cURL, then paste the whole string above.",
+  "获取方式：登录 www.workbuddy.ai → F12 → Network(网络) → 刷新页面，右键任意一条 www.workbuddy.ai 请求 → Copy as cURL，整串粘贴到上方。":
+    "How to get it: sign in at www.workbuddy.ai → open DevTools (F12) → Network → reload → right-click any www.workbuddy.ai request → Copy as cURL, then paste the whole string above.",
   "粘贴 Cookie 的值，如 key1=xxx;key2=xxx": "Paste the Cookie value, e.g. key1=xxx;key2=xxx",
   "获取方式：登录 qoder.com.cn → F12 → Network(网络) → 刷新页面 → 任选一条请求 → Request Headers(请求标头) → 只复制 Cookie 的值粘贴（不要带「Cookie:」前缀）。":
     "How to get it: sign in at qoder.com.cn → open DevTools (F12) → Network → reload → pick any request → Request Headers → copy the Cookie value only (no leading \"Cookie:\").",
