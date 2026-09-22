@@ -6,7 +6,7 @@ import { WorkbuddyStats } from "./workbuddy/WorkbuddyStats";
 import { displayName } from "../../lib/instance";
 import { providerName } from "../../providers";
 import { useT } from "../../i18n";
-import type { ProviderInstance } from "../../types/ipc";
+import type { ProviderInstance, ProviderKind } from "../../types/ipc";
 
 const STATS_COMPONENTS = {
   deepseek: DeepSeekStats,
@@ -16,6 +16,12 @@ const STATS_COMPONENTS = {
   // 纯只读，白名单见 ADR-0029
   workbuddy: WorkbuddyStats,
 } as const;
+
+/** 该种类是否挂了统计模块（qoder 无历史/明细数据源，ADR-0030：卡片即全部展示面）；
+ *  卡片「查看统计」入口据此隐藏 */
+export function providerHasStats(providerId: ProviderKind): boolean {
+  return providerId in STATS_COMPONENTS;
+}
 
 /** 实例统计抽屉：按实例种类挂载对应统计模块（卡片「查看统计」入口） */
 export function StatsSheet({
@@ -29,7 +35,9 @@ export function StatsSheet({
 }) {
   const t = useT();
   if (!instance) return null;
-  const StatsComponent = STATS_COMPONENTS[instance.providerId];
+  // 无统计模块的种类（qoder）入口已在卡片侧隐藏；此处兜底直接不渲染，防误开空抽屉
+  const StatsComponent = STATS_COMPONENTS[instance.providerId as keyof typeof STATS_COMPONENTS];
+  if (!StatsComponent) return null;
   const kindName = t(providerName(instance.providerId));
   const title = displayName(instance, kindName);
   const hasNote = instance.note.trim().length > 0;

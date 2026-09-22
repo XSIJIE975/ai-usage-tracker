@@ -22,6 +22,7 @@ function instance(id = "glm"): ProviderInstance {
     autoRefresh: true,
     threshold: null,
     balanceThreshold: null,
+    site: "china",
     createdAt: 1,
   };
 }

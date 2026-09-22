@@ -11,6 +11,7 @@ const instance = (note: string): ProviderInstance => ({
   autoRefresh: true,
   threshold: null,
   balanceThreshold: null,
+  site: "china",
   createdAt: 0,
 });
 

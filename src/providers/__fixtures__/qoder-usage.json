@@ -1,0 +1,11 @@
+{
+  "totalQuota": {
+    "quotaSummary": {
+      "usedValue": 412.5,
+      "limitValue": 1500,
+      "remainingValue": 1087.5,
+      "unit": "credits"
+    }
+  },
+  "nextResetAt": "2026-10-01T00:00:00Z"
+}

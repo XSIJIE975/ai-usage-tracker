@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { buildUsageQuery } from "./providers/deepseek-stats";
+import { qoderUsageHeaders, qoderUsageUrl } from "./providers/qoder";
+import type { ProviderSite } from "./types/ipc";
 
 /** 机器可读的诊断结果码，与 src-tauri/src/commands.rs 的 diagnose_request 保持一致 */
 export type DiagnosisCode =
@@ -133,6 +135,21 @@ export function testWorkbuddyCredential(credentialText: string): Promise<Diagnos
   if (!text)
     return Promise.resolve({ ok: false, status: 0, latencyMs: 0, code: "missing-credential" });
   return diagnoseWithCredentialText("https://www.workbuddy.cn/activity/growth/streak", text);
+}
+
+/** Qoder Cookie：大模型积分接口探测（raw_cookie 通道，与刷新链路同一拼装口径——
+ *  Cookie 原文由 Rust 注入、UA 用缺省 Chrome 常量、静态协议头随站点）。
+ *  传的是输入框里的原文，与保存后刷新走的是同一个值（测得过即存得过） */
+export function testQoderCookie(cookie: string, site: ProviderSite): Promise<DiagnosisResult> {
+  const text = cookie.trim();
+  if (!text)
+    return Promise.resolve({ ok: false, status: 0, latencyMs: 0, code: "missing-credential" });
+  return invoke<DiagnosisResult>("diagnose_request", {
+    url: qoderUsageUrl(site),
+    auth: "raw_cookie",
+    credential: text,
+    headers: qoderUsageHeaders(site),
+  });
 }
 
 /** Rust 端解析结果（curl_paste::WorkbuddyCredential）；值本身不外露，只取有没有 */

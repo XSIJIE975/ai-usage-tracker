@@ -79,9 +79,10 @@ export function evaluateRules(
         params: { ...title.params, percent: metric!.value.toFixed(1), threshold: threshold! },
       });
     }
-  } else if (instance.providerId === "workbuddy") {
+  } else if (instance.providerId === "workbuddy" || instance.providerId === "qoder") {
     // 积分阈值只认进度行的百分比，不能用 extractMetric 的文本行数值兜底——
-    // 「余 42」是 42 积分不是 42%，兜底会把余额数值误当百分比（无总量套餐的残缺快照才走到这）
+    // 「余 42」是 42 积分不是 42%，兜底会把余额数值误当百分比（无总量套餐的残缺
+    // 快照才走到这；qoder 主行恒为进度行，同分支纯为复用规则键与文案）
     const primary = primaryProgressLine(snapshot.lines);
     const percent = primary?.percentUsed;
     if (usable(threshold) && typeof percent === "number" && percent >= threshold!) {

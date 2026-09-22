@@ -6,6 +6,7 @@ import type {
   AppSettings,
   ProviderInstance,
   ProviderKind,
+  ProviderSite,
   ProviderSnapshot,
   StoredSnapshot,
   VaultStatus,
@@ -119,6 +120,8 @@ export interface InstancePatch {
   pinned?: boolean;
   threshold?: number | null;
   balanceThreshold?: number | null;
+  /** 站点（仅 qoder 使用，ADR-0030）；换站后原 Cookie 跨登录域失效，需重贴 */
+  site?: ProviderSite;
 }
 
 interface AppStore {
@@ -144,7 +147,12 @@ interface AppStore {
     providerId: ProviderKind,
     note: string,
     credentials?: Record<string, string>,
-    options?: { autoRefresh?: boolean; threshold?: number | null; balanceThreshold?: number | null },
+    options?: {
+      autoRefresh?: boolean;
+      threshold?: number | null;
+      balanceThreshold?: number | null;
+      site?: ProviderSite;
+    },
   ) => Promise<ProviderInstance>;
   updateInstance: (id: string, patch: InstancePatch) => Promise<void>;
   removeInstance: (id: string) => Promise<void>;
@@ -379,6 +387,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       autoRefresh: options?.autoRefresh ?? true,
       threshold: options?.threshold ?? null,
       balanceThreshold: options?.balanceThreshold ?? null,
+      site: options?.site ?? undefined,
     });
     await get().reloadInstances();
     return instance;
@@ -403,6 +412,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
           threshold: patch.threshold !== undefined ? patch.threshold : instance.threshold,
           balanceThreshold:
             patch.balanceThreshold !== undefined ? patch.balanceThreshold : instance.balanceThreshold,
+          site: patch.site !== undefined ? patch.site : instance.site,
         };
       }),
     }));

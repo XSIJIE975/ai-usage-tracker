@@ -25,14 +25,16 @@ import {
   testGlmCodingPlanKey,
   testOpenCodeApiKey,
   testOpenCodeConnection,
+  testQoderCookie,
   testWorkbuddyCredential,
   type WorkbuddyCredentialParts,
 } from "../../diagnostics";
 import { useAppStore } from "../../store/useAppStore";
-import { normalizeOpenCodeAuthCookie } from "../../lib/utils";
+import { isValidQoderCookie, normalizeOpenCodeAuthCookie } from "../../lib/utils";
 import { providerName } from "../../providers";
 import { useT } from "../../i18n";
-import type { ProviderInstance, ProviderKind } from "../../types/ipc";
+import { Select } from "../../components/ui/select";
+import type { ProviderInstance, ProviderKind, ProviderSite } from "../../types/ipc";
 
 interface CredentialFieldSpec {
   slot: string;
@@ -118,10 +120,39 @@ const KIND_CONFIGS: Record<ProviderKind, KindConfig> = {
     ],
     threshold: { label: "积分已用告警阈值（%）", hint: "积分已用达到该百分比时发送系统通知；留空不告警。", min: 1, max: 100 },
   },
+  qoder: {
+    fields: [
+      {
+        slot: "cookie",
+        label: "Qoder Cookie",
+        placeholder: "粘贴 Cookie 的值，如 key1=xxx;key2=xxx",
+        // help 按选中站点动态生成，见 QODER_COOKIE_HELP
+      },
+    ],
+    threshold: { label: "积分已用告警阈值（%）", hint: "积分已用达到该百分比时发送系统通知；留空不告警。", min: 1, max: 100 },
+  },
 };
 
+/** Qoder Cookie 获取方式按选中站点收窄（并列两个域名会让显式判站失去意义） */
+const QODER_COOKIE_HELP: Record<ProviderSite, string> = {
+  china: "获取方式：登录 qoder.com.cn → F12 → Network(网络) → 刷新页面 → 任选一条请求 → Request Headers(请求标头) → 只复制 Cookie 的值粘贴（不要带「Cookie:」前缀）。",
+  international:
+    "获取方式：登录 qoder.com → F12 → Network(网络) → 刷新页面 → 任选一条请求 → Request Headers(请求标头) → 只复制 Cookie 的值粘贴（不要带「Cookie:」前缀）。",
+};
+
+/** qoder 的站点选项（ADR-0030：两套登录域 Cookie 不互通，站点是实例显式属性） */
+const QODER_SITE_OPTIONS: { value: ProviderSite; label: string }[] = [
+  { value: "china", label: "中国站（qoder.com.cn）" },
+  { value: "international", label: "国际站（qoder.com）" },
+];
+
 /** 连通性诊断在表单层组队：workspaceId+cookie 成对探测，其余单字段探测刚输入的值 */
-function diagnosisFor(kind: ProviderKind, slot: string, values: Record<string, string>) {
+function diagnosisFor(
+  kind: ProviderKind,
+  slot: string,
+  values: Record<string, string>,
+  site: ProviderSite,
+) {
   const value = values[slot] ?? "";
   switch (`${kind}/${slot}`) {
     case "deepseek/apiKey":
@@ -141,6 +172,11 @@ function diagnosisFor(kind: ProviderKind, slot: string, values: Record<string, s
       return { test: () => testGlmCodingPlanKey(value), disabled: !value.trim() };
     case "workbuddy/cookie":
       return { test: () => testWorkbuddyCredential(value), disabled: !value.trim() };
+    case "qoder/cookie":
+      return {
+        test: () => testQoderCookie(value, site),
+        disabled: !value.trim(),
+      };
     default:
       return null;
   }
@@ -253,16 +289,18 @@ export function InstanceDialog({
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [threshold, setThreshold] = useState("");
   const [balanceThreshold, setBalanceThreshold] = useState("");
+  const [site, setSite] = useState<ProviderSite>("china");
   const [message, setMessage] = useState<SaveMessage>(null);
   const [saving, setSaving] = useState(false);
 
-  // 打开时重置表单：编辑模式回填备注/开关/阈值与凭据明文
+  // 打开时重置表单：编辑模式回填备注/开关/阈值/站点与凭据明文
   useEffect(() => {
     if (!open) return;
     setNote(instance?.note ?? "");
     setAutoRefresh(instance?.autoRefresh ?? true);
     setThreshold(instance?.threshold != null ? String(instance.threshold) : "");
     setBalanceThreshold(instance?.balanceThreshold != null ? String(instance.balanceThreshold) : "");
+    setSite(instance?.site ?? "china");
     setValues({});
     setMessage(null);
   }, [open, instance]);
@@ -326,7 +364,20 @@ export function InstanceDialog({
       const filledCredentials: Record<string, string> = {};
       for (const field of config.fields) {
         const raw = (values[field.slot] ?? "").trim();
-        if (raw) filledCredentials[field.slot] = field.normalize ? field.normalize(raw) : raw;
+        if (raw) {
+          // Qoder Cookie 原样存储、原样发送（前后端都不加工），合法性只在这一道把关：
+          // 拒「Cookie:」前缀、CR/LF 头注入与非 ASCII——保存前拦下，错误可见而不是
+          // 存进去等 401（探测链路传的是同一个原文，测得过即存得过）
+          if (kind === "qoder" && !isValidQoderCookie(raw)) {
+            setSaving(false);
+            setMessage({
+              kind: "error",
+              text: t("只粘贴 Cookie 的值：不能带「Cookie:」前缀，也不能包含换行等控制字符或中文"),
+            });
+            return;
+          }
+          filledCredentials[field.slot] = field.normalize ? field.normalize(raw) : raw;
+        }
       }
       if (editing && instance) {
         await updateInstance(instance.id, {
@@ -336,6 +387,7 @@ export function InstanceDialog({
           ...(config.balanceThreshold
             ? { balanceThreshold: balanceThreshold.trim() === "" ? null : balanceThresholdValue }
             : {}),
+          ...(kind === "qoder" ? { site } : {}),
         });
         if (Object.keys(filledCredentials).length > 0) {
           await saveInstanceCredentials(instance.id, filledCredentials);
@@ -349,6 +401,7 @@ export function InstanceDialog({
           threshold: threshold.trim() === "" ? null : thresholdValue,
           balanceThreshold:
             config.balanceThreshold && balanceThreshold.trim() !== "" ? balanceThresholdValue : null,
+          ...(kind === "qoder" ? { site } : {}),
         });
         await refreshInstance(created.id);
       }
@@ -402,6 +455,28 @@ export function InstanceDialog({
             <p className="text-xs text-fg-muted">{t("备注会作为卡片标题；留空时显示供应商名。")}</p>
           </div>
 
+          {kind === "qoder" && (
+            <>
+              <Separator />
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <Label htmlFor="instance-site">{t("站点")}</Label>
+                  <p className="mt-1 text-[13px] text-fg-muted">
+                    {t("两套登录域的 Cookie 不互通，请选择账号所在的站点；换站后需重新粘贴对应站点的 Cookie。")}
+                  </p>
+                </div>
+                <Select
+                  id="instance-site"
+                  // label 是中文源文案（i18n 键），渲染时按界面语言翻译
+                  options={QODER_SITE_OPTIONS.map((option) => ({ ...option, label: t(option.label) }))}
+                  value={site}
+                  onChange={setSite}
+                  disabled={saving}
+                />
+              </div>
+            </>
+          )}
+
           <Separator />
 
           <div className="space-y-5">
@@ -423,14 +498,18 @@ export function InstanceDialog({
                   onClear={() => void clearCredential(field.slot)}
                   clearDisabled={!(values[field.slot] ?? "").trim() || !editing}
                 />
-                {field.help && (
-                  <p className="text-xs leading-relaxed text-fg-muted">{t(field.help)}</p>
-                )}
+                {(() => {
+                  const help =
+                    kind === "qoder" && field.slot === "cookie" ? QODER_COOKIE_HELP[site] : field.help;
+                  return help ? (
+                    <p className="text-xs leading-relaxed text-fg-muted">{t(help)}</p>
+                  ) : null;
+                })()}
                 {field.preview === "workbuddy-credential" && (
                   <WorkbuddyCredentialPreview raw={values[field.slot] ?? ""} />
                 )}
                 {(() => {
-                  const diagnosis = diagnosisFor(kind, field.slot, values);
+                  const diagnosis = diagnosisFor(kind, field.slot, values, site);
                   if (!diagnosis) return null;
                   return (
                     <DiagnosisButton

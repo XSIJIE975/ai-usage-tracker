@@ -220,6 +220,18 @@ fn credential_text(value: &Value) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+/// Qoder 等「整段 Cookie 头」凭据的缺省浏览器 UA（ADR-0030）：Qoder 网关不绑定
+/// 登录时 UA（CodexBar 硬编码 UA 实证），与 WorkBuddy 的逐字节同源校验截然不同。
+/// 平台段随本机编译目标走、Chrome 版本串统一（CodexBar 实证可用的那个版本）：
+/// UA 声称 Macintosh 而 TLS/HTTP2 指纹是本机 Windows，正是 Baxia 风控最容易识别的
+/// 不自洽。版本升级时跟随 CodexBar 更新。调用方显式传 UA 时本值让位（or_insert）
+#[cfg(target_os = "windows")]
+pub const RAW_COOKIE_DEFAULT_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
+#[cfg(target_os = "macos")]
+pub const RAW_COOKIE_DEFAULT_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const RAW_COOKIE_DEFAULT_UA: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
+
 fn normalize_auth_cookie(value: &str) -> String {
     let mut cookie = value.trim();
     if cookie.to_ascii_lowercase().starts_with("cookie:") {
@@ -292,12 +304,16 @@ pub fn create_instance(
     auto_refresh: Option<bool>,
     threshold: Option<f64>,
     balance_threshold: Option<f64>,
+    site: Option<String>,
 ) -> Result<db::StoredInstance, String> {
     if !instances::PROVIDER_KINDS
         .iter()
         .any(|(kind, _)| *kind == provider_id)
     {
         return Err(format!("不支持的供应商：{provider_id}"));
+    }
+    if let Some(site) = site.as_deref() {
+        instances::validate_site(site)?;
     }
     let instance = {
         let db = state.db.lock().expect("db lock poisoned");
@@ -310,6 +326,7 @@ pub fn create_instance(
             auto_refresh: auto_refresh.unwrap_or(true),
             threshold,
             balance_threshold,
+            site: site.unwrap_or_else(|| "china".to_string()),
             created_at: chrono_utc_now(),
         }
     };
@@ -336,6 +353,8 @@ pub struct InstancePatch {
     pub threshold: Option<Option<f64>>,
     #[serde(deserialize_with = "deserialize_double_option")]
     pub balance_threshold: Option<Option<f64>>,
+    /// 站点（仅 qoder 使用，ADR-0030）：缺省=不改；换站后原 Cookie 跨登录域失效，需重贴
+    pub site: Option<String>,
 }
 
 /// serde 对 Option<Option<T>> 的 null 缺省行为是外层 None；
@@ -355,6 +374,9 @@ pub fn update_instance(
     id: String,
     patch: InstancePatch,
 ) -> Result<(), String> {
+    if let Some(site) = patch.site.as_deref() {
+        instances::validate_site(site)?;
+    }
     {
         let db = state.db.lock().expect("db lock poisoned");
         db.update_instance(
@@ -364,6 +386,7 @@ pub fn update_instance(
             patch.pinned,
             patch.threshold,
             patch.balance_threshold,
+            patch.site.as_deref(),
         )?;
     }
     let _ = app.emit("instances-changed", ());
@@ -552,10 +575,21 @@ pub async fn diagnose_request(
     credential: Option<String>,
     expect_html: Option<bool>,
     credential_text: Option<String>,
+    // 随探测附加的静态协议头（如 Qoder 的 Origin/Referer/Bx-V），让探测与
+    // 刷新链路的请求形态尽量一致
+    headers: Option<HashMap<String, String>>,
 ) -> Result<DiagnosisResult, String> {
     let client = http_client();
 
     let mut request = client.request(Method::GET, &url);
+    // 静态协议头先铺（如 Qoder 的 Origin/Referer/Bx-V），鉴权头随后注入并可覆盖同名项
+    // ——顺序与 provider_request 一致：凭据永远赢过调用方传入的头，探测与刷新链路
+    // 不会因为前端多传一个 Cookie 就把真凭据挤出请求
+    if let Some(extra) = headers {
+        for (name, value) in extra {
+            request = request.header(name, value);
+        }
+    }
     if let Some(pasted) = credential_text.filter(|value| !value.trim().is_empty()) {
         // 解析失败（缺 session_2 之外的畸形粘贴）直接抛错，前端 DiagnosisButton
         // 原样展示 detail——探测链路不猜用户意图，宁可让用户重贴
@@ -583,6 +617,16 @@ pub async fn diagnose_request(
                     "User-Agent",
                     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Gecko/20100101 Firefox/148.0",
                 );
+            }
+            Some("raw_cookie") => {
+                // 整段 Cookie 头值原样注入（Qoder，ADR-0030），UA 用缺省 Chrome 常量，
+                // 与 provider_request 的 raw_cookie 通道同一拼装口径
+                let cookie = match credential.filter(|value| !value.trim().is_empty()) {
+                    Some(cookie) => cookie,
+                    None => return Ok(DiagnosisResult::new(false, 0, 0, "missing-credential", None)),
+                };
+                request = request.header("Cookie", cookie.trim().to_string());
+                request = request.header("User-Agent", RAW_COOKIE_DEFAULT_UA);
             }
             _ => {}
         }
@@ -890,6 +934,21 @@ pub async fn provider_request(
                 "User-Agent".to_string(),
                 credential.user_agent_or_default().to_string(),
             );
+        }
+        Some("raw_cookie") => {
+            // vault 槽位存用户粘贴的整段 Cookie 头值（Qoder 网页登录态，ADR-0030）：
+            // 原样注入 Cookie 头，UA 缺省用 Chrome 常量（Qoder 网关不校验 UA 与登录
+            // 会话同源——CodexBar 硬编码 UA 实证，与 WorkBuddy 的 session_cookie 通道
+            // 逐字节 UA 校验是两种网关）。Origin/Referer/Bx-V 等静态协议头与 WorkBuddy
+            // 的 x-client-platform 同先例，由前端随端点定义传入
+            let slot = credential_slot
+                .clone()
+                .ok_or_else(|| "raw_cookie auth 需要 credential_slot".to_string())?;
+            let cookie = resolve_bearer_key(&kind, &slot, &instance_credentials)?;
+            headers.insert("Cookie".to_string(), cookie.to_string());
+            headers
+                .entry("User-Agent".to_string())
+                .or_insert_with(|| RAW_COOKIE_DEFAULT_UA.to_string());
         }
         Some("cookie") => return Err("不支持的 provider cookie auth".to_string()),
         _ => {}

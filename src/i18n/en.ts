@@ -78,6 +78,26 @@ export const en: Record<string, string> = {
     "WorkBuddy credentials are invalid or expired — paste the Copy as cURL again in Settings",
   "请在设置中粘贴 WorkBuddy 登录凭据（Copy as cURL）":
     "Paste the WorkBuddy login credentials (Copy as cURL) in Settings",
+  "Qoder 登录凭据无效或已过期，请在设置中重新粘贴 Cookie":
+    "Qoder credentials are invalid or expired — paste the Cookie header again in Settings",
+  "请在设置中粘贴 Qoder 网页 Cookie": "Paste the Qoder web Cookie in Settings",
+  "积分接口返回 HTTP {status}{detail}": "Credits API returned HTTP {status}{detail}",
+  "积分接口查询失败：{detail}": "Credits query failed: {detail}",
+  "积分接口返回数据解析失败：{detail}": "Failed to parse credits response: {detail}",
+  "quota_summary 结构缺失": "quota_summary structure missing",
+  "站点": "Site",
+  "中国站（qoder.com.cn）": "China site (qoder.com.cn)",
+  "国际站（qoder.com）": "International site (qoder.com)",
+  "两套登录域的 Cookie 不互通，请选择账号所在的站点；换站后需重新粘贴对应站点的 Cookie。":
+    "The two login domains don't share cookies — pick the site your account is on. After switching sites, paste that site's Cookie again.",
+  "粘贴 Cookie 的值，如 key1=xxx;key2=xxx": "Paste the Cookie value, e.g. key1=xxx;key2=xxx",
+  "获取方式：登录 qoder.com.cn → F12 → Network(网络) → 刷新页面 → 任选一条请求 → Request Headers(请求标头) → 只复制 Cookie 的值粘贴（不要带「Cookie:」前缀）。":
+    "How to get it: sign in at qoder.com.cn → open DevTools (F12) → Network → reload → pick any request → Request Headers → copy the Cookie value only (no leading \"Cookie:\").",
+  "获取方式：登录 qoder.com → F12 → Network(网络) → 刷新页面 → 任选一条请求 → Request Headers(请求标头) → 只复制 Cookie 的值粘贴（不要带「Cookie:」前缀）。":
+    "How to get it: sign in at qoder.com → open DevTools (F12) → Network → reload → pick any request → Request Headers → copy the Cookie value only (no leading \"Cookie:\").",
+  "只粘贴 Cookie 的值：不能带「Cookie:」前缀，也不能包含换行等控制字符或中文":
+    'Paste the Cookie value only — no leading "Cookie:", and no line breaks, control characters, or non-ASCII text',
+  "查询 Qoder 大模型积分余量与重置时间": "Track Qoder big-model credit balance and reset time",
   "DeepSeek 余额字段无法解析：{detail}": "Failed to parse the DeepSeek balance field: {detail}",
   "字段缺失": "field missing",
   "积分余量": "Credits",

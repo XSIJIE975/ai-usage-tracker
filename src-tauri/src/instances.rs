@@ -23,6 +23,8 @@ pub const PROVIDER_KINDS: &[(&str, &[(&str, &str)])] = &[
     ),
     ("glm", &[("glmCodingPlanKey", "planKey")]),
     ("workbuddy", &[("workbuddyCookie", "cookie")]),
+    // qoder 晚于实例化改造加入（ADR-0030），无旧扁平凭据键需要迁移
+    ("qoder", &[]),
 ];
 
 /// (kind, slot) 组合的人类可读凭据名，用于缺凭据时的报错文案
@@ -35,7 +37,16 @@ pub fn credential_label(kind: &str, slot: &str) -> Option<&'static str> {
         ("opencode-go", "apiKey") => Some("OpenCode Go API Key"),
         ("glm", "planKey") => Some("智谱 Coding Plan API Key"),
         ("workbuddy", "cookie") => Some("WorkBuddy 登录凭据（粘贴 Copy as cURL）"),
+        ("qoder", "cookie") => Some("Qoder Cookie"),
         _ => None,
+    }
+}
+
+/// 站点取值校验（仅 qoder 使用，ADR-0030）：china 中国站 / international 国际站
+pub fn validate_site(site: &str) -> Result<(), String> {
+    match site {
+        "china" | "international" => Ok(()),
+        other => Err(format!("不支持的站点：{other}")),
     }
 }
 
@@ -100,6 +111,8 @@ pub fn migrate_to_instances(vault: &mut Vault, db: &Db) -> Result<(), String> {
                 auto_refresh,
                 threshold,
                 balance_threshold: None,
+                // 迁移时代 qoder 尚不存在，缺省中国站无副作用（仅 qoder 消费该字段）
+                site: "china".to_string(),
                 created_at: now,
             },
             true,
@@ -345,6 +358,7 @@ mod tests {
                 auto_refresh: true,
                 threshold: Some(50.0),
                 balance_threshold: Some(5.0),
+                site: "china".into(),
                 created_at: now,
             },
             false,
@@ -361,6 +375,7 @@ mod tests {
                 auto_refresh: false,
                 threshold: None,
                 balance_threshold: None,
+                site: "china".into(),
                 created_at: now,
             },
             false,
@@ -380,6 +395,7 @@ mod tests {
             None,
             Some(None),
             Some(Some(3.5)),
+            None,
         )
         .unwrap();
         let updated = db.get_instance("deepseek").unwrap().unwrap();
@@ -389,7 +405,7 @@ mod tests {
         assert_eq!(updated.balance_threshold, Some(3.5));
 
         // balance_threshold 清除（三层语义的 Some(None)）
-        db.update_instance("deepseek", None, None, None, None, Some(None))
+        db.update_instance("deepseek", None, None, None, None, Some(None), None)
             .unwrap();
         let cleared = db.get_instance("deepseek").unwrap().unwrap();
         assert!(cleared.balance_threshold.is_none());
@@ -401,7 +417,7 @@ mod tests {
         assert_eq!(reordered[0].id, "uuid-2", "pinned 仍优先于 sort_order");
 
         // 不存在的 id
-        assert!(db.update_instance("missing", None, None, None, None, None).is_err());
+        assert!(db.update_instance("missing", None, None, None, None, None, None).is_err());
         assert!(db.reorder_instances(&["missing".into()]).is_err());
     }
 
@@ -435,12 +451,71 @@ mod tests {
         assert_eq!(instance.threshold, Some(80.0));
         assert!(instance.balance_threshold.is_none());
 
-        db.update_instance("glm", None, None, None, None, Some(Some(5.0)))
+        db.update_instance("glm", None, None, None, None, Some(Some(5.0)), None)
             .unwrap();
         assert_eq!(
             db.get_instance("glm").unwrap().unwrap().balance_threshold,
             Some(5.0)
         );
+    }
+
+    /// 存量库的 provider_instances 没有 site 列（ADR-0030 之前）：打开时补列，缺省中国站
+    #[test]
+    fn legacy_instance_table_gains_site_column() {
+        let dir = temp_path("site-col");
+        let db_path = dir.join("legacy.db");
+        {
+            let conn = rusqlite::Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                r#"
+                CREATE TABLE provider_instances (
+                    id           TEXT PRIMARY KEY,
+                    provider_id  TEXT NOT NULL,
+                    note         TEXT NOT NULL DEFAULT '',
+                    sort_order   INTEGER NOT NULL DEFAULT 0,
+                    pinned       INTEGER NOT NULL DEFAULT 0,
+                    auto_refresh INTEGER NOT NULL DEFAULT 1,
+                    threshold    REAL,
+                    created_at   INTEGER NOT NULL
+                );
+                INSERT INTO provider_instances(id, provider_id, created_at)
+                    VALUES('qoder-legacy', 'qoder', 0);
+                "#,
+            )
+            .unwrap();
+        }
+        let db = Db::open(&db_path).unwrap();
+        let instance = db.get_instance("qoder-legacy").unwrap().unwrap();
+        assert_eq!(instance.site, "china", "存量行缺省中国站");
+
+        db.update_instance(
+            "qoder-legacy",
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("international"),
+        )
+        .unwrap();
+        assert_eq!(
+            db.get_instance("qoder-legacy").unwrap().unwrap().site,
+            "international"
+        );
+    }
+
+    #[test]
+    fn site_validation_and_qoder_credential_label() {
+        assert!(validate_site("china").is_ok());
+        assert!(validate_site("international").is_ok());
+        assert!(validate_site("us").is_err());
+        assert!(validate_site("").is_err());
+
+        assert_eq!(
+            credential_label("qoder", "cookie"),
+            Some("Qoder Cookie")
+        );
+        assert!(credential_label("qoder", "planKey").is_none());
     }
 
     #[test]
@@ -458,6 +533,7 @@ mod tests {
                     auto_refresh: true,
                     threshold: None,
                     balance_threshold: None,
+                    site: "china".into(),
                     created_at: now,
                 },
                 false,

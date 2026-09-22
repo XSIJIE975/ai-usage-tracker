@@ -18,6 +18,7 @@ const instance: ProviderInstance = {
   autoRefresh: true,
   threshold: 80,
   balanceThreshold: null,
+  site: "china",
   createdAt: 0,
 };
 

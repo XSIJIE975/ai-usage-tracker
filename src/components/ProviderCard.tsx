@@ -28,7 +28,7 @@ import {
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 import { ErrorDetailsDialog } from "./ErrorDetailsDialog";
-import { DeepSeekLogo, GlmLogo, OpenCodeLogo, WorkbuddyLogo } from "./brand/provider-logo";
+import { DeepSeekLogo, GlmLogo, OpenCodeLogo, QoderLogo, WorkbuddyLogo } from "./brand/provider-logo";
 import { displayName } from "../lib/instance";
 import { providerName } from "../providers";
 import { useAppStore } from "../store/useAppStore";
@@ -55,6 +55,7 @@ const BRAND_LOGOS: Record<
   "opencode-go": { Logo: OpenCodeLogo, bg: "bg-fg/10" },
   glm: { Logo: GlmLogo, bg: "bg-transparent" },
   workbuddy: { Logo: WorkbuddyLogo, bg: "bg-transparent" },
+  qoder: { Logo: QoderLogo, bg: "bg-transparent" },
 };
 
 function ProviderAvatar({ providerId, name }: { providerId: string; name: string }) {
