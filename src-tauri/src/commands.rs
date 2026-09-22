@@ -22,6 +22,10 @@ fn http_client() -> &'static reqwest::Client {
             .user_agent("AI Usage Tracker/0.1.0")
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(30))
+            // 只走 https：实测 reqwest 初始请求（client.rs 的 execute_request）与重定向
+            // （redirect.rs 的 check）两处都校验方案，这里挡掉合法域被劫持成 http://
+            // 跳转时的降级；目的地面本身在 instances::validate_request_url
+            .https_only(true)
             .build()
             .expect("HTTP 客户端初始化失败")
     })
@@ -607,6 +611,9 @@ pub async fn diagnose_request(
     method: Option<String>,
     body_text: Option<String>,
 ) -> Result<DiagnosisResult, String> {
+    // 目的地面先收窄（ADR-0032）：探测的 url 虽由前端常量拼出，但与刷新链路同权，
+    // 不受限就等于给渲染进程一条「把刚粘贴的凭据发去任意域」的通道
+    instances::validate_probe_url(&url)?;
     let client = http_client();
 
     let method = match method.as_deref() {
@@ -935,6 +942,12 @@ pub async fn provider_request(
     };
 
     let client = http_client();
+
+    // 凭据由下面的鉴权分支注入，所以目标域名必须由本进程按实例种类判定，不能跟着
+    // 调用方传来的 url 走（ADR-0032）。跨 host 重定向时 reqwest 会剥掉
+    // Cookie/Authorization（redirect.rs 的 remove_sensitive_headers），本检查管的是
+    // 「第一跳去哪」这件事本身
+    instances::validate_request_url(&kind, &url)?;
 
     let method = match method.as_deref().unwrap_or("GET") {
         "POST" => Method::POST,

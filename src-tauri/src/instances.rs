@@ -60,6 +60,81 @@ pub fn default_bearer_slot(kind: &str) -> Option<&'static str> {
     }
 }
 
+/// 各种类允许的目标域名（目的地面，ADR-0032）：凭据头只由本进程注入，那么
+/// 「凭据会被发去哪个域」也必须由本进程决定，不能跟着调用方传来的 url 走。
+/// 与 `credential_label` 同形，接新供应商时两张表各登记一行；本表与前端 URL 常量
+/// 的对齐由 `src/providers/allowed-hosts.test.ts` 守住，漂移时测试红。
+const ALLOWED_HOSTS: &[(&str, &[&str])] = &[
+    (
+        "deepseek",
+        &["api.deepseek.com", "platform.deepseek.com"],
+    ),
+    ("opencode-go", &["opencode.ai"]),
+    ("glm", &["open.bigmodel.cn", "www.bigmodel.cn"]),
+    (
+        "workbuddy",
+        &["www.workbuddy.cn", "www.workbuddy.ai"],
+    ),
+    ("qoder", &["qoder.com.cn", "qoder.com"]),
+];
+
+/// 该种类允许的目标域名；未登记的种类返回 None，调用方按拒绝处理
+/// （宁可刷新失败，也不把凭据发往未登记的目的地）
+pub fn allowed_hosts(kind: &str) -> Option<&'static [&'static str]> {
+    ALLOWED_HOSTS
+        .iter()
+        .find(|(name, _)| *name == kind)
+        .map(|(_, hosts)| *hosts)
+}
+
+/// 目的地面校验：只放 https、只放登记表内的精确主机名，且不接受 userinfo 与端口。
+/// 主机名精确比对而非后缀匹配——`www.workbuddy.cn.evil.com` 这类以允许域结尾的地址
+/// 必须被拒；带尾点的 FQDN 同样不匹配即拒，属 fail-closed（前端常量里不存在这种写法）
+fn check_request_url(url: &str, allowed: &[&str]) -> Result<(), String> {
+    let parsed = reqwest::Url::parse(url).map_err(|_| format!("请求地址无法解析：{url}"))?;
+    if parsed.scheme() != "https" {
+        return Err(format!("只允许 https 请求：{url}"));
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(format!("请求地址不允许携带用户名或密码：{url}"));
+    }
+    if parsed.port().is_some() {
+        return Err(format!("请求地址不允许指定端口：{url}"));
+    }
+    let host = parsed.host_str().unwrap_or_default();
+    if !allowed.iter().any(|item| *item == host) {
+        return Err(format!(
+            "拒绝向 {host} 发请求：不在允许的域名表内（{}）",
+            allowed.join("、")
+        ));
+    }
+    Ok(())
+}
+
+/// provider_request 用：按实例所属种类收窄。跨种类端点（拿 glm 的 key 去打
+/// workbuddy.cn）同样拒绝——凭据离开它所属的供应商就算泄露
+pub fn validate_request_url(kind: &str, url: &str) -> Result<(), String> {
+    let allowed = match allowed_hosts(kind) {
+        Some(allowed) => allowed,
+        None => {
+            return Err(format!(
+                "供应商种类 {kind} 未登记允许的目标域名，拒绝发请求（请在 ALLOWED_HOSTS 补登记）"
+            ))
+        }
+    };
+    check_request_url(url, allowed)
+}
+
+/// diagnose_request 用：探测没有实例上下文（凭据是用户刚粘贴、尚未保存的那一份），
+/// 只能取五个种类的全集；它不带 vault 里的凭据，全集因此不构成额外泄露面
+pub fn validate_probe_url(url: &str) -> Result<(), String> {
+    let hosts: Vec<&str> = ALLOWED_HOSTS
+        .iter()
+        .flat_map(|(_, list)| list.iter().copied())
+        .collect();
+    check_request_url(url, &hosts)
+}
+
 /// 从 vault 的某实例凭据 map 中取出非空字符串槽位值
 pub fn instance_credential<'a>(instance_credentials: &'a Value, slot: &str) -> Option<&'a str> {
     instance_credentials
@@ -618,5 +693,54 @@ mod tests {
             Some("DeepSeek UserToken")
         );
         assert!(credential_label("deepseek", "planKey").is_none());
+    }
+
+    #[test]
+    fn every_provider_kind_registers_hosts() {
+        for (kind, _slots) in PROVIDER_KINDS {
+            assert!(
+                allowed_hosts(kind).is_some(),
+                "{kind} 在 PROVIDER_KINDS 里有，但 ALLOWED_HOSTS 没登记目标域名"
+            );
+        }
+    }
+
+    #[test]
+    fn request_url_limited_to_own_kind_hosts() {
+        let glm_quota = "https://open.bigmodel.cn/api/monitor/usage/quota/limit";
+        let qoder_intl = "https://qoder.com/api/v2/me/usages/big_model_credits";
+        let workbuddy_resource = "https://www.workbuddy.ai/billing/meter/get-user-resource";
+        assert!(validate_request_url("glm", glm_quota).is_ok());
+        assert!(validate_request_url("qoder", qoder_intl).is_ok());
+        // 跨种类：凭据离开所属供应商即算泄露
+        assert!(validate_request_url("workbuddy", glm_quota).is_err());
+        assert!(validate_request_url("qoder", workbuddy_resource).is_err());
+        assert!(validate_request_url("glm", workbuddy_resource).is_err());
+    }
+
+    #[test]
+    fn request_url_rejects_lookalike_and_downgrade_targets() {
+        // 以允许域结尾的第三方主机名（后缀匹配会误放行，所以只做精确比对）
+        assert!(validate_request_url("workbuddy", "https://www.workbuddy.cn.evil.com/x").is_err());
+        // 允许域写进 userinfo，目的地其实是 evil.com
+        assert!(validate_request_url("workbuddy", "https://www.workbuddy.cn@evil.com/x").is_err());
+        // 非 https、显式端口、无法解析、未登记种类
+        assert!(validate_request_url("qoder", "http://qoder.com/api").is_err());
+        assert!(validate_request_url("qoder", "https://qoder.com:8443/api").is_err());
+        assert!(validate_request_url("qoder", "不是地址").is_err());
+        assert!(validate_request_url("skynet", "https://qoder.com/api").is_err());
+    }
+
+    #[test]
+    fn probe_url_takes_union_of_registered_hosts() {
+        let opencode_dashboard = "https://opencode.ai/workspace/wrk_x/go";
+        let deepseek_balance = "https://api.deepseek.com/user/balance";
+        let glm_balance = "https://www.bigmodel.cn/api/biz/account/query-customer-account-report";
+        assert!(validate_probe_url(opencode_dashboard).is_ok());
+        assert!(validate_probe_url(deepseek_balance).is_ok());
+        assert!(validate_probe_url(glm_balance).is_ok());
+        // 探测同样不允许离开登记过的 9 个 host
+        assert!(validate_probe_url("https://github.com/XSIJIE975/ai-usage-tracker").is_err());
+        assert!(validate_probe_url("http://qoder.com/api").is_err());
     }
 }
