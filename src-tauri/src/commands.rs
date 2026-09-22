@@ -232,6 +232,30 @@ pub const RAW_COOKIE_DEFAULT_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 pub const RAW_COOKIE_DEFAULT_UA: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
 
+/// 凭据相关头只允许由鉴权分支注入：调用方（渲染进程）传来的同名头一律剔除。
+/// 排序挡不住这件事——reqwest 的 `RequestBuilder::header` 内部是 `HeaderMap::append`
+/// （同名会并存两条，先到的那条被网关读到），所以「先铺静态头再注入凭据头」并不等于
+/// 凭据赢；只有按名字过滤才能保证请求里只有一条、且值是 vault 里的。
+const RESERVED_CREDENTIAL_HEADERS: [&str; 3] = ["cookie", "authorization", "user-agent"];
+
+fn is_reserved_credential_header(name: &str) -> bool {
+    RESERVED_CREDENTIAL_HEADERS
+        .iter()
+        .any(|reserved| name.eq_ignore_ascii_case(reserved))
+}
+
+/// Cookie 头值的字节域（RFC 6265：可见 ASCII）——CR/LF 等控制字符与非 ASCII 一律拒。
+/// 前端保存与探测已经过同口径白名单（`lib/utils.ts` 的 `isValidQoderCookie`），这里兜住
+/// 「vault 被外部改过」：否则 reqwest 只在 `send()` 阶段抛一句没有指向的 builder 错误，
+/// 用户看到的是"网络请求失败"而不是"凭据里有非法字符"
+fn validate_cookie_header_value(value: &str) -> Result<(), ()> {
+    if value.chars().all(|c| matches!(c, '\x20'..='\x7E')) {
+        Ok(())
+    } else {
+        Err(())
+    }
+}
+
 fn normalize_auth_cookie(value: &str) -> String {
     let mut cookie = value.trim();
     if cookie.to_ascii_lowercase().starts_with("cookie:") {
@@ -575,18 +599,28 @@ pub async fn diagnose_request(
     credential: Option<String>,
     expect_html: Option<bool>,
     credential_text: Option<String>,
-    // 随探测附加的静态协议头（如 Qoder 的 Origin/Referer/Bx-V），让探测与
-    // 刷新链路的请求形态尽量一致
+    // 随探测附加的静态协议头（如 Qoder 的 Origin/Referer/Bx-V、WorkBuddy 的 x-client-platform），
+    // 让探测与刷新链路的请求形态尽量一致
     headers: Option<HashMap<String, String>>,
+    // 探测请求的方法：缺省 GET；WorkBuddy 的 billing 族只有 POST，探测要与刷新同法同族
+    // （ADR-0031），否则只能去探一个本站未必存在的 GET 端点
+    method: Option<String>,
+    body_text: Option<String>,
 ) -> Result<DiagnosisResult, String> {
     let client = http_client();
 
-    let mut request = client.request(Method::GET, &url);
-    // 静态协议头先铺（如 Qoder 的 Origin/Referer/Bx-V），鉴权头随后注入并可覆盖同名项
-    // ——顺序与 provider_request 一致：凭据永远赢过调用方传入的头，探测与刷新链路
-    // 不会因为前端多传一个 Cookie 就把真凭据挤出请求
+    let method = match method.as_deref() {
+        Some("POST") => Method::POST,
+        _ => Method::GET,
+    };
+    let mut request = client.request(method, &url);
+    // 静态协议头先铺（如 Qoder 的 Origin/Referer/Bx-V），但凭据相关头一律剔除：
+    // 保证请求里的 Cookie / Authorization / User-Agent 只可能来自下面的鉴权分支
     if let Some(extra) = headers {
         for (name, value) in extra {
+            if is_reserved_credential_header(&name) {
+                continue;
+            }
             request = request.header(name, value);
         }
     }
@@ -625,11 +659,23 @@ pub async fn diagnose_request(
                     Some(cookie) => cookie,
                     None => return Ok(DiagnosisResult::new(false, 0, 0, "missing-credential", None)),
                 };
+                if validate_cookie_header_value(cookie.trim()).is_err() {
+                    return Ok(DiagnosisResult::new(
+                        false,
+                        0,
+                        0,
+                        "invalid-credential-format",
+                        None,
+                    ));
+                }
                 request = request.header("Cookie", cookie.trim().to_string());
                 request = request.header("User-Agent", RAW_COOKIE_DEFAULT_UA);
             }
             _ => {}
         }
+    }
+    if let Some(body) = body_text {
+        request = request.body(body);
     }
 
     let started = std::time::Instant::now();
@@ -895,7 +941,10 @@ pub async fn provider_request(
         _ => Method::GET,
     };
     let mut request = client.request(method, &url);
+    // 调用方传来的凭据相关头先剔除（同名会 append 成两条，靠顺序挡不住），
+    // 之后 Cookie / Authorization / User-Agent 只可能由下面的鉴权分支写入
     let mut headers = headers.unwrap_or_default();
+    headers.retain(|name, _| !is_reserved_credential_header(name));
 
     match auth.as_deref() {
         Some("bearer") => {
@@ -945,6 +994,8 @@ pub async fn provider_request(
                 .clone()
                 .ok_or_else(|| "raw_cookie auth 需要 credential_slot".to_string())?;
             let cookie = resolve_bearer_key(&kind, &slot, &instance_credentials)?;
+            validate_cookie_header_value(cookie)
+                .map_err(|_| "Cookie 含控制字符或非 ASCII，请重新粘贴 Cookie 的值".to_string())?;
             headers.insert("Cookie".to_string(), cookie.to_string());
             headers
                 .entry("User-Agent".to_string())
@@ -1173,5 +1224,35 @@ mod tests {
 
         assert_eq!(current["apiKey"], "sk-new");
         assert!(!current.contains_key("workspaceId"));
+    }
+
+    /// reqwest 的 `RequestBuilder::header` 是 append（同名并存两条、先到的被网关读到），
+    /// 所以「凭据只由鉴权分支写入」必须靠按名字剔除调用方传入的同名头来保证
+    #[test]
+    fn caller_supplied_credential_headers_are_dropped() {
+        assert!(is_reserved_credential_header("Cookie"));
+        assert!(is_reserved_credential_header("cookie"));
+        assert!(is_reserved_credential_header("USER-AGENT"));
+        assert!(is_reserved_credential_header("Authorization"));
+        assert!(!is_reserved_credential_header("Referer"));
+        assert!(!is_reserved_credential_header("X-Requested-With"));
+
+        let mut headers = HashMap::new();
+        headers.insert("cookie".to_string(), "attacker=1".to_string());
+        headers.insert("User-Agent".to_string(), "spoofed".to_string());
+        headers.insert("Origin".to_string(), "https://qoder.com".to_string());
+        headers.retain(|name, _| !is_reserved_credential_header(name));
+        assert_eq!(headers.len(), 1, "只留下静态协议头");
+        assert!(headers.contains_key("Origin"));
+    }
+
+    #[test]
+    fn cookie_header_value_rejects_control_and_non_ascii() {
+        assert!(validate_cookie_header_value("session=abc; session_2=def").is_ok());
+        assert!(validate_cookie_header_value("key1=xxx;key2=yyy").is_ok());
+        assert!(validate_cookie_header_value("a=1\r\nX-Evil: 1").is_err());
+        assert!(validate_cookie_header_value("a=1\nb=2").is_err());
+        assert!(validate_cookie_header_value("a=中文").is_err());
+        assert!(validate_cookie_header_value("a=\t1").is_err());
     }
 }
