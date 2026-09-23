@@ -141,6 +141,16 @@ export const en: Record<string, string> = {
   "备注": "Note",
   "如：公司主账号": "e.g. Work account",
   "备注会作为卡片标题；留空时显示供应商名。": "Shown as the card title; falls back to the provider name when empty.",
+  // ── 表单校验（schema 只出错误码，文案在这里过 t()）──
+  "该项为必填": "This field is required",
+  "备注不能超过 {max} 个字符": "Note must be {max} characters or fewer",
+  "阈值请填写数字": "Enter a number for the threshold",
+  "阈值请填写整数": "Enter a whole number for the threshold",
+  "阈值需在 {min}–{max} 之间": "Threshold must be between {min} and {max}",
+  "留空不影响余额卡片，但用量统计页需要该令牌。":
+    "Optional for the balance card; the usage page needs this token.",
+  "留空则按页面抓取用量；填了才走官方 /usage 接口。":
+    "Left empty, usage is scraped from the console page; set it to use the official /usage API.",
   "本机设备密钥已丢失，保存时将重建凭据库。": "Device key lost — saving will rebuild the vault.",
   "本机设备密钥已丢失（常见于换机、重装系统或重置账户密码），原凭据无法恢复。请删除对应供应商后重新添加，保存时将重建凭据库。": "The device key is missing (common after switching devices, reinstalling the OS, or resetting your account password). Existing credentials can't be recovered. Delete the provider and add it again — saving will rebuild the vault.",
   "跟随全局刷新间隔，手动刷新不受此开关影响。": "Follows the global refresh interval; manual refresh is unaffected.",
@@ -356,7 +366,6 @@ export const en: Record<string, string> = {
 
   // ── 供应商设置 ──
   "保存中…": "Saving…",
-  "凭据已清除": "Credentials cleared",
   "测试": "Test",
   "测试中…": "Testing…",
   "余额告警阈值（元）": "Balance alert threshold (CNY)",

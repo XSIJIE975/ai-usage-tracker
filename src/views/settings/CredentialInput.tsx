@@ -10,8 +10,12 @@ interface SecretFieldProps {
   placeholder?: string;
   disabled?: boolean;
   onChange: (value: string) => void;
+  onBlur?: () => void;
   onClear: () => void;
   clearDisabled?: boolean;
+  /** 校验失败：输入框标红并让读屏关联到错误文案 */
+  invalid?: boolean;
+  describedBy?: string;
 }
 
 export function SecretField({
@@ -20,8 +24,11 @@ export function SecretField({
   placeholder,
   disabled = false,
   onChange,
+  onBlur,
   onClear,
   clearDisabled = false,
+  invalid = false,
+  describedBy,
 }: SecretFieldProps) {
   const [visible, setVisible] = useState(false);
   const t = useT();
@@ -34,9 +41,12 @@ export function SecretField({
         value={value}
         autoComplete="off"
         disabled={disabled}
-        className="h-9 pr-16 font-mono text-[13px]"
+        aria-invalid={invalid || undefined}
+        aria-describedby={describedBy}
+        className="h-9 pr-16 font-mono text-[13px] aria-[invalid=true]:border-danger aria-[invalid=true]:focus-visible:border-danger"
         placeholder={placeholder}
         onChange={(event) => onChange(event.currentTarget.value)}
+        onBlur={onBlur}
       />
       <button
         type="button"
@@ -62,6 +72,7 @@ export function SecretField({
   );
 }
 
+/** 只说一件事：库里有没有这一项。表单填没填、能不能保存，由输入框和错误文案负责 */
 export function StatusBadge({ configured }: { configured: boolean }) {
   const t = useT();
   return configured ? (
