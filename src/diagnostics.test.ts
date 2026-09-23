@@ -24,7 +24,13 @@ describe("testQoderCookie", () => {
   });
 
   it("没过白名单的输入不发请求：探测与保存同口径", async () => {
-    for (const bad of ["Cookie: a=1; b=2", "a=1\r\nX-Evil: 2", "a=中文"]) {
+    for (const bad of [
+      "Cookie: qoder_session_cookie=abc",
+      "qoder_session_cookie=abc",
+      "qoder_session_cookie=abc; theme=dark",
+      "abc def",
+      "a=中文",
+    ]) {
       const result = await testQoderCookie(bad, "china");
       expect(result.ok).toBe(false);
       expect(result.code).toBe("invalid-credential-format");
@@ -32,13 +38,13 @@ describe("testQoderCookie", () => {
     expect(mockInvoke).not.toHaveBeenCalled();
   });
 
-  it("合法输入按 raw_cookie 通道打选中站点的端点", async () => {
+  it("合法输入（单个 Cookie 的值）按 qoder_cookie 通道打选中站点的端点", async () => {
     mockInvoke.mockResolvedValue(ok);
-    await testQoderCookie("session=abc; session_2=def", "international");
+    await testQoderCookie("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.9dpJFQ", "international");
     const [command, args] = mockInvoke.mock.calls[0] as [string, Record<string, unknown>];
     expect(command).toBe("diagnose_request");
     expect(args.url).toBe("https://qoder.com/api/v2/me/usages/big_model_credits");
-    expect(args.auth).toBe("raw_cookie");
+    expect(args.auth).toBe("qoder_cookie");
     expect((args.headers as Record<string, string>).Origin).toBe("https://qoder.com");
   });
 
@@ -46,7 +52,9 @@ describe("testQoderCookie", () => {
     const t = (text: string) => text;
     expect(
       describeDiagnosis({ ok: false, status: 0, latencyMs: 0, code: "invalid-credential-format" }, t),
-    ).toBe("只粘贴 Cookie 的值：不能带「Cookie:」前缀，也不能包含换行等控制字符或中文");
+    ).toBe(
+      "只粘贴 qoder_session_cookie 的值：不要带「Cookie:」前缀或键名，也不能包含分号、空格、换行或中文",
+    );
   });
 });
 

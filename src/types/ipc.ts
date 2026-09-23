@@ -43,9 +43,9 @@ export interface ProviderRequestOptions {
   headers?: Record<string, string>;
   bodyText?: string;
   /** "session_cookie"：从 vault 槽位读 session 的 Value，校验后拼作 Cookie: session=<值>（workbuddy）
-   *  "raw_cookie"：从 vault 槽位读整段 Cookie 头值原样注入，UA 缺省 Chrome 常量（qoder，ADR-0030） */
-  auth?: "bearer" | "cookie" | "none" | "session_cookie" | "raw_cookie";
-  /** bearer/session_cookie/raw_cookie 时的凭据槽；bearer 缺省用该种类的主鉴权键 */
+   *  "qoder_cookie"：从 vault 槽位读 qoder_session_cookie 的 Value，校验后拼作 Cookie: qoder_session_cookie=<值>（qoder，ADR-0030） */
+  auth?: "bearer" | "cookie" | "none" | "session_cookie" | "qoder_cookie";
+  /** bearer/session_cookie/qoder_cookie 时的凭据槽；bearer 缺省用该种类的主鉴权键 */
   credentialSlot?: string;
 }
 

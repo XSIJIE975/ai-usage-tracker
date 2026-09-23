@@ -17,17 +17,41 @@ import { formatInt } from "../lib/utils";
 //   无请求级历史/token 口径端点，故无统计页，卡片即全部展示面）
 // - 双登录域：国际站 qoder.com 与中国站 qoder.com.cn，Cookie 不互通；站点是实例的
 //   显式属性（不从粘贴内容判站）
-// - 凭据是网页 Cookie：凭据槽存用户粘贴的 Cookie 头值原文（key=value;key2=value2，
-//   不含「Cookie:」前缀），前端与 Rust 都不加工，由 Rust 端 raw_cookie 通道原样注入；
-//   合法性只在前端保存前用字符集白名单把关（防 CRLF 头注入）。UA 缺省按本机平台
-//   生成 Chrome 常量——Qoder 网关不绑定登录时 UA，与 WorkBuddy 的三元组同源校验
-//   截然不同）；Origin/Referer/Bx-V 是静态协议头，随端点定义在这里
+// - 凭据是单个网页 Cookie 的值：真机验证只需 qoder_session_cookie 这一对（2026-09-23），
+//   所以凭据槽存的是它的**值**原文，键名与 Cookie 头由 Rust 端 qoder_cookie 通道拼；
+//   前端不加工输入，合法性只在前端保存/探测前用字符集白名单把关（RFC 6265 cookie-value，
+//   顺带挡住「贴整段 Cookie 头」和连键名一起贴）。UA 缺省按本机平台生成 Chrome 常量
+//   ——Qoder 网关不绑定登录时 UA，与 WorkBuddy 的三元组同源校验截然不同；
+//   Origin/Referer/Bx-V 是静态协议头，随端点定义在这里
 // - 响应支持 camelCase 与 snake_case 两套键名（CodexBar 解码器同款双兼容）
 
 const PROVIDER_NAME = "Qoder";
 
-/** 凭据槽（qoder 实例存的整段 Cookie 头值） */
+/** 凭据槽（qoder 实例存的会话 Cookie 值，见 SESSION_COOKIE_NAME） */
 export const CREDENTIAL_SLOT = "cookie";
+
+/** 登录态所在的 Cookie 名：界面上告诉用户取哪个键，取数时由 Rust 端拼成
+ *  `Cookie: qoder_session_cookie=<值>`（凭据头只由鉴权分支注入，ADR-0030 §2） */
+export const SESSION_COOKIE_NAME = "qoder_session_cookie";
+
+/** 单个 Cookie 值的字符集（RFC 6265 cookie-value：可见 ASCII，排除空白、`"`、`,`、`;`）。
+ *  与 Rust 端 `validate_cookie_value`、curl_paste 的同名校验逐字符一致——三处任一处收紧
+ *  都会误伤真机凭据 */
+const COOKIE_VALUE_CHARS = /^[\x21\x23-\x2b\x2d-\x3a\x3c-\x7e]+$/;
+
+/**
+ * Qoder 凭据输入合法性：只接受会话 Cookie 的**值**（键名与 Cookie 头由 Rust 拼）。
+ * 拒三类误输入——`Cookie:` 前缀（那是请求头名）、连 `qoder_session_cookie=` 键名一起贴、
+ * 以及超出 cookie-value 字符集的内容（整段 Cookie 头必带 `;` 与空格，落在这里）。
+ * 只判定不加工：存进去的就是用户贴的那段值（ADR-0030 §2）
+ */
+export function isValidSessionCookieValue(value: string): boolean {
+  if (!value) return false;
+  const lower = value.toLowerCase();
+  if (lower.startsWith("cookie:")) return false;
+  if (lower.startsWith(`${SESSION_COOKIE_NAME}=`)) return false;
+  return COOKIE_VALUE_CHARS.test(value);
+}
 
 interface SiteConfig {
   origin: string;
@@ -211,14 +235,14 @@ function toErrorText(error: unknown): string {
 }
 
 /** 用量响应整体处理：401/403 或返回登录页 HTML 统一映射为「凭据无效或已过期，
- *  重贴 Cookie」——不区分成因（区分需要额外探测且给不出不同建议，ADR-0030） */
+ *  重贴会话 Cookie 值」——不区分成因（区分需要额外探测且给不出不同建议，ADR-0030） */
 export function processUsageResult(result: HttpResult): UsageOutcome {
   const looksHtml = result.bodyText.trimStart().startsWith("<");
   if (result.status === 401 || result.status === 403 || (result.status === 200 && looksHtml)) {
     return {
       ok: false,
       lines: [],
-      error: "Qoder 登录凭据无效或已过期，请在设置中重新粘贴 Cookie",
+      error: "Qoder 登录凭据无效或已过期，请在设置中重新粘贴 qoder_session_cookie 的值",
     };
   }
   if (result.status !== 200) {
@@ -263,7 +287,7 @@ async function fetchQoderSnapshot(instance: ProviderInstance): Promise<ProviderS
       providerName: PROVIDER_NAME,
       status: "needs_config",
       updatedAt,
-      message: "请在设置中粘贴 Qoder 网页 Cookie",
+      message: "请在设置中粘贴 Qoder 会话 Cookie（qoder_session_cookie）的值",
       lines: [],
     };
   }
@@ -275,7 +299,7 @@ async function fetchQoderSnapshot(instance: ProviderInstance): Promise<ProviderS
       instanceId: instance.id,
       url: qoderUsageUrl(site),
       method: "GET",
-      auth: "raw_cookie",
+      auth: "qoder_cookie",
       credentialSlot: CREDENTIAL_SLOT,
       headers: qoderUsageHeaders(site),
     });

@@ -27,16 +27,6 @@ export function normalizeOpenCodeAuthCookie(value: string): string {
   return cookie;
 }
 
-/** Qoder Cookie 输入合法性（ADR-0030：值原样存储、原样拼进 Cookie 头，前端与后端都不加工）：
- *  合法输入是整段 Cookie 头值本身——`key=value` 或 `key1=xxx; key2=xxx`。
- *  拒三类：带「Cookie:」前缀（那是请求头名不是值，拼进去网关会收到两条 Cookie）、
- *  CR/LF 等控制字符（头注入）、非 ASCII（浏览器复制出的 Cookie 头只用可见 ASCII） */
-export function isValidQoderCookie(value: string): boolean {
-  if (!value) return false;
-  if (value.toLowerCase().startsWith("cookie:")) return false;
-  return /^[\x20-\x7E]*$/.test(value);
-}
-
 export function formatRefreshLabel(minutes: number, translate?: (s: string) => string) {
   const t = translate ?? ((s: string) => s);
   if (minutes < 1) return t("已禁用");

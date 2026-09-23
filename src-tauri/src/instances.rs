@@ -37,7 +37,7 @@ pub fn credential_label(kind: &str, slot: &str) -> Option<&'static str> {
         ("opencode-go", "apiKey") => Some("OpenCode Go API Key"),
         ("glm", "planKey") => Some("智谱 Coding Plan API Key"),
         ("workbuddy", "cookie") => Some("WorkBuddy 登录凭据（粘贴 Copy as cURL）"),
-        ("qoder", "cookie") => Some("Qoder Cookie"),
+        ("qoder", "cookie") => Some("Qoder 会话 Cookie 值"),
         _ => None,
     }
 }
@@ -588,7 +588,7 @@ mod tests {
 
         assert_eq!(
             credential_label("qoder", "cookie"),
-            Some("Qoder Cookie")
+            Some("Qoder 会话 Cookie 值")
         );
         assert!(credential_label("qoder", "planKey").is_none());
     }

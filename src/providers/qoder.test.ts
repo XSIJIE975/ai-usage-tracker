@@ -7,8 +7,8 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 import { invoke } from "@tauri-apps/api/core";
 import type { HttpResult, ProviderInstance, ProviderSnapshot } from "../types/ipc";
-import { isValidQoderCookie } from "../lib/utils";
 import {
+  isValidSessionCookieValue,
   parseNextReset,
   parseQuotaSummary,
   parseUsageData,
@@ -18,6 +18,7 @@ import {
   qoderSiteOf,
   qoderUsageHeaders,
   qoderUsageUrl,
+  SESSION_COOKIE_NAME,
 } from "./qoder";
 import type { QoderUsageData } from "./qoder";
 
@@ -195,7 +196,7 @@ describe("processUsageResult", () => {
     ]) {
       const outcome = processUsageResult(result);
       expect(outcome.ok).toBe(false);
-      expect(outcome.error).toBe("Qoder 登录凭据无效或已过期，请在设置中重新粘贴 Cookie");
+      expect(outcome.error).toBe("Qoder 登录凭据无效或已过期，请在设置中重新粘贴 qoder_session_cookie 的值");
     }
   });
 
@@ -246,21 +247,25 @@ describe("site selection", () => {
   });
 });
 
-describe("cookie validation", () => {
-  it("accepts the pasted header value as-is, single pair or multiple pairs", () => {
-    expect(isValidQoderCookie("session=abc")).toBe(true);
-    expect(isValidQoderCookie("session=abc; session_2=def; other=%20x")).toBe(true);
-    expect(isValidQoderCookie("key1=xxx;key2=xxxxx")).toBe(true);
-    expect(isValidQoderCookie("a=1 b=2")).toBe(true);
+describe("session cookie value validation", () => {
+  it("接受单个 Cookie 的值本体（base64 padding 与 JWT 形态都不误伤）", () => {
+    expect(isValidSessionCookieValue("AbC123_x-y==")).toBe(true);
+    expect(isValidSessionCookieValue("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.9dpJFQ")).toBe(true);
+    expect(isValidSessionCookieValue("k7Qx2mZp|1790000000|-_ab12CD==")).toBe(true);
   });
 
-  it("rejects a Cookie: prefix, control chars, non-ASCII, and empty", () => {
-    // 前缀不剥不猜：存原文就发原文，带前缀会发出两条 Cookie 头，直接拒
-    expect(isValidQoderCookie("Cookie: a=1; b=2")).toBe(false);
-    expect(isValidQoderCookie("cookie: a=1")).toBe(false);
-    expect(isValidQoderCookie("a=1\nCookie: injected=1")).toBe(false);
-    expect(isValidQoderCookie("a=中文")).toBe(false);
-    expect(isValidQoderCookie("")).toBe(false);
+  it("拒整段 Cookie 头、连键名一起贴、以及 cookie-value 之外的字符", () => {
+    // 三类误输入都直接报错让用户改，不剥前缀不抠字段（存的就是贴的那段值）
+    expect(isValidSessionCookieValue(`${SESSION_COOKIE_NAME}=abc`)).toBe(false);
+    expect(isValidSessionCookieValue("Cookie: qoder_session_cookie=abc")).toBe(false);
+    expect(isValidSessionCookieValue("qoder_session_cookie=abc; theme=dark")).toBe(false);
+    expect(isValidSessionCookieValue("abc; def")).toBe(false);
+    expect(isValidSessionCookieValue("abc def")).toBe(false);
+    expect(isValidSessionCookieValue("abc\ndef")).toBe(false);
+    expect(isValidSessionCookieValue("abc,def")).toBe(false);
+    expect(isValidSessionCookieValue('abc"def')).toBe(false);
+    expect(isValidSessionCookieValue("会 话")).toBe(false);
+    expect(isValidSessionCookieValue("")).toBe(false);
   });
 });
 
@@ -269,10 +274,10 @@ describe("fetchQoderSnapshot", () => {
     mockInvoke.mockResolvedValue({});
     const snapshot = await qoderProvider.fetch(makeInstance());
     expect(snapshot.status).toBe("needs_config");
-    expect(snapshot.message).toBe("请在设置中粘贴 Qoder 网页 Cookie");
+    expect(snapshot.message).toBe("请在设置中粘贴 Qoder 会话 Cookie（qoder_session_cookie）的值");
   });
 
-  it("requests the site URL via the raw_cookie channel and maps the payload", async () => {
+  it("requests the site URL via the qoder_cookie channel and maps the payload", async () => {
     mockInvoke
       .mockResolvedValueOnce({ cookie: true })
       .mockResolvedValueOnce(httpResult(readFixture("qoder-usage.json")));
@@ -286,7 +291,7 @@ describe("fetchQoderSnapshot", () => {
 
     expect(mockInvoke.mock.calls[1]?.[0]).toBe("provider_request");
     const options = (mockInvoke.mock.calls[1]?.[1] ?? {}) as Record<string, unknown>;
-    expect(options.auth).toBe("raw_cookie");
+    expect(options.auth).toBe("qoder_cookie");
     expect(options.credentialSlot).toBe("cookie");
     expect(options.url).toBe("https://qoder.com/api/v2/me/usages/big_model_credits");
     expect((options.headers as Record<string, string>).Origin).toBe("https://qoder.com");
@@ -308,6 +313,6 @@ describe("fetchQoderSnapshot", () => {
       .mockResolvedValueOnce(httpResult("denied", 403));
     const snapshot = await qoderProvider.fetch(makeInstance());
     expect(snapshot.status).toBe("error");
-    expect(snapshot.message).toBe("Qoder 登录凭据无效或已过期，请在设置中重新粘贴 Cookie");
+    expect(snapshot.message).toBe("Qoder 登录凭据无效或已过期，请在设置中重新粘贴 qoder_session_cookie 的值");
   });
 });

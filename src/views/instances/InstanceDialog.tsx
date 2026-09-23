@@ -30,7 +30,8 @@ import {
   type WorkbuddyCredentialParts,
 } from "../../diagnostics";
 import { useAppStore } from "../../store/useAppStore";
-import { isValidQoderCookie, normalizeOpenCodeAuthCookie } from "../../lib/utils";
+import { normalizeOpenCodeAuthCookie } from "../../lib/utils";
+import { isValidSessionCookieValue } from "../../providers/qoder";
 import { hasMultipleSites, providerSites, SITE_LABELS } from "../../lib/instance";
 import { providerName } from "../../providers";
 import { useT } from "../../i18n";
@@ -125,8 +126,8 @@ const KIND_CONFIGS: Record<ProviderKind, KindConfig> = {
     fields: [
       {
         slot: "cookie",
-        label: "Qoder Cookie",
-        placeholder: "粘贴 Cookie 的值，如 key1=xxx;key2=xxx",
+        label: "Qoder 会话 Cookie",
+        placeholder: "只粘贴 qoder_session_cookie 的值",
         // help 按选中站点动态生成，见 SITE_PROFILES
       },
     ],
@@ -145,11 +146,11 @@ const SITE_PROFILES: Partial<
   qoder: {
     china: {
       domain: "qoder.com.cn",
-      help: "获取方式：登录 qoder.com.cn → F12 → Network(网络) → 刷新页面 → 任选一条请求 → Request Headers(请求标头) → 只复制 Cookie 的值粘贴（不要带「Cookie:」前缀）。",
+      help: "获取方式：登录 qoder.com.cn → F12 → Application(应用) → Cookies → https://qoder.com.cn → 找到名为 qoder_session_cookie 的 Cookie，只复制它的 Value 粘贴（不要带键名或「Cookie:」前缀）。",
     },
     international: {
       domain: "qoder.com",
-      help: "获取方式：登录 qoder.com → F12 → Network(网络) → 刷新页面 → 任选一条请求 → Request Headers(请求标头) → 只复制 Cookie 的值粘贴（不要带「Cookie:」前缀）。",
+      help: "获取方式：登录 qoder.com → F12 → Application(应用) → Cookies → https://qoder.com → 找到名为 qoder_session_cookie 的 Cookie，只复制它的 Value 粘贴（不要带键名或「Cookie:」前缀）。",
     },
   },
   workbuddy: {
@@ -393,14 +394,17 @@ export function InstanceDialog({
       for (const field of config.fields) {
         const raw = (values[field.slot] ?? "").trim();
         if (raw) {
-          // Qoder Cookie 原样存储、原样发送（前后端都不加工），合法性只在这一道把关：
-          // 拒「Cookie:」前缀、CR/LF 头注入与非 ASCII——保存前拦下，错误可见而不是
-          // 存进去等 401（探测链路传的是同一个原文，测得过即存得过）
-          if (kind === "qoder" && !isValidQoderCookie(raw)) {
+          // Qoder 只存会话 Cookie 的值本体（键名与 Cookie 头由 Rust 端拼），合法性只在
+          // 这一道把关：拒「Cookie:」前缀、连键名一起贴、以及分号/空格/换行等非
+          // cookie-value 字符——保存前拦下，错误可见而不是存进去等 401（探测链路传的是
+          // 同一个原文，测得过即存得过）
+          if (kind === "qoder" && !isValidSessionCookieValue(raw)) {
             setSaving(false);
             setMessage({
               kind: "error",
-              text: t("只粘贴 Cookie 的值：不能带「Cookie:」前缀，也不能包含换行等控制字符或中文"),
+              text: t(
+                "只粘贴 qoder_session_cookie 的值：不要带「Cookie:」前缀或键名，也不能包含分号、空格、换行或中文",
+              ),
             });
             return;
           }

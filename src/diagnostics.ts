@@ -1,7 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { buildUsageQuery } from "./providers/deepseek-stats";
-import { isValidQoderCookie } from "./lib/utils";
-import { qoderUsageHeaders, qoderUsageUrl } from "./providers/qoder";
+import { isValidSessionCookieValue, qoderUsageHeaders, qoderUsageUrl } from "./providers/qoder";
 import { workbuddyApi, workbuddySiteOf } from "./providers/workbuddy";
 import type { ProviderSite } from "./types/ipc";
 
@@ -45,7 +44,9 @@ export function describeDiagnosis(result: DiagnosisResult, t: TFn): string {
       return t("请先填写凭据值");
     case "invalid-credential-format":
       // 与保存时拦下的是同一条文案：探测不该比保存宽松
-      return t("只粘贴 Cookie 的值：不能带「Cookie:」前缀，也不能包含换行等控制字符或中文");
+      return t(
+        "只粘贴 qoder_session_cookie 的值：不要带「Cookie:」前缀或键名，也不能包含分号、空格、换行或中文",
+      );
     case "network-error":
       return t("网络请求失败：{detail}").replace("{detail}", result.detail ?? "");
     case "login-redirect":
@@ -145,15 +146,15 @@ export function testWorkbuddyCredential(
   });
 }
 
-/** Qoder Cookie：大模型积分接口探测（raw_cookie 通道，与刷新链路同一拼装口径——
- *  Cookie 原文由 Rust 注入、UA 用缺省 Chrome 常量、静态协议头随站点）。
+/** Qoder 会话 Cookie 值：大模型积分接口探测（qoder_cookie 通道，与刷新链路同一拼装口径——
+ *  键名与 Cookie 头由 Rust 拼、UA 用缺省 Chrome 常量、静态协议头随站点）。
  *  传的是输入框里的原文，与保存后刷新走的是同一个值（测得过即存得过） */
-export function testQoderCookie(cookie: string, site: ProviderSite): Promise<DiagnosisResult> {
-  const text = cookie.trim();
+export function testQoderCookie(sessionCookieValue: string, site: ProviderSite): Promise<DiagnosisResult> {
+  const text = sessionCookieValue.trim();
   if (!text)
     return Promise.resolve({ ok: false, status: 0, latencyMs: 0, code: "missing-credential" });
   // 探测与保存过同一份白名单：否则非法输入会真发出去，撞成一句查不出原因的 network-error
-  if (!isValidQoderCookie(text))
+  if (!isValidSessionCookieValue(text))
     return Promise.resolve({
       ok: false,
       status: 0,
@@ -162,7 +163,7 @@ export function testQoderCookie(cookie: string, site: ProviderSite): Promise<Dia
     });
   return invoke<DiagnosisResult>("diagnose_request", {
     url: qoderUsageUrl(site),
-    auth: "raw_cookie",
+    auth: "qoder_cookie",
     credential: text,
     headers: qoderUsageHeaders(site),
   });

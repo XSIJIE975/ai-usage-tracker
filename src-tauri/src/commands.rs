@@ -224,17 +224,21 @@ fn credential_text(value: &Value) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-/// Qoder 等「整段 Cookie 头」凭据的缺省浏览器 UA（ADR-0030）：Qoder 网关不绑定
-/// 登录时 UA（CodexBar 硬编码 UA 实证），与 WorkBuddy 的逐字节同源校验截然不同。
+/// Qoder 会话 Cookie 通道的缺省浏览器 UA（ADR-0030）：Qoder 网关不绑定登录时 UA
+/// （CodexBar 硬编码 UA 实证），与 WorkBuddy 的逐字节同源校验截然不同。
 /// 平台段随本机编译目标走、Chrome 版本串统一（CodexBar 实证可用的那个版本）：
 /// UA 声称 Macintosh 而 TLS/HTTP2 指纹是本机 Windows，正是 Baxia 风控最容易识别的
 /// 不自洽。版本升级时跟随 CodexBar 更新。调用方显式传 UA 时本值让位（or_insert）
 #[cfg(target_os = "windows")]
-pub const RAW_COOKIE_DEFAULT_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
+pub const QODER_DEFAULT_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
 #[cfg(target_os = "macos")]
-pub const RAW_COOKIE_DEFAULT_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
+pub const QODER_DEFAULT_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-pub const RAW_COOKIE_DEFAULT_UA: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
+pub const QODER_DEFAULT_UA: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
+
+/// Qoder 登录态所在的 Cookie 名。凭据槽存的只是这个键的**值**，键名由这里的鉴权分支
+/// 拼进 Cookie 头（与 WorkBuddy 的 session / session_2 同法：拼装口径不进前端）
+const QODER_SESSION_COOKIE_NAME: &str = "qoder_session_cookie";
 
 /// 凭据相关头只允许由鉴权分支注入：调用方（渲染进程）传来的同名头一律剔除。
 /// 排序挡不住这件事——reqwest 的 `RequestBuilder::header` 内部是 `HeaderMap::append`
@@ -248,16 +252,26 @@ fn is_reserved_credential_header(name: &str) -> bool {
         .any(|reserved| name.eq_ignore_ascii_case(reserved))
 }
 
-/// Cookie 头值的字节域（RFC 6265：可见 ASCII）——CR/LF 等控制字符与非 ASCII 一律拒。
-/// 前端保存与探测已经过同口径白名单（`lib/utils.ts` 的 `isValidQoderCookie`），这里兜住
-/// 「vault 被外部改过」：否则 reqwest 只在 `send()` 阶段抛一句没有指向的 builder 错误，
-/// 用户看到的是"网络请求失败"而不是"凭据里有非法字符"
-fn validate_cookie_header_value(value: &str) -> Result<(), ()> {
-    if value.chars().all(|c| matches!(c, '\x20'..='\x7E')) {
-        Ok(())
-    } else {
-        Err(())
+/// Qoder 会话 Cookie 值的字节域（RFC 6265 cookie-value）：可见 ASCII，但排除空白、`"`、`,`、`;`。
+/// 字符集与 curl_paste 的 `validate_cookie_value`、前端 `providers/qoder.ts` 的
+/// `isValidSessionCookieValue` 逐字符一致——三处任一处收紧都会误伤真机凭据。
+/// 这一道同时挡住两类误输入：把整段 Cookie 头贴进来（带 `;` 与空格）、以及换行等头
+/// 注入字符。前端保存与探测已过同口径白名单，这里兜住「vault 被外部改过」：否则 reqwest
+/// 只在 `send()` 阶段抛一句没有指向的 builder 错误，用户看到的是"网络请求失败"而不是
+/// "凭据里有非法字符"
+fn validate_qoder_session_value(value: &str) -> Result<(), ()> {
+    if value.is_empty() {
+        return Err(());
     }
+    if !value.chars().all(|c| {
+        c == '!'
+            || ('\u{23}'..='\u{2b}').contains(&c)
+            || ('\u{2d}'..='\u{3a}').contains(&c)
+            || ('\u{3c}'..='\u{7e}').contains(&c)
+    }) {
+        return Err(());
+    }
+    Ok(())
 }
 
 fn normalize_auth_cookie(value: &str) -> String {
@@ -659,14 +673,15 @@ pub async fn diagnose_request(
                     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Gecko/20100101 Firefox/148.0",
                 );
             }
-            Some("raw_cookie") => {
-                // 整段 Cookie 头值原样注入（Qoder，ADR-0030），UA 用缺省 Chrome 常量，
-                // 与 provider_request 的 raw_cookie 通道同一拼装口径
-                let cookie = match credential.filter(|value| !value.trim().is_empty()) {
-                    Some(cookie) => cookie,
+            Some("qoder_cookie") => {
+                // 凭据是 qoder_session_cookie 的**值**本体（Qoder，ADR-0030 §2 二次修订）：
+                // 键名由这里拼进 Cookie 头，UA 用缺省 Chrome 常量，与 provider_request 的
+                // qoder_cookie 通道同一拼装口径
+                let value = match credential.filter(|value| !value.trim().is_empty()) {
+                    Some(value) => value,
                     None => return Ok(DiagnosisResult::new(false, 0, 0, "missing-credential", None)),
                 };
-                if validate_cookie_header_value(cookie.trim()).is_err() {
+                if validate_qoder_session_value(&value).is_err() {
                     return Ok(DiagnosisResult::new(
                         false,
                         0,
@@ -675,8 +690,8 @@ pub async fn diagnose_request(
                         None,
                     ));
                 }
-                request = request.header("Cookie", cookie.trim().to_string());
-                request = request.header("User-Agent", RAW_COOKIE_DEFAULT_UA);
+                request = request.header("Cookie", format!("{QODER_SESSION_COOKIE_NAME}={value}"));
+                request = request.header("User-Agent", QODER_DEFAULT_UA);
             }
             _ => {}
         }
@@ -997,22 +1012,27 @@ pub async fn provider_request(
                 credential.user_agent_or_default().to_string(),
             );
         }
-        Some("raw_cookie") => {
-            // vault 槽位存用户粘贴的整段 Cookie 头值（Qoder 网页登录态，ADR-0030）：
-            // 原样注入 Cookie 头，UA 缺省用 Chrome 常量（Qoder 网关不校验 UA 与登录
-            // 会话同源——CodexBar 硬编码 UA 实证，与 WorkBuddy 的 session_cookie 通道
-            // 逐字节 UA 校验是两种网关）。Origin/Referer/Bx-V 等静态协议头与 WorkBuddy
-            // 的 x-client-platform 同先例，由前端随端点定义传入
+        Some("qoder_cookie") => {
+            // vault 槽位存用户粘贴的 qoder_session_cookie 的**值**本体（Qoder 网页登录态，
+            // ADR-0030 §2 二次修订）：键名由这里拼进 Cookie 头，输入本身不加工。UA 缺省用
+            // Chrome 常量（Qoder 网关不校验 UA 与登录会话同源——CodexBar 硬编码 UA 实证，
+            // 与 WorkBuddy 的 session_cookie 通道逐字节 UA 校验是两种网关）。Origin/Referer/
+            // Bx-V 等静态协议头与 WorkBuddy 的 x-client-platform 同先例，由前端随端点定义传入
             let slot = credential_slot
                 .clone()
-                .ok_or_else(|| "raw_cookie auth 需要 credential_slot".to_string())?;
-            let cookie = resolve_bearer_key(&kind, &slot, &instance_credentials)?;
-            validate_cookie_header_value(cookie)
-                .map_err(|_| "Cookie 含控制字符或非 ASCII，请重新粘贴 Cookie 的值".to_string())?;
-            headers.insert("Cookie".to_string(), cookie.to_string());
+                .ok_or_else(|| "qoder_cookie auth 需要 credential_slot".to_string())?;
+            let value = resolve_bearer_key(&kind, &slot, &instance_credentials)?;
+            validate_qoder_session_value(value).map_err(|_| {
+                "凭据不是合法的 Cookie 值，请只粘贴 qoder_session_cookie 的值（不带键名、分号或空格）"
+                    .to_string()
+            })?;
+            headers.insert(
+                "Cookie".to_string(),
+                format!("{QODER_SESSION_COOKIE_NAME}={value}"),
+            );
             headers
                 .entry("User-Agent".to_string())
-                .or_insert_with(|| RAW_COOKIE_DEFAULT_UA.to_string());
+                .or_insert_with(|| QODER_DEFAULT_UA.to_string());
         }
         Some("cookie") => return Err("不支持的 provider cookie auth".to_string()),
         _ => {}
@@ -1260,12 +1280,19 @@ mod tests {
     }
 
     #[test]
-    fn cookie_header_value_rejects_control_and_non_ascii() {
-        assert!(validate_cookie_header_value("session=abc; session_2=def").is_ok());
-        assert!(validate_cookie_header_value("key1=xxx;key2=yyy").is_ok());
-        assert!(validate_cookie_header_value("a=1\r\nX-Evil: 1").is_err());
-        assert!(validate_cookie_header_value("a=1\nb=2").is_err());
-        assert!(validate_cookie_header_value("a=中文").is_err());
-        assert!(validate_cookie_header_value("a=\t1").is_err());
+    fn qoder_session_value_rejects_separators_control_and_non_ascii() {
+        assert!(validate_qoder_session_value("qoder_session_cookie_value").is_ok());
+        // base64/JWT 形态的值（= padding 与 | . - _ 都是 cookie-value 合法字符）
+        assert!(validate_qoder_session_value("eyJhbGci.eyJzdWIiOjF9==").is_ok());
+        assert!(validate_qoder_session_value("k7Qx2mZp|1790000000|-_ab12CD").is_ok());
+        // 整段 Cookie 头（分号 + 空格）不是「单个值」
+        assert!(validate_qoder_session_value("session=abc; session_2=def").is_err());
+        assert!(validate_qoder_session_value("a=1\r\nX-Evil: 1").is_err());
+        assert!(validate_qoder_session_value("a=1\nb=2").is_err());
+        assert!(validate_qoder_session_value("a=中文").is_err());
+        assert!(validate_qoder_session_value("a=\t1").is_err());
+        assert!(validate_qoder_session_value("\"abc\"").is_err());
+        assert!(validate_qoder_session_value("a,b").is_err());
+        assert!(validate_qoder_session_value("").is_err());
     }
 }

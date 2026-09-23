@@ -128,8 +128,8 @@ _Avoid_：用量（WorkBuddy 没有 token 口径的用量，只有积分消耗�
 
 ## Qoder
 
-第五个受支持的供应商（provider 标识 `qoder`），追踪阿里 Qoder 的大模型积分余量。数据来自账号控制台的只读私有接口 `GET /api/v2/me/usages/big_model_credits`（凭 CodexBar 先例接入，见 ADR-0030），凭据为网页 Cookie 粘贴。站点（国际站 qoder.com / 中国站 qoder.com.cn）是实例的显式属性，两套登录域 Cookie 不互通。只读：无签到等动作接口，也没有请求级历史端点，故无统计页，卡片即全部展示面。
-_Avoid_：把 qoder.com 与 qoder.com.cn 当同一账号（登录域不互通）；官方 API（不存在，走的是网页私有接口）
+第五个受支持的供应商（provider 标识 `qoder`），追踪阿里 Qoder 的大模型积分余量。数据来自账号控制台的只读私有接口 `GET /api/v2/me/usages/big_model_credits`（凭 CodexBar 先例接入，见 ADR-0030），凭据是网页会话 Cookie 的**值**——只取 `qoder_session_cookie` 这一个键，键名与 `Cookie:` 头由后端拼（ADR-0030 二次修订）。站点（国际站 qoder.com / 中国站 qoder.com.cn）是实例的显式属性，两套登录域 Cookie 不互通。只读：无签到等动作接口，也没有请求级历史端点，故无统计页，卡片即全部展示面。
+_Avoid_：把 qoder.com 与 qoder.com.cn 当同一账号（登录域不互通）；官方 API（不存在，走的是网页私有接口）；贴整段 Cookie 头（凭据槽只放 `qoder_session_cookie` 的值本体）
 
 ## Qoder 积分
 

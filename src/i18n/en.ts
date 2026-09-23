@@ -78,9 +78,10 @@ export const en: Record<string, string> = {
     "WorkBuddy credentials are invalid or expired — paste the Copy as cURL again in Settings",
   "请在设置中粘贴 WorkBuddy 登录凭据（Copy as cURL）":
     "Paste the WorkBuddy login credentials (Copy as cURL) in Settings",
-  "Qoder 登录凭据无效或已过期，请在设置中重新粘贴 Cookie":
-    "Qoder credentials are invalid or expired — paste the Cookie header again in Settings",
-  "请在设置中粘贴 Qoder 网页 Cookie": "Paste the Qoder web Cookie in Settings",
+  "Qoder 登录凭据无效或已过期，请在设置中重新粘贴 qoder_session_cookie 的值":
+    "Qoder credentials are invalid or expired — paste the qoder_session_cookie value again in Settings",
+  "请在设置中粘贴 Qoder 会话 Cookie（qoder_session_cookie）的值":
+    "Paste the Qoder session cookie value (qoder_session_cookie) in Settings",
   "积分接口返回 HTTP {status}{detail}": "Credits API returned HTTP {status}{detail}",
   "积分接口查询失败：{detail}": "Credits query failed: {detail}",
   "积分接口返回数据解析失败：{detail}": "Failed to parse credits response: {detail}",
@@ -98,13 +99,14 @@ export const en: Record<string, string> = {
     "How to get it: sign in at www.workbuddy.cn → open DevTools (F12) → Network → reload → right-click any www.workbuddy.cn request → Copy as cURL, then paste the whole string above.",
   "获取方式：登录 www.workbuddy.ai → F12 → Network(网络) → 刷新页面，右键任意一条 www.workbuddy.ai 请求 → Copy as cURL，整串粘贴到上方。":
     "How to get it: sign in at www.workbuddy.ai → open DevTools (F12) → Network → reload → right-click any www.workbuddy.ai request → Copy as cURL, then paste the whole string above.",
-  "粘贴 Cookie 的值，如 key1=xxx;key2=xxx": "Paste the Cookie value, e.g. key1=xxx;key2=xxx",
-  "获取方式：登录 qoder.com.cn → F12 → Network(网络) → 刷新页面 → 任选一条请求 → Request Headers(请求标头) → 只复制 Cookie 的值粘贴（不要带「Cookie:」前缀）。":
-    "How to get it: sign in at qoder.com.cn → open DevTools (F12) → Network → reload → pick any request → Request Headers → copy the Cookie value only (no leading \"Cookie:\").",
-  "获取方式：登录 qoder.com → F12 → Network(网络) → 刷新页面 → 任选一条请求 → Request Headers(请求标头) → 只复制 Cookie 的值粘贴（不要带「Cookie:」前缀）。":
-    "How to get it: sign in at qoder.com → open DevTools (F12) → Network → reload → pick any request → Request Headers → copy the Cookie value only (no leading \"Cookie:\").",
-  "只粘贴 Cookie 的值：不能带「Cookie:」前缀，也不能包含换行等控制字符或中文":
-    'Paste the Cookie value only — no leading "Cookie:", and no line breaks, control characters, or non-ASCII text',
+  "Qoder 会话 Cookie": "Qoder session cookie",
+  "只粘贴 qoder_session_cookie 的值": "Paste only the qoder_session_cookie value",
+  "只粘贴 qoder_session_cookie 的值：不要带「Cookie:」前缀或键名，也不能包含分号、空格、换行或中文":
+    'Paste only the qoder_session_cookie value — no "Cookie:" prefix, no cookie name, and no semicolons, spaces, line breaks, or non-ASCII text',
+  "获取方式：登录 qoder.com.cn → F12 → Application(应用) → Cookies → https://qoder.com.cn → 找到名为 qoder_session_cookie 的 Cookie，只复制它的 Value 粘贴（不要带键名或「Cookie:」前缀）。":
+    "How to get it: sign in at qoder.com.cn → open DevTools (F12) → Application → Cookies → https://qoder.com.cn → find the cookie named qoder_session_cookie and copy its Value only (no cookie name, no leading \"Cookie:\").",
+  "获取方式：登录 qoder.com → F12 → Application(应用) → Cookies → https://qoder.com → 找到名为 qoder_session_cookie 的 Cookie，只复制它的 Value 粘贴（不要带键名或「Cookie:」前缀）。":
+    "How to get it: sign in at qoder.com → open DevTools (F12) → Application → Cookies → https://qoder.com → find the cookie named qoder_session_cookie and copy its Value only (no cookie name, no leading \"Cookie:\").",
   "查询 Qoder 大模型积分余量与重置时间": "Track Qoder big-model credit balance and reset time",
   "DeepSeek 余额字段无法解析：{detail}": "Failed to parse the DeepSeek balance field: {detail}",
   "字段缺失": "field missing",
