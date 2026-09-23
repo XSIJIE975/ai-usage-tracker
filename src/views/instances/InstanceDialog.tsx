@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, LoaderCircle, Save } from "lucide-react";
+import { AlertTriangle, ChevronRight, LoaderCircle, Save } from "lucide-react";
 import {
   Dialog,
   DialogBody,
@@ -19,7 +19,6 @@ import { DiagnosisButton } from "../settings/DiagnosisButton";
 import { useVaultCredentials } from "../settings/use-vault-credentials";
 import { SaveMessageBanner, type SaveMessage } from "../settings/provider-settings";
 import {
-  inspectWorkbuddyCredential,
   testDeepSeekApiKey,
   testDeepSeekUserToken,
   testGlmCodingPlanKey,
@@ -27,11 +26,11 @@ import {
   testOpenCodeConnection,
   testQoderCookie,
   testWorkbuddyCredential,
-  type WorkbuddyCredentialParts,
 } from "../../diagnostics";
 import { useAppStore } from "../../store/useAppStore";
 import { normalizeOpenCodeAuthCookie } from "../../lib/utils";
 import { isValidSessionCookieValue } from "../../providers/qoder";
+import { isValidCookiePartValue, isValidUserAgentValue } from "../../providers/workbuddy";
 import { hasMultipleSites, providerSites, SITE_LABELS } from "../../lib/instance";
 import { providerName } from "../../providers";
 import { useT } from "../../i18n";
@@ -43,10 +42,6 @@ interface CredentialFieldSpec {
   label: string;
   placeholder?: string;
   help?: string;
-  /** 长凭据（整段 Copy as cURL）用多行框，单行 input 粘贴会吃掉换行 */
-  multiline?: boolean;
-  /** 粘贴原文的解析预览：按 Rust 端同一份规则回显三要素是否齐全 */
-  preview?: "workbuddy-credential";
   /** 展示前归一化（auth cookie 兼容多种粘贴格式） */
   normalize?: (value: string) => string;
 }
@@ -112,12 +107,22 @@ const KIND_CONFIGS: Record<ProviderKind, KindConfig> = {
   workbuddy: {
     fields: [
       {
-        slot: "cookie",
-        label: "WorkBuddy 登录凭据",
-        placeholder: "粘贴浏览器 DevTools 的 Copy as cURL 整串",
-        // help 按选中站点动态生成，见 SITE_PROFILES
-        multiline: true,
-        preview: "workbuddy-credential",
+        slot: "session",
+        label: "WorkBuddy session",
+        placeholder: "只粘贴值，不带键名",
+        help: "Cookie 行里 session= 后面的那段值",
+      },
+      {
+        slot: "session2",
+        label: "WorkBuddy session_2",
+        placeholder: "只粘贴值，不带键名",
+        help: "Cookie 行里 session_2= 后面的那段值",
+      },
+      {
+        slot: "userAgent",
+        label: "浏览器 User-Agent",
+        placeholder: "只粘贴整行值，不带「User-Agent:」前缀",
+        help: "User-Agent 行的整行值，须与登录时逐字节相同",
       },
     ],
     threshold: { label: "积分已用告警阈值（%）", hint: "积分已用达到该百分比时发送系统通知；留空不告警。", min: 1, max: 100 },
@@ -139,6 +144,7 @@ const KIND_CONFIGS: Record<ProviderKind, KindConfig> = {
  * 多站供应商的站点档案（ADR-0031）：域名是判站与重贴凭据的唯一线索，所以下拉标签与
  * 凭据获取文案都按 (种类, 站点) 给——并列两个域名会让显式判站失去意义。
  * 可选站点集本身在 lib/instance.ts 的 providerSites，弹窗与卡片徽标共用那一个判据。
+ * `help` 是站点级长指引：多格种类折进「如何获取？」，单格种类贴在唯一的框下面。
  */
 const SITE_PROFILES: Partial<
   Record<ProviderKind, Record<ProviderSite, { domain: string; help: string }>>
@@ -156,11 +162,12 @@ const SITE_PROFILES: Partial<
   workbuddy: {
     china: {
       domain: "workbuddy.cn",
-      help: "获取方式：登录 www.workbuddy.cn → F12 → Network(网络) → 刷新页面，右键任意一条 www.workbuddy.cn 请求 → Copy as cURL，整串粘贴到上方。",
+      // 逐格「贴哪一段」由各格的短提示说明，这里只留取值的导航路径
+      help: "获取方式：登录 www.workbuddy.cn → F12 打开开发者工具 → Network(网络) → 刷新页面 → 任选一条 www.workbuddy.cn 的请求 → Request Headers(请求标头)，按每格下面的提示取三个值。三项必须来自同一条请求（网关要求两个 Cookie 成对、UA 与登录时逐字节相同），都只贴值本身、不带键名。",
     },
     international: {
       domain: "workbuddy.ai",
-      help: "获取方式：登录 www.workbuddy.ai → F12 → Network(网络) → 刷新页面，右键任意一条 www.workbuddy.ai 请求 → Copy as cURL，整串粘贴到上方。",
+      help: "获取方式：登录 www.workbuddy.ai → F12 打开开发者工具 → Network(网络) → 刷新页面 → 任选一条 www.workbuddy.ai 的请求 → Request Headers(请求标头)，按每格下面的提示取三个值。三项必须来自同一条请求（网关要求两个 Cookie 成对、UA 与登录时逐字节相同），都只贴值本身、不带键名。",
     },
   },
 };
@@ -199,8 +206,6 @@ function diagnosisFor(
       return { test: () => testOpenCodeApiKey(value), disabled: !value.trim() };
     case "glm/planKey":
       return { test: () => testGlmCodingPlanKey(value), disabled: !value.trim() };
-    case "workbuddy/cookie":
-      return { test: () => testWorkbuddyCredential(value, site), disabled: !value.trim() };
     case "qoder/cookie":
       return {
         test: () => testQoderCookie(value, site),
@@ -211,71 +216,21 @@ function diagnosisFor(
   }
 }
 
-const WORKBUDDY_PART_LABELS: Record<keyof WorkbuddyCredentialParts, string> = {
-  session: "session",
-  session2: "session_2",
-  userAgent: "UA",
-};
-
-/** 粘贴原文的即时回显：三要素缺哪一项直接说，避免「保存后只见 401」。
- *  判定走 Rust 端的 parse_workbuddy_credential——与刷新链路同一份实现 */
-function WorkbuddyCredentialPreview({ raw }: { raw: string }) {
-  const t = useT();
-  const text = raw.trim();
-  const [parts, setParts] = useState<WorkbuddyCredentialParts | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!text) {
-      setParts(null);
-      setError(null);
-      return;
-    }
-    let settled = false;
-    // 粘贴是一次性动作，300ms 去抖足够；每次按键都打 IPC 反而先看到旧结果
-    const timer = setTimeout(() => {
-      inspectWorkbuddyCredential(text)
-        .then((next) => {
-          if (!settled) {
-            setParts(next);
-            setError(null);
-          }
-        })
-        .catch((reason: unknown) => {
-          if (!settled) {
-            setParts(null);
-            setError(reason instanceof Error ? reason.message : String(reason));
-          }
-        });
-    }, 300);
-    return () => {
-      settled = true;
-      clearTimeout(timer);
-    };
-  }, [text]);
-
-  if (!text) return null;
-  if (error) {
-    return <p className="text-xs leading-relaxed text-danger">{error}</p>;
-  }
-  if (!parts) return null;
-  const keys = Object.keys(WORKBUDDY_PART_LABELS) as (keyof WorkbuddyCredentialParts)[];
-  return (
-    <div className="space-y-1">
-      <p className="flex flex-wrap items-center gap-x-3 text-xs">
-        {keys.map((key) => (
-          <span key={key} className={parts[key] ? "text-success" : "text-danger"}>
-            {parts[key] ? "✓" : "✗"} {WORKBUDDY_PART_LABELS[key]}
-          </span>
-        ))}
-      </p>
-      {!parts.session2 || !parts.userAgent ? (
-        <p className="text-xs leading-relaxed text-fg-muted">
-          {t("缺 session_2 或 UA 仍会被网关判 401：请贴 Copy as cURL 整串，不要只贴 Cookie。")}
-        </p>
-      ) : null}
-    </div>
-  );
+/** 成对/成组才有意义的凭据按组探测：WorkBuddy 三值缺一即 401（ADR-0029），
+ *  所以它不挂在哪一格下面，而是三格之后一次探测这三格 */
+function groupDiagnosisFor(
+  kind: ProviderKind,
+  values: Record<string, string>,
+  site: ProviderSite,
+) {
+  if (kind !== "workbuddy") return null;
+  const session = values.session ?? "";
+  const session2 = values.session2 ?? "";
+  const userAgent = values.userAgent ?? "";
+  return {
+    test: () => testWorkbuddyCredential(session, session2, userAgent, site),
+    disabled: !session.trim() || !session2.trim() || !userAgent.trim(),
+  };
 }
 
 /**
@@ -408,6 +363,24 @@ export function InstanceDialog({
             });
             return;
           }
+          // WorkBuddy 三格同口径：两个 Cookie 格过 cookie-value 字符集（整段 Cookie 头
+          // 带分号与空格，正是这里拒掉的），UA 格过单行可见 ASCII——保存前拦下而不是
+          // 存进去等网关 401，且探测用的是同一份判定
+          if (kind === "workbuddy") {
+            const ok =
+              field.slot === "userAgent" ? isValidUserAgentValue(raw) : isValidCookiePartValue(raw);
+            if (!ok) {
+              setSaving(false);
+              setMessage({
+                kind: "error",
+                text:
+                  field.slot === "userAgent"
+                    ? t("只粘贴 User-Agent 的值：不要带「User-Agent:」前缀，也不能包含换行或中文")
+                    : t("只粘贴该 Cookie 的值：不要带键名或「Cookie:」前缀，也不能包含分号、空格、换行或中文"),
+              });
+              return;
+            }
+          }
           filledCredentials[field.slot] = field.normalize ? field.normalize(raw) : raw;
         }
       }
@@ -512,48 +485,69 @@ export function InstanceDialog({
           <Separator />
 
           <div className="space-y-5">
-            {config.fields.map((field) => (
-              <div key={field.slot} className="space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor={`slot-${field.slot}`}>{t(field.label)}</Label>
-                  {editing && <StatusBadge configured={Boolean(credentialStatus?.[field.slot])} />}
-                </div>
-                <SecretField
-                  id={`slot-${field.slot}`}
-                  value={values[field.slot] ?? ""}
-                  placeholder={field.placeholder ? t(field.placeholder) : undefined}
-                  multiline={field.multiline}
-                  disabled={saveDisabled || saving}
-                  onChange={(value) =>
-                    setValues((current) => ({ ...current, [field.slot]: value }))
-                  }
-                  onClear={() => void clearCredential(field.slot)}
-                  clearDisabled={!(values[field.slot] ?? "").trim() || !editing}
-                />
-                {(() => {
-                  // 多站供应商的凭据获取文案随选中站点走（域名是判站与重贴的唯一线索）；
-                  // 单站种类（如 opencode-go 的 cookie 槽）继续用字段自带的静态文案
-                  const profile = SITE_PROFILES[kind]?.[site];
-                  const help = field.slot === "cookie" && profile ? profile.help : field.help;
-                  return help ? (
-                    <p className="text-xs leading-relaxed text-fg-muted">{t(help)}</p>
-                  ) : null;
-                })()}
-                {field.preview === "workbuddy-credential" && (
-                  <WorkbuddyCredentialPreview raw={values[field.slot] ?? ""} />
-                )}
-                {(() => {
-                  const diagnosis = diagnosisFor(kind, field.slot, values, site);
-                  if (!diagnosis) return null;
-                  return (
+            {(() => {
+              /* 站点级长指引的位置：多格种类（WorkBuddy 三格）折进组尾的「如何获取？」，
+                 常驻长文会把填写框挤出首屏；单格种类（Qoder）指引就贴在唯一的框下面，
+                 不值得多点一次。逐格「这一格贴什么」由各格的短提示承担，两边不重复 */
+              const siteGuide = SITE_PROFILES[kind]?.[site]?.help;
+              const collapsedGuide = config.fields.length > 1;
+              const groupDiagnosis = groupDiagnosisFor(kind, values, site);
+              return (
+                <>
+                  {config.fields.map((field) => {
+                    const inlineHelp = field.help ?? (collapsedGuide ? undefined : siteGuide);
+                    const diagnosis = groupDiagnosis
+                      ? null
+                      : diagnosisFor(kind, field.slot, values, site);
+                    return (
+                      <div key={field.slot} className="space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <Label htmlFor={`slot-${field.slot}`}>{t(field.label)}</Label>
+                          {editing && (
+                            <StatusBadge configured={Boolean(credentialStatus?.[field.slot])} />
+                          )}
+                        </div>
+                        <SecretField
+                          id={`slot-${field.slot}`}
+                          value={values[field.slot] ?? ""}
+                          placeholder={field.placeholder ? t(field.placeholder) : undefined}
+                          disabled={saveDisabled || saving}
+                          onChange={(value) =>
+                            setValues((current) => ({ ...current, [field.slot]: value }))
+                          }
+                          onClear={() => void clearCredential(field.slot)}
+                          clearDisabled={!(values[field.slot] ?? "").trim() || !editing}
+                        />
+                        {inlineHelp && (
+                          <p className="text-xs leading-relaxed text-fg-muted">{t(inlineHelp)}</p>
+                        )}
+                        {diagnosis && (
+                          <DiagnosisButton
+                            test={diagnosis.test}
+                            disabled={saveDisabled || saving || diagnosis.disabled}
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+                  {collapsedGuide && siteGuide && (
+                    <details className="group rounded-md border border-line bg-surface-2 px-3 py-2">
+                      <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs font-medium text-fg-muted transition-colors hover:text-fg [&::-webkit-details-marker]:hidden">
+                        <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
+                        {t("如何获取？")}
+                      </summary>
+                      <p className="mt-2 text-xs leading-relaxed text-fg-muted">{t(siteGuide)}</p>
+                    </details>
+                  )}
+                  {groupDiagnosis && (
                     <DiagnosisButton
-                      test={diagnosis.test}
-                      disabled={saveDisabled || saving || diagnosis.disabled}
+                      test={groupDiagnosis.test}
+                      disabled={saveDisabled || saving || groupDiagnosis.disabled}
                     />
-                  );
-                })()}
-              </div>
-            ))}
+                  )}
+                </>
+              );
+            })()}
           </div>
 
           <Separator />

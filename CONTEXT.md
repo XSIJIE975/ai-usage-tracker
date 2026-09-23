@@ -95,7 +95,7 @@ _Avoid_：把 CodeBuddy 当成另一个供应商（同一积分体系）；「Co
 
 ## WorkBuddy 登录凭据
 
-workbuddy.cn 网页端的登录态：`session` + `session_2` 两个服务端会话 Cookie，**加上登录时那一条浏览器 UA**——网关按这三元组同源校验，只发 session、或 UA 与登录时差一个字符，都是 401（2026-09-21 同 Cookie 二分实测）。凭据槽存用户从 F12 Network 面板「Copy as cURL」拿到的整串原文（三者都在里面），解析、拼头与字符集白名单校验统一在 Rust 端 `curl_paste.rs`（探测与刷新共用同一实现），前端不改写用户输入也不参与拼头。只贴 `Cookie:` 头或裸 session Value 也接受，后者缺 session_2 必然 401，属重贴即愈的状态。退出登录、换浏览器或浏览器升版后重贴一次即恢复。网页端**没有** Bearer token——Bearer JWT 只存在于官方 IDE 扩展/CLI 的 OAuth 链路（与网页会话是两条通道，社区工具走的正是后者）；不做自动刷新：与官方客户端并存时主动续期会互相踢下线（ADR-0029）。与 DeepSeek UserToken 同属「网页登录态」类凭据，存于凭据库。
+workbuddy.cn 网页端的登录态：`session` + `session_2` 两个服务端会话 Cookie，**加上登录时那一条浏览器 UA**——网关按这三元组同源校验，只发 session、或 UA 与登录时差一个字符，都是 401（2026-09-21 同 Cookie 二分实测）。三项各占一个凭据槽、各存用户填的原文（`session` / `session2` / `userAgent`），Cookie 头与 UA 的拼装和字符集白名单统一在 Rust 端 `instances::workbuddy_session`（探测与刷新共用同一实现），前端不改写用户输入也不参与拼头。UA 没有兜底值：这一格必填，缺了直接报错——历史上那个内置 Edge 常量只对"登录浏览器恰好是它"的人生效，浏览器升版就 401 且无从解释。0.9.x 那种「Copy as cURL 整串」的录法与其解析器已退役，历史凭据刻意不做迁移——升级后三格为空，重填即恢复。退出登录、换浏览器或浏览器升版后重填一次即恢复。网页端**没有** Bearer token——Bearer JWT 只存在于官方 IDE 扩展/CLI 的 OAuth 链路（与网页会话是两条通道，社区工具走的正是后者）；不做自动刷新：与官方客户端并存时主动续期会互相踢下线（ADR-0029）。与 DeepSeek UserToken 同属「网页登录态」类凭据，存于凭据库。
 _Avoid_：只叫它「登录 Cookie」（不完整，UA 是同一条凭据的一部分）；「复制 session 的值」（这正是 401 的成因）
 
 ## 积分

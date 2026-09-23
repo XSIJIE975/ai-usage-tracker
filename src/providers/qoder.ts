@@ -35,8 +35,8 @@ export const CREDENTIAL_SLOT = "cookie";
 export const SESSION_COOKIE_NAME = "qoder_session_cookie";
 
 /** 单个 Cookie 值的字符集（RFC 6265 cookie-value：可见 ASCII，排除空白、`"`、`,`、`;`）。
- *  与 Rust 端 `validate_cookie_value`、curl_paste 的同名校验逐字符一致——三处任一处收紧
- *  都会误伤真机凭据 */
+ *  与 Rust 端 `instances::validate_cookie_value`、WorkBuddy 的同名校验逐字符一致——三处
+ *  任一处收紧都会误伤真机凭据 */
 const COOKIE_VALUE_CHARS = /^[\x21\x23-\x2b\x2d-\x3a\x3c-\x7e]+$/;
 
 /**

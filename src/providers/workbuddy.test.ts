@@ -9,6 +9,8 @@ import { renderLineValue } from "../i18n/apply-params";
 import type { HttpResult, ProviderInstance, ProviderSite } from "../types/ipc";
 import {
   cstDateString,
+  isValidCookiePartValue,
+  isValidUserAgentValue,
   parseCheckinResult,
   parseClaimResult,
   parseExpiry,
@@ -102,15 +104,19 @@ const travelStatusPayload = (over: Record<string, unknown> = {}) =>
 
 const travelOk = httpResult({ code: 0, msg: "OK" });
 
-const credentialStatus = (fields: { cookie?: boolean }) => ({
-  cookie: fields.cookie ?? false,
+/** 三槽（session / session2 / userAgent）的配置状态；缺省三格都已填，
+ *  传 { session: false } 模拟「没填齐」（needs_config 路径） */
+const credentialStatus = (fields: { session?: boolean } = {}) => ({
+  session: fields.session ?? true,
+  session2: fields.session ?? true,
+  userAgent: fields.session ?? true,
 });
 
 /** 快照轮询的调用次序：凭据 → （每日首次）签到 → 旅行状态机 → 余额套餐 → 连登。
  *  travelStatus 缺省给空 data（state 缺失 → 状态机整体跳过）；要驱动领奖/出发的用例
  *  显式传 travelStatus/travelClaim/travelDepart/travelRecheck */
 const mockFetchSequence = (opts: {
-  cookie?: boolean;
+  /// 三槽状态由 credentialStatus() 统一给出
   checkin?: HttpResult;
   travelStatus?: HttpResult;
   travelClaim?: HttpResult;
@@ -119,7 +125,7 @@ const mockFetchSequence = (opts: {
   resource: HttpResult;
   streak?: HttpResult;
 }) => {
-  mockInvoke.mockResolvedValueOnce(credentialStatus({ cookie: opts.cookie ?? true }));
+  mockInvoke.mockResolvedValueOnce(credentialStatus());
   if (opts.checkin) mockInvoke.mockResolvedValueOnce(opts.checkin);
   mockInvoke.mockResolvedValueOnce(opts.travelStatus ?? httpResult({ code: 0, msg: "OK", data: {} }));
   if (opts.travelClaim) mockInvoke.mockResolvedValueOnce(opts.travelClaim);
@@ -401,10 +407,10 @@ describe("workbuddyProvider.fetch", () => {
 
   it("无凭据时快照为 needs_config，不发任何请求", async () => {
     const instance = makeInstance();
-    mockInvoke.mockResolvedValueOnce(credentialStatus({ cookie: false }));
+    mockInvoke.mockResolvedValueOnce(credentialStatus({ session: false }));
     const snapshot = await workbuddyProvider.fetch(instance);
     expect(snapshot.status).toBe("needs_config");
-    expect(snapshot.message).toBe("请在设置中粘贴 WorkBuddy 登录凭据（Copy as cURL）");
+    expect(snapshot.message).toBe("请在设置中填写 WorkBuddy 的 session、session_2 与浏览器 User-Agent 三项凭据");
     expect(mockInvoke).toHaveBeenCalledTimes(1);
   });
 
@@ -432,7 +438,12 @@ describe("workbuddyProvider.fetch", () => {
     // 完整形态由「两站请求体同款骨架」那条用例用 toEqual 钉住
     const resourceCall = mockInvoke.mock.calls.find(
       (call) => (call[1] as { url?: string }).url === "https://www.workbuddy.cn/billing/meter/get-user-resource",
-    )?.[1] as { headers?: Record<string, string>; bodyText?: string };
+    )?.[1] as {
+      headers?: Record<string, string>;
+      bodyText?: string;
+      auth?: string;
+      credentialSlot?: string;
+    };
     expect(JSON.parse(resourceCall.bodyText!)).toMatchObject({
       PageNumber: 1,
       ProductCode: "p_tcaca",
@@ -440,6 +451,9 @@ describe("workbuddyProvider.fetch", () => {
       OnlyValidPeriod: true,
     });
     expect(resourceCall.headers).toMatchObject({ "Content-Type": "application/json" });
+    // 三槽由 Rust 端按种类自取：前端不再指定槽位，也不参与 Cookie 头与 UA 的拼装
+    expect(resourceCall.auth).toBe("session_cookie");
+    expect(resourceCall.credentialSlot).toBeUndefined();
     // 卡片行：主行 + 明细 + 连登
     expect(snapshot.lines.map((line) => line.label)).toEqual(["积分余量", "月度套餐", "连登"]);
   });
@@ -456,7 +470,7 @@ describe("workbuddyProvider.fetch", () => {
 
     // 同一实例第二次刷新：内存标记生效，不再调用签到接口
     mockInvoke
-      .mockResolvedValueOnce(credentialStatus({ cookie: true }))
+      .mockResolvedValueOnce(credentialStatus())
       .mockResolvedValueOnce(httpResult({ code: 0, msg: "OK", data: {} }))
       .mockResolvedValueOnce(httpResult(resourcePayload([totalPackage()])))
       .mockResolvedValueOnce(httpResult(streakPayload(2)));
@@ -493,7 +507,7 @@ describe("workbuddyProvider.fetch", () => {
     expect(snapshot.lines.map((line) => line.label)).toEqual(["积分余量", "月度套餐"]);
   });
 
-  it("余额 401 → 错误快照，message 指引重贴 Cookie", async () => {
+  it("余额 401 → 错误快照，message 指引重填三项凭据", async () => {
     const instance = makeInstance();
     mockFetchSequence({
       checkin: httpResult({ code: 10001, msg: "已签到" }),
@@ -502,7 +516,7 @@ describe("workbuddyProvider.fetch", () => {
     });
     const snapshot = await workbuddyProvider.fetch(instance);
     expect(snapshot.status).toBe("error");
-    expect(snapshot.message).toBe("WorkBuddy 登录凭据无效或已过期，请在设置中重新粘贴 Copy as cURL");
+    expect(snapshot.message).toBe("WorkBuddy 登录凭据无效或已过期，请在设置中重新填写三项凭据");
     expect(snapshot.lines).toHaveLength(0);
   });
 
@@ -567,7 +581,7 @@ describe("workbuddyProvider.fetch 喵喵旅行", () => {
     await workbuddyProvider.fetch(instance);
     // 第二轮：同样的到站状态（同 depart_at）——claim 不再发起；出发照常（服务端节流兜底）
     mockInvoke
-      .mockResolvedValueOnce(credentialStatus({ cookie: true }))
+      .mockResolvedValueOnce(credentialStatus())
       .mockResolvedValueOnce(travelStatusPayload())
       .mockResolvedValueOnce(travelOk)
       .mockResolvedValueOnce(travelStatusPayload({ state: "traveling" }))
@@ -687,7 +701,8 @@ describe("站点端点与能力表（ADR-0031）", () => {
 
   it("国际站刷新只打取数接口：签到、连登、旅行一个都不发", async () => {
     mockInvoke.mockImplementation(async (command: string) => {
-      if (command === "vault_credential_status") return { cookie: true };
+      if (command === "vault_credential_status")
+            return { session: true, session2: true, userAgent: true };
       return httpResult(
         resourcePayload([
           {
@@ -719,5 +734,35 @@ describe("站点端点与能力表（ADR-0031）", () => {
     mockInvoke.mockResolvedValueOnce({});
     const snapshot = await workbuddyProvider.fetch({ ...makeInstance(), site: "international" });
     expect(snapshot.status).toBe("needs_config");
+  });
+});
+
+describe("三格输入的合法性判定", () => {
+  it("Cookie 格只收值本体：真机形态放行，键名与整段头拒掉", () => {
+    expect(isValidCookiePartValue("Ref4V2b0nyljz|1790576618|c3y14nl-u_Xkuv4NDBI1Fuu")).toBe(true);
+    // base64 padding 与 `=` 都在 RFC 6265 的 cookie-value 内，不能误伤
+    expect(isValidCookiePartValue("YWJc==")).toBe(true);
+    expect(isValidCookiePartValue("session=abc")).toBe(false);
+    expect(isValidCookiePartValue("session_2=abc")).toBe(false);
+    expect(isValidCookiePartValue("Cookie: session=abc")).toBe(false);
+    // 整段 Cookie 头必带的分号与空格、以及换行（头注入）都落在字符集之外
+    expect(isValidCookiePartValue("session=abc; session_2=def")).toBe(false);
+    expect(isValidCookiePartValue("abc\r\nX-Injected: 1")).toBe(false);
+    expect(isValidCookiePartValue("会话值")).toBe(false);
+    expect(isValidCookiePartValue("")).toBe(false);
+    expect(isValidCookiePartValue("a".repeat(65_537))).toBe(false);
+  });
+
+  it("UA 格放行真实 UA、拒前缀与换行", () => {
+    expect(
+      isValidUserAgentValue(
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36 Edg/153.0.0.0",
+      ),
+    ).toBe(true);
+    expect(isValidUserAgentValue("User-Agent: Mozilla/5.0")).toBe(false);
+    expect(isValidUserAgentValue("Mozilla/5.0\r\nX-Injected: 1")).toBe(false);
+    expect(isValidUserAgentValue("Mozilla/5.0 中文")).toBe(false);
+    expect(isValidUserAgentValue("")).toBe(false);
+    expect(isValidUserAgentValue("u".repeat(513))).toBe(false);
   });
 });

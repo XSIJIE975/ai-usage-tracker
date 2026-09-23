@@ -80,7 +80,7 @@ const parseUsageEnvelope = (result: HttpResult):
   | { kind: "parse"; detail: string } => {
   // 401/403 与「200 + 登录页 HTML」同义：网关按 (session, session_2, 登录时 UA) 三元组
   // 校验，任一不满足都是 401（与 providers/workbuddy.ts 的 processResource 同判据），
-  // 出路同为回设置里重贴 Copy as cURL
+  // 出路同为回设置里重填三项凭据
   if (result.status === 401 || result.status === 403) return { kind: "expired" };
   if (result.status !== 200) return { kind: "http", status: result.status };
   if (result.bodyText.trimStart().startsWith("<")) return { kind: "expired" };
@@ -121,8 +121,8 @@ export const fetchWorkbuddyUsage = async (
     const credentialStatus = await invoke<InstanceCredentialStatus>("vault_credential_status", {
       instanceId: instance.id,
     });
-    if (!credentialStatus.cookie) {
-      return { status: "needs_config", message: "请在设置中粘贴 WorkBuddy 登录凭据（Copy as cURL）" };
+    if (!credentialStatus.session || !credentialStatus.session2 || !credentialStatus.userAgent) {
+      return { status: "needs_config", message: "请在设置中填写 WorkBuddy 的 session、session_2 与浏览器 User-Agent 三项凭据" };
     }
 
     const api = workbuddyApi(workbuddySiteOf(instance));
@@ -139,13 +139,12 @@ export const fetchWorkbuddyUsage = async (
         url: api.urls.usage,
         method: "POST",
         auth: "session_cookie",
-        credentialSlot: "cookie",
         headers: api.headers.billing,
         bodyText: JSON.stringify({ ...body, pageNum }),
       });
       const parsed = parseUsageEnvelope(result);
       if (parsed.kind === "expired") {
-        return usageError("WorkBuddy 登录凭据无效或已过期，请在设置中重新粘贴 Copy as cURL");
+        return usageError("WorkBuddy 登录凭据无效或已过期，请在设置中重新填写三项凭据");
       }
       if (parsed.kind === "http") {
         return usageError("积分明细接口返回 HTTP {status}", { status: parsed.status });

@@ -22,7 +22,9 @@ pub const PROVIDER_KINDS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     ("glm", &[("glmCodingPlanKey", "planKey")]),
-    ("workbuddy", &[("workbuddyCookie", "cookie")]),
+    // workbuddy 的旧扁平键是「Copy as cURL」原文，与现在的三槽形态不同源（ADR-0029），
+    // 刻意不映射：升级后该格空着，快照点名要求重填三项，比猜着拆旧值更诚实
+    ("workbuddy", &[]),
     // qoder 晚于实例化改造加入（ADR-0030），无旧扁平凭据键需要迁移
     ("qoder", &[]),
 ];
@@ -36,10 +38,88 @@ pub fn credential_label(kind: &str, slot: &str) -> Option<&'static str> {
         ("opencode-go", "cookie") => Some("OpenCode Auth Cookie"),
         ("opencode-go", "apiKey") => Some("OpenCode Go API Key"),
         ("glm", "planKey") => Some("智谱 Coding Plan API Key"),
-        ("workbuddy", "cookie") => Some("WorkBuddy 登录凭据（粘贴 Copy as cURL）"),
+        ("workbuddy", "session") => Some("WorkBuddy session"),
+        ("workbuddy", "session2") => Some("WorkBuddy session_2"),
+        ("workbuddy", "userAgent") => Some("WorkBuddy 浏览器 User-Agent"),
         ("qoder", "cookie") => Some("Qoder 会话 Cookie 值"),
         _ => None,
     }
+}
+
+/// 拼好的 WorkBuddy 鉴权头：Cookie 头与登录 UA，只由 session_cookie 通道使用
+#[derive(Debug)]
+pub struct WorkbuddySession {
+    pub cookie_header: String,
+    pub user_agent: String,
+}
+
+/// 单个 Cookie 值上限：实测 session 近 4000 字符、session_2 近 2000 字符
+const MAX_COOKIE_VALUE_LENGTH: usize = 65_536;
+/// UA 上限：主流浏览器 UA 不足 200 字符，超出即视为误粘了整段请求
+const MAX_USER_AGENT_LENGTH: usize = 512;
+
+/// 从三槽解析出鉴权头。三点都必需，缺哪一点名哪一槽——0.9.0 的「只发 session」与
+/// 0.9.x 的「UA 用内置常量兜底」都被实测否决过（前者 401、后者浏览器一升版就 401），
+/// 所以这里宁缺不猜：报错可见（ADR-0024），出路是回设置重填
+pub fn workbuddy_session(credentials: &Value) -> Result<WorkbuddySession, String> {
+    let session = validate_cookie_value(required_workbuddy_slot(credentials, "session")?)?;
+    let session2 = validate_cookie_value(required_workbuddy_slot(credentials, "session2")?)?;
+    let user_agent = validate_user_agent(required_workbuddy_slot(credentials, "userAgent")?)?;
+    Ok(WorkbuddySession {
+        cookie_header: format!("session={session}; session_2={session2}"),
+        user_agent,
+    })
+}
+
+fn required_workbuddy_slot<'a>(credentials: &'a Value, slot: &str) -> Result<&'a str, String> {
+    instance_credential(credentials, slot).ok_or_else(|| {
+        format!(
+            "缺少 {}",
+            credential_label("workbuddy", slot).unwrap_or(slot)
+        )
+    })
+}
+
+/// RFC 6265 cookie-value 字符集（可见 ASCII，排除空白、`"`、`,`、`;`）与长度上限。
+/// 凭据是用户填的外部输入，拼进请求头之前必须先过这关——白名单同时挡住 CRLF 头注入
+/// （字符集与前端 `providers/workbuddy.ts`、qoder 的同款校验逐字符一致，任一处收紧都会
+/// 误伤真机凭据）
+fn validate_cookie_value(value: &str) -> Result<String, String> {
+    if value.is_empty() {
+        return Err("WorkBuddy session Cookie 的值为空".to_string());
+    }
+    if value.len() > MAX_COOKIE_VALUE_LENGTH {
+        return Err("WorkBuddy Cookie 值过长，请确认只粘贴了该 Cookie 的值".to_string());
+    }
+    if !value.chars().all(|c| {
+        c == '!'
+            || ('\u{23}'..='\u{2b}').contains(&c)
+            || ('\u{2d}'..='\u{3a}').contains(&c)
+            || ('\u{3c}'..='\u{7e}').contains(&c)
+    }) {
+        return Err(
+            "WorkBuddy Cookie 值包含非法字符（不能带空格、引号、分号或控制符）".to_string(),
+        );
+    }
+    Ok(value.to_string())
+}
+
+/// UA 校验：浏览器 UA 是纯可见 ASCII；挡 CRLF 注入与误粘的整段请求
+fn validate_user_agent(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("WorkBuddy 浏览器 User-Agent 的值为空".to_string());
+    }
+    if value.len() > MAX_USER_AGENT_LENGTH {
+        return Err(format!(
+            "User-Agent 过长（{} 字符），请只粘贴 User-Agent 那一行的值",
+            value.len()
+        ));
+    }
+    if !value.chars().all(|c| ('\u{20}'..='\u{7e}').contains(&c)) {
+        return Err("User-Agent 包含非法字符（不能带换行或非 ASCII）".to_string());
+    }
+    Ok(value.to_string())
 }
 
 /// 站点取值校验（仅 qoder 使用，ADR-0030）：china 中国站 / international 国际站
@@ -359,6 +439,25 @@ mod tests {
         migrate_to_instances(&mut vault, &db).unwrap();
         assert_eq!(db.list_instances().unwrap().len(), 2);
         assert_eq!(vault.credentials().unwrap()["deepseek"]["apiKey"], json!("sk-1"));
+    }
+
+    /// 0.9.x 的 `workbuddyCookie`（Copy as cURL 原文）刻意不迁移：拆一段导出文本换不来
+    /// 一次重填的价值（ADR-0029 四次修订）——旧扁平键不映射到任何槽，实例也不替它建
+    #[test]
+    fn legacy_workbuddy_curl_credential_is_deliberately_not_migrated() {
+        let curl =
+            "curl 'https://www.workbuddy.cn/x' -H 'Cookie: session=abc|1790|xyz; session_2=def'";
+        let (mut vault, db) =
+            legacy_unlocked_vault("wb-legacy", json!({ "workbuddyCookie": curl }));
+        migrate_to_instances(&mut vault, &db).unwrap();
+
+        assert!(db.get_instance("workbuddy").unwrap().is_none());
+        let credentials = vault.credentials().unwrap();
+        assert!(credentials.get("workbuddy").is_none());
+        assert!(
+            credentials.to_string().find("session_2=def").is_none(),
+            "旧原文不应被搬进任何槽"
+        );
     }
 
     #[test]
@@ -742,5 +841,38 @@ mod tests {
         // 探测同样不允许离开登记过的 9 个 host
         assert!(validate_probe_url("https://github.com/XSIJIE975/ai-usage-tracker").is_err());
         assert!(validate_probe_url("http://qoder.com/api").is_err());
+    }
+
+    #[test]
+    fn workbuddy_session_requires_all_three_slots() {
+        let ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/153.0.0.0 Edg/153.0.0.0";
+        let full = json!({ "session": "s-1", "session2": "s-2", "userAgent": ua });
+        let session = workbuddy_session(&full).unwrap();
+        assert_eq!(session.cookie_header, "session=s-1; session_2=s-2");
+        assert_eq!(session.user_agent, ua);
+
+        // 缺一即点名那一槽，不静默用兜底 UA（ADR-0029 四次修订）
+        assert!(
+            workbuddy_session(&json!({ "session": "s-1", "userAgent": ua }))
+                .unwrap_err()
+                .contains("session_2")
+        );
+        assert!(
+            workbuddy_session(&json!({ "session": "s-1", "session2": "s-2" }))
+                .unwrap_err()
+                .contains("User-Agent")
+        );
+        // 空串等同未填
+        assert!(
+            workbuddy_session(&json!({ "session": "", "session2": "s-2", "userAgent": ua }))
+                .unwrap_err()
+                .contains("session")
+        );
+        // 把整段 Cookie 头贴进一格（带空格与分号）→ 非法字符，而不是拼出坏头
+        assert!(workbuddy_session(
+            &json!({ "session": "session=s-1; session_2=s-2", "session2": "s-2", "userAgent": ua })
+        )
+        .unwrap_err()
+        .contains("非法字符"));
     }
 }

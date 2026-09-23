@@ -74,10 +74,10 @@ export const en: Record<string, string> = {
   "积分套餐接口返回 HTTP {status}{detail}": "Packages API returned HTTP {status}{detail}",
   "积分套餐查询失败：{detail}": "Package query failed: {detail}",
   "积分套餐返回数据解析失败：{detail}": "Failed to parse packages response: {detail}",
-  "WorkBuddy 登录凭据无效或已过期，请在设置中重新粘贴 Copy as cURL":
-    "WorkBuddy credentials are invalid or expired — paste the Copy as cURL again in Settings",
-  "请在设置中粘贴 WorkBuddy 登录凭据（Copy as cURL）":
-    "Paste the WorkBuddy login credentials (Copy as cURL) in Settings",
+  "WorkBuddy 登录凭据无效或已过期，请在设置中重新填写三项凭据":
+    "WorkBuddy credentials are invalid or expired — refill the three credential fields in Settings",
+  "请在设置中填写 WorkBuddy 的 session、session_2 与浏览器 User-Agent 三项凭据":
+    "Fill in the WorkBuddy session, session_2 and browser User-Agent values in Settings",
   "Qoder 登录凭据无效或已过期，请在设置中重新粘贴 qoder_session_cookie 的值":
     "Qoder credentials are invalid or expired — paste the qoder_session_cookie value again in Settings",
   "请在设置中粘贴 Qoder 会话 Cookie（qoder_session_cookie）的值":
@@ -95,10 +95,11 @@ export const en: Record<string, string> = {
   "国际站（workbuddy.ai）": "International site (workbuddy.ai)",
   "两套登录域互不相通，请选择账号所在的站点；换站后需重新粘贴对应站点的凭据。":
     "The two login domains are separate — pick the site your account is on, and paste that site's credentials again after switching.",
-  "获取方式：登录 www.workbuddy.cn → F12 → Network(网络) → 刷新页面，右键任意一条 www.workbuddy.cn 请求 → Copy as cURL，整串粘贴到上方。":
-    "How to get it: sign in at www.workbuddy.cn → open DevTools (F12) → Network → reload → right-click any www.workbuddy.cn request → Copy as cURL, then paste the whole string above.",
-  "获取方式：登录 www.workbuddy.ai → F12 → Network(网络) → 刷新页面，右键任意一条 www.workbuddy.ai 请求 → Copy as cURL，整串粘贴到上方。":
-    "How to get it: sign in at www.workbuddy.ai → open DevTools (F12) → Network → reload → right-click any www.workbuddy.ai request → Copy as cURL, then paste the whole string above.",
+  "如何获取？": "How do I get these?",
+  "获取方式：登录 www.workbuddy.cn → F12 打开开发者工具 → Network(网络) → 刷新页面 → 任选一条 www.workbuddy.cn 的请求 → Request Headers(请求标头)，按每格下面的提示取三个值。三项必须来自同一条请求（网关要求两个 Cookie 成对、UA 与登录时逐字节相同），都只贴值本身、不带键名。":
+    "How to get them: sign in at www.workbuddy.cn → open DevTools (F12) → Network → reload → pick any www.workbuddy.cn request → Request Headers, then take the three values as each field's hint below describes. All three must come from the same request (the gateway wants the two cookies as a pair and a byte-identical UA) — values only, no names.",
+  "获取方式：登录 www.workbuddy.ai → F12 打开开发者工具 → Network(网络) → 刷新页面 → 任选一条 www.workbuddy.ai 的请求 → Request Headers(请求标头)，按每格下面的提示取三个值。三项必须来自同一条请求（网关要求两个 Cookie 成对、UA 与登录时逐字节相同），都只贴值本身、不带键名。":
+    "How to get them: sign in at www.workbuddy.ai → open DevTools (F12) → Network → reload → pick any www.workbuddy.ai request → Request Headers, then take the three values as each field's hint below describes. All three must come from the same request (the gateway wants the two cookies as a pair and a byte-identical UA) — values only, no names.",
   "Qoder 会话 Cookie": "Qoder session cookie",
   "只粘贴 qoder_session_cookie 的值": "Paste only the qoder_session_cookie value",
   "只粘贴 qoder_session_cookie 的值：不要带「Cookie:」前缀或键名，也不能包含分号、空格、换行或中文":
@@ -376,12 +377,18 @@ export const en: Record<string, string> = {
   "粘贴 API Key": "Paste API key",
   "获取方式：打开 bigmodel.cn 控制台 → Coding Plan 页 → 「生成 API Key」，复制生成的 API Key 粘贴到上方。":
     "How to get: open the bigmodel.cn console → Coding Plan page → \"Generate API Key\", then copy the generated API Key and paste it above.",
-  "WorkBuddy 登录凭据": "WorkBuddy login credentials",
-  "粘贴浏览器 DevTools 的 Copy as cURL 整串": "Paste the whole Copy as cURL from browser dev tools",
-  "获取方式：登录 workbuddy.cn → F12 → Network(网络) → 刷新页面，右键任意一条 www.workbuddy.cn 请求 → Copy as cURL，整串粘贴到上方。":
-    "How to get: sign in to workbuddy.cn → F12 → Network → reload the page, then right-click any www.workbuddy.cn request → Copy as cURL and paste it above in full.",
-  "缺 session_2 或 UA 仍会被网关判 401：请贴 Copy as cURL 整串，不要只贴 Cookie。":
-    "A missing session_2 or UA still gets a 401 from the gateway — paste the whole Copy as cURL, not just the Cookie",
+  "WorkBuddy session": "WorkBuddy session",
+  "WorkBuddy session_2": "WorkBuddy session_2",
+  "浏览器 User-Agent": "Browser User-Agent",
+  "只粘贴值，不带键名": "Paste the value only, no cookie name",
+  "只粘贴整行值，不带「User-Agent:」前缀": "Paste the whole line, without a \"User-Agent:\" prefix",
+  "Cookie 行里 session= 后面的那段值": "The session= value from the Cookie line",
+  "Cookie 行里 session_2= 后面的那段值": "The session_2= value from the Cookie line",
+  "User-Agent 行的整行值，须与登录时逐字节相同": "The full User-Agent line, byte-identical to the one used at sign-in",
+  "只粘贴该 Cookie 的值：不要带键名或「Cookie:」前缀，也不能包含分号、空格、换行或中文":
+    'Paste the cookie value only — no cookie name, no "Cookie:" prefix, and no semicolons, spaces, line breaks, or non-ASCII text',
+  "只粘贴 User-Agent 的值：不要带「User-Agent:」前缀，也不能包含换行或中文":
+    'Paste the User-Agent value only — no "User-Agent:" prefix, and no line breaks or non-ASCII text',
   "积分已用告警阈值（%）": "Credits usage alert threshold (%)",
   "积分已用达到该百分比时发送系统通知；留空不告警。":
     "Notify when credits usage reaches this percent; leave empty to disable alerts.",

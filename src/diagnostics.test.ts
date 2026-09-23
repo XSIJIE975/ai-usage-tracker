@@ -59,9 +59,11 @@ describe("testQoderCookie", () => {
 });
 
 describe("testWorkbuddyCredential", () => {
+  const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36 Edg/153.0.0.0";
+
   it("探测走 POST billing 族，带与刷新链路同款的请求体与头（ADR-0031）", async () => {
     mockInvoke.mockResolvedValue(ok);
-    await testWorkbuddyCredential("curl --url 'https://www.workbuddy.cn/...' -H 'cookie: ...'", "china");
+    await testWorkbuddyCredential("s-1", "s-2", UA, "china");
     const [command, args] = mockInvoke.mock.calls[0] as [string, Record<string, unknown>];
     expect(command).toBe("diagnose_request");
     expect(args.url).toBe("https://www.workbuddy.cn/billing/meter/get-user-resource");
@@ -70,13 +72,33 @@ describe("testWorkbuddyCredential", () => {
     expect((args.headers as Record<string, string>)["x-client-platform"]).toBe("web");
     // 探测不再依赖 activity 族（国际站没有成长中心）
     expect(args.url).not.toContain("activity");
+    // 三值原样交给 Rust 端同一个拼装入口：探测发出的 Cookie 头与刷新的一字不差
+    expect(args.sessionTriple).toEqual({ session: "s-1", session2: "s-2", userAgent: UA });
   });
 
   it("国际站探测换域", async () => {
     mockInvoke.mockResolvedValue(ok);
-    await testWorkbuddyCredential("curl --url 'https://www.workbuddy.ai/...'", "international");
+    await testWorkbuddyCredential("s-1", "s-2", UA, "international");
     const [, args] = mockInvoke.mock.calls[0] as [string, Record<string, unknown>];
     expect(args.url).toBe("https://www.workbuddy.ai/billing/meter/get-user-resource");
     expect((args.headers as Record<string, string>).Origin).toBe("https://www.workbuddy.ai");
+  });
+
+  it("三值缺一就不发请求", async () => {
+    const result = await testWorkbuddyCredential("s-1", "", UA, "china");
+    expect(mockInvoke).not.toHaveBeenCalled();
+    expect(result.code).toBe("missing-credential");
+  });
+
+  it("把整段 Cookie 头贴进一格时报格式非法而不是网络错误", async () => {
+    const result = await testWorkbuddyCredential("session=s-1; session_2=s-2", "s-2", UA, "china");
+    expect(mockInvoke).not.toHaveBeenCalled();
+    expect(result.code).toBe("invalid-credential-format");
+  });
+
+  it("UA 带换行（头注入形态）同样按格式非法拒掉", async () => {
+    const result = await testWorkbuddyCredential("s-1", "s-2", "Mozilla/5.0\r\nX-Injected: 1", "china");
+    expect(mockInvoke).not.toHaveBeenCalled();
+    expect(result.code).toBe("invalid-credential-format");
   });
 });

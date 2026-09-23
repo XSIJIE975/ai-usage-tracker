@@ -13,12 +13,12 @@ import type { ProviderModule } from "./types";
 // 非公开 web 接口、随官方改版需跟随维护，接入边界见 ADR-0029）：
 // - Sliverkiss/workbuddy2api internal/upstream/client.go 与 wwenc6621/CodeBuddy-Usage
 //   src/extension.ts 揭示了接口族与响应形态；
-// - 用户从 workbuddy.cn 抓包证实：**网页端不用 Bearer JWT，身份是 Cookie 会话**，
-//   请求体也带真实 PackageCodes（与 CodeBuddy-Usage 的内置清单一致）。
+// - 用户从 workbuddy.cn 抓包证实：**网页端不用 Bearer JWT，身份是 Cookie 会话**。
 // - 网关放行的是 (session, session_2, 登录时 UA) 三元组，缺一即 401：只发 session
 //   被 APISIX 拒，UA 改一位（`Edg/153.0.0.0`→`153.0.0.1`）同一有效 Cookie 也被拒。
-//   所以凭据槽存用户粘贴的 Copy as cURL 原文，**Cookie 与 UA 都由 Rust 端解析注入**
-//   （src-tauri/src/curl_paste.rs），前端既不出 UA 也不拼 Cookie 头。
+//   所以凭据按值分三槽存（session / session2 / userAgent，都是用户填的原文），
+//   **Cookie 与 UA 两个头都由 Rust 端拼装注入**（instances::workbuddy_session），
+//   前端既不出 UA 也不拼 Cookie 头。
 // - 余额/套餐：POST /billing/meter/get-user-resource（与两个社区实现同端点同主机：
 //   CodeBuddy-Usage 逐字同路径，workbuddy2api 在 codebuddy.cn 走 /v2 前缀同族；
 //   网页端 plans-usage 页用的同族 -free-packages 实测也可用，但顾名思义只覆盖免费包，
@@ -34,6 +34,37 @@ import type { ProviderModule } from "./types";
 // billing/activity 族只要求 web 客户端特征（referer + x-client-platform），
 // 不触碰聊天补全的 CLI 指纹门禁。
 const PROVIDER_NAME = "腾讯 WorkBuddy / CodeBuddy";
+
+/** 单个 Cookie 值的字符集（RFC 6265 cookie-value：可见 ASCII，排除空白、`"`、`,`、`;`）。
+ *  与 Rust 端 `instances::validate_cookie_value` 逐字符一致——保存与探测共用这一份判定，
+ *  三处（这里、Rust 端、qoder 的同款）任一处收紧都会误伤真机凭据 */
+const COOKIE_VALUE_CHARS = /^[\x21\x23-\x2b\x2d-\x3a\x3c-\x7e]+$/;
+/** UA 的字节域：纯可见 ASCII（挡换行头注入与非 ASCII 误粘），上限照 Rust 端的 512 */
+const USER_AGENT_CHARS = /^[\x20-\x7e]+$/;
+/** 实测 session 近 4000 字符、session_2 近 2000 字符，上限照 Rust 端的 65536 */
+const MAX_COOKIE_VALUE_LENGTH = 65_536;
+const MAX_USER_AGENT_LENGTH = 512;
+
+/** session / session_2 两格的输入判定：只接受 Cookie 的**值**本体，键名与 Cookie 头由
+ *  Rust 端拼（instances::workbuddy_session）。整段 Cookie 头必带 `;` 与空格，正好落在这道
+ *  拒绝里；只判定不加工，存进去的就是用户贴的那段值 */
+export function isValidCookiePartValue(value: string): boolean {
+  if (value.length === 0 || value.length > MAX_COOKIE_VALUE_LENGTH) return false;
+  // 连键名一起贴、或整段 Cookie 头贴进来，都在这里拒掉（分号与空格本就不在字符集内，
+  // 键名前缀是它们唯一的漏网形态）。只拒这一种误输入，不改写用户贴的内容
+  const lower = value.toLowerCase();
+  if (lower.startsWith("cookie:") || lower.startsWith("session=") || lower.startsWith("session_2="))
+    return false;
+  return COOKIE_VALUE_CHARS.test(value);
+}
+
+/** User-Agent 格的输入判定：不带「User-Agent:」前缀、单行可见 ASCII。
+ *  这一格没有兜底值——UA 必须与登录时逐字节相同（ADR-0029），所以宁可拒也不猜 */
+export function isValidUserAgentValue(value: string): boolean {
+  if (value.length === 0 || value.length > MAX_USER_AGENT_LENGTH) return false;
+  if (value.toLowerCase().startsWith("user-agent:")) return false;
+  return USER_AGENT_CHARS.test(value);
+}
 
 /** 按站能力位（ADR-0031）：国际站没有国区这套成长运营，取数链据此跳过对应请求——
  *  不发注定失败的调用，也就不会把「本站没这个功能」误报成「凭据失效」 */
@@ -147,9 +178,6 @@ export function workbuddyApi(site: ProviderSite): WorkbuddyApi {
     },
   };
 }
-
-/** 凭据槽（workbuddy 实例存的 session Cookie 的 Value 原文） */
-const CREDENTIAL_SLOT = "cookie";
 
 interface WorkbuddyEnvelope<T> {
   /** 业务码：0/200 成功；10001/14001 当日已签；措辞类错误看 msg */
@@ -489,14 +517,14 @@ interface ResourceOutcome {
 }
 
 /** 余额/套餐响应整体处理：401/403 或返回登录页 HTML 映射为「凭据无效或已过期」——
- *  网关对 session 成对与 UA 一致性任一不满足都回 401，出路同为重贴 Copy as cURL */
+ *  网关对 session 成对与 UA 一致性任一不满足都回 401，出路同为重填三项凭据 */
 function processResource(result: HttpResult): ResourceOutcome {
   const looksHtml = result.bodyText.trimStart().startsWith("<");
   if (result.status === 401 || result.status === 403 || (result.status === 200 && looksHtml)) {
     return {
       ok: false,
       lines: [],
-      error: "WorkBuddy 登录凭据无效或已过期，请在设置中重新粘贴 Copy as cURL",
+      error: "WorkBuddy 登录凭据无效或已过期，请在设置中重新填写三项凭据",
     };
   }
   if (result.status !== 200) {
@@ -549,7 +577,6 @@ async function departTravel(instanceId: string, api: WorkbuddyApi): Promise<bool
       url: `${api.urls.travel}/depart`,
       method: "POST",
       auth: "session_cookie",
-      credentialSlot: CREDENTIAL_SLOT,
       headers: api.headers.travel,
       bodyText: JSON.stringify({ location_id: 1 }),
     });
@@ -564,14 +591,14 @@ async function fetchWorkbuddySnapshot(instance: ProviderInstance): Promise<Provi
     instanceId: instance.id,
   });
   const updatedAt = Date.now();
-  if (!status.cookie) {
+  if (!status.session || !status.session2 || !status.userAgent) {
     return {
       instanceId: instance.id,
       providerId: "workbuddy",
       providerName: PROVIDER_NAME,
       status: "needs_config",
       updatedAt,
-      message: "请在设置中粘贴 WorkBuddy 登录凭据（Copy as cURL）",
+      message: "请在设置中填写 WorkBuddy 的 session、session_2 与浏览器 User-Agent 三项凭据",
       lines: [],
     };
   }
@@ -591,7 +618,6 @@ async function fetchWorkbuddySnapshot(instance: ProviderInstance): Promise<Provi
         url: api.urls.checkin,
         method: "POST",
         auth: "session_cookie",
-        credentialSlot: CREDENTIAL_SLOT,
         headers: api.headers.billing,
         bodyText: "{}",
       });
@@ -618,7 +644,6 @@ async function fetchWorkbuddySnapshot(instance: ProviderInstance): Promise<Provi
       const requestInit = {
         instanceId: instance.id,
         auth: "session_cookie" as const,
-        credentialSlot: CREDENTIAL_SLOT,
         headers: api.headers.travel,
       };
       const travelStatus = parseTravelStatus(
@@ -676,7 +701,6 @@ async function fetchWorkbuddySnapshot(instance: ProviderInstance): Promise<Provi
       url: api.urls.resource,
       method: "POST",
       auth: "session_cookie",
-      credentialSlot: CREDENTIAL_SLOT,
       headers: api.headers.billing,
       bodyText: api.resourceBody,
     }),
@@ -686,7 +710,6 @@ async function fetchWorkbuddySnapshot(instance: ProviderInstance): Promise<Provi
           url: api.urls.streak,
           method: "GET",
           auth: "session_cookie",
-          credentialSlot: CREDENTIAL_SLOT,
           headers: api.headers.activity,
         })
       : Promise.resolve(null),

@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { buildUsageQuery } from "./providers/deepseek-stats";
 import { isValidSessionCookieValue, qoderUsageHeaders, qoderUsageUrl } from "./providers/qoder";
-import { workbuddyApi, workbuddySiteOf } from "./providers/workbuddy";
+import { workbuddyApi, workbuddySiteOf, isValidCookiePartValue, isValidUserAgentValue } from "./providers/workbuddy";
 import type { ProviderSite } from "./types/ipc";
 
 /** 机器可读的诊断结果码，与 src-tauri/src/commands.rs 的 diagnose_request 保持一致 */
@@ -128,21 +128,40 @@ export function testGlmCodingPlanKey(key: string): Promise<DiagnosisResult> {
 
 /** WorkBuddy 登录凭据：billing 族 get-user-resource 探测（POST + 与刷新链路同一请求体与
  *  头）。探测与取数同法同族，一次问清「本站有没有这个端点」与「凭据过不过三元组同源」
- *  （ADR-0031）；粘贴原文透传，解析与拼头由 Rust 端 curl_paste 负责 */
+ *  （ADR-0031）；三值交给 Rust 端的同一个拼装入口（instances::workbuddy_session），
+ *  所以探测用的 Cookie 头与 UA 与保存后刷新发出的一字不差（ADR-0029 四次修订） */
 export function testWorkbuddyCredential(
-  credentialText: string,
+  session: string,
+  session2: string,
+  userAgent: string,
   site: ProviderSite,
 ): Promise<DiagnosisResult> {
-  const text = credentialText.trim();
-  if (!text)
+  const triple = {
+    session: session.trim(),
+    session2: session2.trim(),
+    userAgent: userAgent.trim(),
+  };
+  if (!triple.session || !triple.session2 || !triple.userAgent)
     return Promise.resolve({ ok: false, status: 0, latencyMs: 0, code: "missing-credential" });
+  // 与保存侧同一份格式判定：非法输入不真发出去，免得撞成一句查不出原因的 network-error
+  if (
+    !isValidCookiePartValue(triple.session) ||
+    !isValidCookiePartValue(triple.session2) ||
+    !isValidUserAgentValue(triple.userAgent)
+  )
+    return Promise.resolve({
+      ok: false,
+      status: 0,
+      latencyMs: 0,
+      code: "invalid-credential-format",
+    });
   const api = workbuddyApi(workbuddySiteOf({ site }));
   return invoke<DiagnosisResult>("diagnose_request", {
     url: api.urls.resource,
     method: "POST",
     bodyText: api.resourceBody,
     headers: api.headers.billing,
-    credentialText: text,
+    sessionTriple: triple,
   });
 }
 
@@ -167,31 +186,4 @@ export function testQoderCookie(sessionCookieValue: string, site: ProviderSite):
     credential: text,
     headers: qoderUsageHeaders(site),
   });
-}
-
-/** Rust 端解析结果（curl_paste::WorkbuddyCredential）；值本身不外露，只取有没有 */
-interface ParsedWorkbuddyCredential {
-  session: string;
-  session2?: string;
-  userAgent?: string;
-}
-
-export interface WorkbuddyCredentialParts {
-  session: boolean;
-  session2: boolean;
-  userAgent: boolean;
-}
-
-/** 粘贴内容的解析预览：录入界面据此提示三要素缺哪一项（解析规则与刷新链路同源） */
-export async function inspectWorkbuddyCredential(
-  credentialText: string,
-): Promise<WorkbuddyCredentialParts> {
-  const parsed = await invoke<ParsedWorkbuddyCredential>("parse_workbuddy_credential", {
-    credentialText,
-  });
-  return {
-    session: Boolean(parsed.session),
-    session2: Boolean(parsed.session2),
-    userAgent: Boolean(parsed.userAgent),
-  };
 }

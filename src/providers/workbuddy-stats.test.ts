@@ -133,18 +133,18 @@ describe("fetchWorkbuddyUsage", () => {
     mockInvoke.mockReset();
   });
 
-  it("无 Cookie → needs_config，不发请求", async () => {
-    mockInvoke.mockResolvedValueOnce({ cookie: false });
+  it("三值未填齐 → needs_config，不发请求", async () => {
+    mockInvoke.mockResolvedValueOnce({ session: false });
     const result = await fetchWorkbuddyUsage(makeInstance(), range().startMs, range().endMs);
     expect(result.status).toBe("needs_config");
     if (result.status !== "needs_config") return;
-    expect(result.message).toBe("请在设置中粘贴 WorkBuddy 登录凭据（Copy as cURL）");
+    expect(result.message).toBe("请在设置中填写 WorkBuddy 的 session、session_2 与浏览器 User-Agent 三项凭据");
     expect(mockInvoke).toHaveBeenCalledTimes(1);
   });
 
   it("单页收口：行字段映射正确，请求体带本地时间区间与 UA（WAF 硬规则）", async () => {
     mockInvoke
-      .mockResolvedValueOnce({ cookie: true })
+      .mockResolvedValueOnce({ session: true, session2: true, userAgent: true })
       .mockResolvedValueOnce(
         usagePayload([
           usageRow({ credit: 18.31, agentPurpose: "conversation" }),
@@ -193,7 +193,7 @@ describe("fetchWorkbuddyUsage", () => {
         250,
       );
     mockInvoke
-      .mockResolvedValueOnce({ cookie: true })
+      .mockResolvedValueOnce({ session: true, session2: true, userAgent: true })
       .mockResolvedValueOnce(page(100))
       .mockResolvedValueOnce(page(100))
       .mockResolvedValueOnce(page(50));
@@ -208,7 +208,7 @@ describe("fetchWorkbuddyUsage", () => {
   });
 
   it("分页防御上限：total 虚高时最多 20 页按已得数据收口", async () => {
-    mockInvoke.mockResolvedValueOnce({ cookie: true });
+    mockInvoke.mockResolvedValueOnce({ session: true, session2: true, userAgent: true });
     for (let i = 0; i < 20; i += 1) {
       mockInvoke.mockResolvedValueOnce(
         usagePayload(Array.from({ length: 100 }, (_, j) => usageRow({ requestId: `r${i}-${j}` })), 100_000),
@@ -222,22 +222,22 @@ describe("fetchWorkbuddyUsage", () => {
   });
 
   it("401 / 登录页 HTML → 凭据无效或已过期指引", async () => {
-    mockInvoke.mockResolvedValueOnce({ cookie: true }).mockResolvedValueOnce(httpResult("unauthorized", 401));
+    mockInvoke.mockResolvedValueOnce({ session: true, session2: true, userAgent: true }).mockResolvedValueOnce(httpResult("unauthorized", 401));
     const expired = await fetchWorkbuddyUsage(makeInstance(), range().startMs, range().endMs);
     expect(expired.status).toBe("error");
     if (expired.status !== "error") return;
-    expect(expired.message).toBe("WorkBuddy 登录凭据无效或已过期，请在设置中重新粘贴 Copy as cURL");
+    expect(expired.message).toBe("WorkBuddy 登录凭据无效或已过期，请在设置中重新填写三项凭据");
 
-    mockInvoke.mockReset().mockResolvedValueOnce({ cookie: true }).mockResolvedValueOnce(httpResult("<html>"));
+    mockInvoke.mockReset().mockResolvedValueOnce({ session: true, session2: true, userAgent: true }).mockResolvedValueOnce(httpResult("<html>"));
     const html = await fetchWorkbuddyUsage(makeInstance(), range().startMs, range().endMs);
     expect(html.status).toBe("error");
     if (html.status !== "error") return;
-    expect(html.message).toBe("WorkBuddy 登录凭据无效或已过期，请在设置中重新粘贴 Copy as cURL");
+    expect(html.message).toBe("WorkBuddy 登录凭据无效或已过期，请在设置中重新填写三项凭据");
   });
 
   it("业务失败 / 非 200 → 模板错误带实参", async () => {
     mockInvoke
-      .mockResolvedValueOnce({ cookie: true })
+      .mockResolvedValueOnce({ session: true, session2: true, userAgent: true })
       .mockResolvedValueOnce(httpResult({ code: 500, msg: "内部错误" }));
     const biz = await fetchWorkbuddyUsage(makeInstance(), range().startMs, range().endMs);
     expect(biz.status).toBe("error");
@@ -245,7 +245,7 @@ describe("fetchWorkbuddyUsage", () => {
     expect(biz.message).toBe("积分明细查询失败：{detail}");
     expect(biz.params).toMatchObject({ detail: "code=500 msg=内部错误" });
 
-    mockInvoke.mockReset().mockResolvedValueOnce({ cookie: true }).mockResolvedValueOnce(httpResult("oops", 502));
+    mockInvoke.mockReset().mockResolvedValueOnce({ session: true, session2: true, userAgent: true }).mockResolvedValueOnce(httpResult("oops", 502));
     const http = await fetchWorkbuddyUsage(makeInstance(), range().startMs, range().endMs);
     expect(http.status).toBe("error");
     if (http.status !== "error") return;
