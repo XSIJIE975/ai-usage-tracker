@@ -149,5 +149,5 @@ function StatusText({ item, translate }: { item: GlanceInstance; translate: Tran
   if (item.status === "needs_config") {
     return <span>{translate("待配置")}</span>;
   }
-  return <span>{translate("暂无数据")}</span>;
+  return <span>{item.neutralText ?? translate("暂无数据")}</span>;
 }

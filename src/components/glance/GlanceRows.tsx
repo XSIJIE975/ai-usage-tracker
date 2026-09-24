@@ -108,5 +108,9 @@ function StatusText({ item, translate }: { item: GlanceInstance; translate: Tran
   if (item.status === "needs_config") {
     return <span className="shrink-0 text-[12px] text-fg-muted">{translate("待配置")}</span>;
   }
-  return <span className="shrink-0 text-[12px] text-fg-muted">{translate("暂无数据")}</span>;
+  return (
+    <span className="shrink-0 text-[12px] text-fg-muted">
+      {item.neutralText ?? translate("暂无数据")}
+    </span>
+  );
 }
