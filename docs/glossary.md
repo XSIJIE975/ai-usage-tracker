@@ -23,7 +23,7 @@ provider 的一扇用量限制，如「5 小时请求配额」「每周请求配
 
 ## 主指标 / 次指标（Primary / Secondary Metric）
 
-柱方案的两根条：主指标 = 已用%最高两窗中重置较远的（通常下条），次指标 = 重置较近的（通常上条）。选窗口径（extractMetric/primaryProgressLine）：有 resetsAt 用重置时刻；缺失时按结构化周期 `windowPeriodMs` 外推兜底（ADR-0016 确立口径，GLM 周窗无消耗时不下发 `nextResetTime`，不能因此把主指标错落到短窗）。
+柱方案的两根条：主指标 = 已用%最高两窗中重置较远的（通常下条），次指标 = 重置较近的（通常上条）。选窗口径（extractMetric/primaryProgressLine）：有 resetsAt 用重置时刻；缺失时按结构化周期 `windowPeriodMs` 外推兜底（ADR-0016 确立口径，GLM 周窗无消耗时不下发 `nextResetTime`，不能因此把主指标错落到短窗）。Qoder 走的是另一条结构约定：资源包行刻意不带 `resetsAt`，所以订阅行必然当选主窗（ADR-0030 §5），靠测试钉住而非契约字段。
 
 ## 层（Ring Layer）
 
