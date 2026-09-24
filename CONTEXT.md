@@ -128,13 +128,13 @@ _Avoid_：用量（WorkBuddy 没有 token 口径的用量，只有积分消耗�
 
 ## Qoder
 
-第五个受支持的供应商（provider 标识 `qoder`），追踪阿里 Qoder 的大模型积分余量。数据来自账号控制台的只读私有接口 `GET /api/v2/me/usages/big_model_credits`（凭 CodexBar 先例接入，见 ADR-0030），凭据是网页会话 Cookie 的**值**——只取 `qoder_session_cookie` 这一个键，键名与 `Cookie:` 头由后端拼（ADR-0030 二次修订）。站点（国际站 qoder.com / 中国站 qoder.com.cn）是实例的显式属性，两套登录域 Cookie 不互通。只读：无签到等动作接口，也没有请求级历史端点，故无统计页，卡片即全部展示面。
+第五个受支持的供应商（provider 标识 `qoder`），追踪阿里 Qoder 的大模型积分余量。数据来自账号控制台的只读私有接口 `GET /api/v2/me/usages/big_model_credits`（凭 CodexBar 先例接入，见 ADR-0030），凭据是网页会话 Cookie 的**值**——只取 `qoder_session_cookie` 这一个键，键名与 `Cookie:` 头由后端拼（ADR-0030 二次修订）。站点（国际站 qoder.com / 中国站 qoder.com.cn）是实例的显式属性，两套登录域 Cookie 不互通。只读：无签到等动作接口，本期也只读汇总端点，故无统计页，卡片即全部展示面（官网用量页其实有每日消耗热力图与「Credits 记录」列表，历史端点存在但未侦察）。
 _Avoid_：把 qoder.com 与 qoder.com.cn 当同一账号（登录域不互通）；官方 API（不存在，走的是网页私有接口）；贴整段 Cookie 头（凭据槽只放 `qoder_session_cookie` 的值本体）
 
 ## Qoder 积分
 
-Qoder 订阅的大模型容量单位（端点名 big_model_credits），按周期发放、重置时间由服务端 `nextResetAt` 下发。卡片展示已用/总量积分与重置倒计时；主指标为已用百分比（totalQuota 与 sharedQuota 合并后按 used/total 算，接口下发的百分比量纲未证实故不采用）。与 WorkBuddy 的「积分」是两家产品各自的容量单位，量纲同构（按期重置的配额）但互不相通，跨供应商场合先说清是哪家的积分。
-_Avoid_：金额（Qoder 积分不是现金账户，没有金额量纲，不参与 DeepSeek 那套余额回退）；Credits / 大模型积分（中文界面统一叫「积分」，与 WorkBuddy 积分靠供应商上下文区分）。速览面板的「账户余额」位与 WorkBuddy 同例承载积分余量数值，是既有展示位而非金额量纲
+Qoder 订阅的大模型容量单位（端点名 big_model_credits），按周期发放、重置时间由服务端 `nextResetAt` 下发。卡片展示已用/总量积分与重置倒计时；主指标为已用百分比（totalQuota 与 sharedQuota 合并后按 used/total 算，接口下发的百分比量纲未证实故不采用）。总量为 0 表示这个套餐根本没分配积分（体验版，官网自己也写「0 / 0（已使用 0%）」），卡片出「未分配积分」一行，不出百分比也不出重置倒计时。重置时刻只认未来的：`nextResetAt` 已过期（未分配积分账号的周期是冻结的，样本里停在八个月前）与缺失同处理，宁可不显示也不挂一个过去的「重置」。与 WorkBuddy 的「积分」是两家产品各自的容量单位，量纲同构（按期重置的配额）但互不相通，跨供应商场合先说清是哪家的积分。
+_Avoid_：金额（Qoder 积分不是现金账户，没有金额量纲，不参与 DeepSeek 那套余额回退）；Credits / 大模型积分（中文界面统一叫「积分」，与 WorkBuddy 积分靠供应商上下文区分）；把零总量当「已用 100%」（那是未分配，不是用满）。速览面板的「账户余额」位与 WorkBuddy 同例承载积分余量数值，是既有展示位而非金额量纲
 
 ## 快速面板
 
