@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatHoursLabel,
   formatRefreshLabel,
   formatReset,
   formatResetAt,
   normalizeOpenCodeAuthCookie,
 } from "./utils";
+import { translateText } from "../i18n/translate";
+
+/** 走真实英文字典，而不是测试里另抄一份英文 —— 键改了这边就会红 */
+const tEn = (text: string) => translateText(text, "en");
 
 describe("normalizeOpenCodeAuthCookie", () => {
   it("keeps a bare cookie value", () => {
@@ -33,6 +38,14 @@ describe("formatRefreshLabel", () => {
     expect(formatRefreshLabel(90)).toBe("1.5 小时");
     expect(formatRefreshLabel(120)).toBe("2 小时");
   });
+
+  it("英文间隔标签用缩写单位（「1 hours」是错的）", () => {
+    expect(formatRefreshLabel(30, tEn)).toBe("30 min");
+    expect(formatRefreshLabel(60, tEn)).toBe("1 h");
+    expect(formatRefreshLabel(90, tEn)).toBe("1.5 h");
+    expect(formatHoursLabel(1, tEn)).toBe("1 h");
+    expect(formatRefreshLabel(0, tEn)).toBe("Disabled");
+  });
 });
 
 describe("formatReset", () => {
@@ -55,6 +68,14 @@ describe("formatReset", () => {
     expect(
       formatReset(new Date(now + (26 * 86_400 + 17 * 3_600 + 59 * 60) * 1000).toISOString(), now),
     ).toBe("26 天 17 小时后重置");
+  });
+
+  it("英文口径不出现 1 days 这种单复数错误（缩写单位 + 整串模板）", () => {
+    expect(formatReset(new Date(now + 40 * 3_600_000).toISOString(), now, tEn)).toBe("1d 16h to reset");
+    expect(formatReset(new Date(now + 2 * 86_400_000).toISOString(), now, tEn)).toBe("2d to reset");
+    expect(formatReset(new Date(now + 104 * 60_000).toISOString(), now, tEn)).toBe("1h 44min to reset");
+    expect(formatReset(new Date(now + 45 * 60_000).toISOString(), now, tEn)).toBe("45min to reset");
+    expect(formatReset(new Date(now - 1).toISOString(), now, tEn)).toBe("Resets soon");
   });
 
   it("handles zero and missing reset times", () => {

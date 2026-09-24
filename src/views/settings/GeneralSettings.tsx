@@ -11,7 +11,7 @@ import { Select } from "../../components/ui/select";
 import { Separator } from "../../components/ui/separator";
 import { Switch } from "../../components/ui/switch";
 import { useAppStore } from "../../store/useAppStore";
-import { formatRefreshLabel } from "../../lib/utils";
+import { formatHoursLabel, formatRefreshLabel } from "../../lib/utils";
 import type { AppSettings } from "../../types/ipc";
 import { AppearanceCard } from "./AppearanceCard";
 import { AboutCard } from "./AboutCard";
@@ -149,7 +149,7 @@ export function GeneralSettings() {
               options={[
                 ...COOLDOWN_PRESETS.map((hours) => ({
                   value: String(hours),
-                  label: `${hours} ${t("小时")}`,
+                  label: formatHoursLabel(hours, t),
                 })),
                 { value: "0", label: t("关闭") },
               ]}

@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { applyParams } from "../i18n/apply-params";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -27,12 +28,18 @@ export function normalizeOpenCodeAuthCookie(value: string): string {
   return cookie;
 }
 
+/** 小时数标签（刷新间隔与告警冷却预设共用）：整串模板，英文用缩写单位 */
+export function formatHoursLabel(hours: number | string, translate?: (s: string) => string) {
+  const t = translate ?? ((s: string) => s);
+  return applyParams(t("{hours} 小时"), { hours });
+}
+
 export function formatRefreshLabel(minutes: number, translate?: (s: string) => string) {
   const t = translate ?? ((s: string) => s);
   if (minutes < 1) return t("已禁用");
-  if (minutes < 60) return `${minutes} ${t("分钟")}`;
+  if (minutes < 60) return applyParams(t("{minutes} 分钟"), { minutes });
   const hours = minutes / 60;
-  return `${hours % 1 === 0 ? hours : hours.toFixed(1)} ${t("小时")}`;
+  return formatHoursLabel(hours % 1 === 0 ? hours : hours.toFixed(1), translate);
 }
 
 export function formatClock(ts: number | string | null | undefined) {
@@ -94,6 +101,9 @@ export function formatResetAt(iso: string, language: "zh" | "en" = "zh"): string
   }).format(date);
 }
 
+/** 相对口径的重置倒计时。整串模板而不是「数字 + 单位 + 后缀」逐词拼接——英文有单复数
+ *  （1 day / 2 days），拼出来的句子无法正确变形；英文侧用缩写单位（d/h/min），
+ *  顺带适配速览面板 320px 的窄行 */
 export function formatReset(iso?: string | null, now = Date.now(), translate?: (s: string) => string) {
   const t = translate ?? ((s: string) => s);
   if (!iso) return t("重置时间未知");
@@ -107,13 +117,13 @@ export function formatReset(iso?: string | null, now = Date.now(), translate?: (
 
   if (days > 0) {
     return hours > 0
-      ? `${days} ${t("天")} ${hours} ${t("小时")}${t("后重置")}`
-      : `${days} ${t("天")}${t("后重置")}`;
+      ? applyParams(t("{days} 天 {hours} 小时后重置"), { days, hours })
+      : applyParams(t("{days} 天后重置"), { days });
   }
   if (hours > 0) {
     return minutes > 0
-      ? `${hours} ${t("小时")} ${minutes} ${t("分钟")}${t("后重置")}`
-      : `${hours} ${t("小时")}${t("后重置")}`;
+      ? applyParams(t("{hours} 小时 {minutes} 分钟后重置"), { hours, minutes })
+      : applyParams(t("{hours} 小时后重置"), { hours });
   }
-  return `${minutes} ${t("分钟")}${t("后重置")}`;
+  return applyParams(t("{minutes} 分钟后重置"), { minutes });
 }
