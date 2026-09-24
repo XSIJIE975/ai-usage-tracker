@@ -112,6 +112,7 @@ export const en: Record<string, string> = {
   "DeepSeek 余额字段无法解析：{detail}": "Failed to parse the DeepSeek balance field: {detail}",
   "字段缺失": "field missing",
   "积分余量": "Credits",
+  "未分配积分": "No credits allocated",
   "暂无有效套餐": "No active packages",
   "余 {remain}": "{remain} left",
   "余 {remain} · {expiresAt}到期": "{remain} left · expires {expiresAt}",

@@ -77,8 +77,12 @@ describe("parseQuotaSummary", () => {
 });
 
 describe("parseUsageData", () => {
+  /** 显式「现在」：两份合成 fixture 的重置时刻（2026-06-02 / 2026-10-01）都要在它之后，
+   *  否则未来的重置会被「只认未来」这条规则判掉，测试随日历腐烂 */
+  const NOW = Date.parse("2026-05-01T00:00:00Z");
+
   it("parses the camelCase fixture with provided remaining and ISO reset", () => {
-    const usage = parseUsageData(readFixture("qoder-usage.json"));
+    const usage = parseUsageData(readFixture("qoder-usage.json"), NOW);
     expect(usage).not.toBeNull();
     expect(usage!.used).toBe(412.5);
     expect(usage!.total).toBe(1500);
@@ -88,56 +92,81 @@ describe("parseUsageData", () => {
     expect(usage!.resetsAt?.toISOString()).toBe("2026-10-01T00:00:00.000Z");
   });
 
-  it("folds shared quota into totals and recomputes the percentage (CodexBar 口径)", () => {
-    const usage = parseUsageData(readFixture("qoder-usage-shared.json"));
-    expect(usage).not.toBeNull();
-    expect(usage!.used).toBe(1700);
-    expect(usage!.total).toBe(2500);
-    expect(usage!.remaining).toBe(800);
-    //  fixture 里下发的 usage_percentage=80 是个位配额窗口的比例，合并后按 1700/2500 算
+  it("reads the snake_case container and the second-epoch reset", () => {
+    const usage = parseUsageData(
+      asUsageData({
+        total_quota: { quota_summary: { used_value: 1700, limit_value: 2500, remaining_value: 800 } },
+        next_reset_at: 1780387200,
+      }),
+      NOW,
+    );
+    expect(usage).toMatchObject({ used: 1700, total: 2500, remaining: 800 });
     expect(usage!.percent).toBeCloseTo(68);
-    // snake_case 的秒级 epoch 重置时刻
     expect(usage!.resetsAt?.toISOString()).toBe("2026-06-02T08:00:00.000Z");
   });
 
+  it("drops a reset moment that has already passed", () => {
+    // 真机样本里未分配积分账号的 nextResetAt 停在八个月前，照挂就是永远显示一个
+    // 已经过去的「重置」时刻（相对口径更会写成「即将重置」）
+    const usage = parseUsageData(readFixture("qoder-usage.json"), Date.parse("2026-11-01T00:00:00Z"));
+    expect(usage!.resetsAt).toBeNull();
+    expect(usage!.percent).toBeCloseTo(27.5); // 用量本身不受影响
+  });
+
   it("computes the percentage from used/total even when the API supplies one", () => {
-    // 下发值的量纲（0~100 还是 0~1）没有真机数据可证，一律不用（ADR-0030 真机校准项）
+    // 下发值是向上取整的整数（真机 2534/3200 下发 80），本地算才留得住精度（ADR-0030 §4）。
+    // 这里故意给一个与 25% 不同的下发值，证明它进不了模型
     const usage = parseUsageData(
       asUsageData({
         totalQuota: {
-          quotaSummary: { usedValue: 300, limitValue: 1200, usagePercentage: 0.25, unit: "credits" },
+          quotaSummary: { usedValue: 300, limitValue: 1200, usagePercentage: 100, unit: "credits" },
         },
       }),
     );
     expect(usage?.percent).toBeCloseTo(25);
   });
 
-  it("treats zero total with zero usage as exhausted (100%)", () => {
-    const usage = parseUsageData({ totalQuota: { quotaSummary: { usedValue: 0, limitValue: 0 } } });
-    expect(usage?.percent).toBe(100);
-    expect(usage?.resetsAt).toBeNull();
+  it("treats zero total as no quota, not as exhausted", () => {
+    // 体验版账号即如此（2026-09-24 真机）：真用满会回 used=limit>0，百分比自然到 100
+    const usage = parseUsageData({ totalQuota: { quotaSummary: { usedValue: 0, limitValue: 0 } } }, NOW);
+    expect(usage).toMatchObject({ total: 0, percent: 0, resetsAt: null });
   });
 
-  it("treats zero total across both quotas as exhausted, not a parse failure", () => {
-    const usage = parseUsageData({
-      totalQuota: { quotaSummary: { usedValue: 0, limitValue: 0 } },
-      sharedQuota: { quotaSummary: { usedValue: 0, limitValue: 0 } },
-    });
-    expect(usage?.percent).toBe(100);
-    expect(usage?.total).toBe(0);
+  it("drops the reset countdown along with the zero quota", () => {
+    // 重置时刻用的是未来的值，好让这条断言只由「零总量」决定，而不是上面那条过期规则
+    const usage = parseUsageData(
+      {
+        totalQuota: { quotaSummary: { usedValue: 0, limitValue: 0 } },
+        nextResetAt: "2026-10-06T14:15:00Z",
+      },
+      NOW,
+    );
+    expect(usage?.resetsAt).toBeNull();
   });
 
   it("rejects zero total with nonzero usage and broken structures", () => {
     expect(parseUsageData({ totalQuota: { quotaSummary: { usedValue: 3, limitValue: 0 } } })).toBeNull();
+    // 零总量却还有余量同样是矛盾数据（CodexBar 插件的判定覆盖 used 与 remaining 两项）
     expect(
-      parseUsageData({
-        totalQuota: { quotaSummary: { usedValue: 0, limitValue: 0 } },
-        sharedQuota: { quotaSummary: { usedValue: 3, limitValue: 0 } },
-      }),
+      parseUsageData({ totalQuota: { quotaSummary: { usedValue: 0, limitValue: 0, remainingValue: 500 } } }),
+    ).toBeNull();
+    expect(
+      parseUsageData({ totalQuota: { quotaSummary: { usedValue: 0, limitValue: 0, remainingValue: 500 } } }),
     ).toBeNull();
     expect(parseUsageData(undefined)).toBeNull();
     expect(parseUsageData({} as QoderUsageData)).toBeNull();
     expect(parseUsageData({ totalQuota: {} })).toBeNull();
+  });
+
+  it("parses the real paid China-site response", () => {
+    // fixture 是真机响应（账号标识打码、quota_detail 从 8 条资源包裁到 2 条代表项）：
+    // total_quota 就是汇总位——plan 2000/2000 + 资源包 534/1200 = 2534/3200，余 666
+    const usage = parseUsageData(readFixture("qoder-usage-china.json"), Date.parse("2026-09-24T06:00:00Z"));
+    expect(usage).toMatchObject({ used: 2534, total: 3200, remaining: 666 });
+    // 下发的是向上取整的 80，本地按 2534/3200 算是 79.1875
+    expect(usage!.percent).toBeCloseTo(79.1875, 4);
+    // 毫秒 epoch 自适应；这一刻与官网「将于 2026年9月26日 08:28:27 刷新配额」是同一个时刻
+    expect(usage!.resetsAt?.toISOString()).toBe("2026-09-26T00:28:27.566Z");
   });
 
   it("derives remaining from limit - used when the API omits it", () => {
@@ -180,10 +209,44 @@ describe("parseUsageLines", () => {
     expect(line.resetsAt).toBe("2026-10-01T00:00:00.000Z");
   });
 
+  it("maps the paid China-site sample onto one merged progress line", () => {
+    const usage = parseUsageData(
+      readFixture("qoder-usage-china.json"),
+      Date.parse("2026-09-24T06:00:00Z"),
+    )!;
+    const [line] = parseUsageLines(usage);
+    expect(line).toMatchObject({
+      type: "progress",
+      used: 2534,
+      limit: 3200,
+      value: "666",
+      resetsAt: "2026-09-26T00:28:27.566Z",
+    });
+    expect(line.percentUsed).toBeCloseTo(79.1875, 4);
+  });
+
   it("clamps percentages into [0, 100] and omits absent resets", () => {
     const [line] = parseUsageLines({ used: 5, total: 5, remaining: 0, percent: 130, resetsAt: null });
     expect(line.percentUsed).toBe(100);
     expect(line.resetsAt).toBeUndefined();
+  });
+
+  it("renders zero total as a neutral fact line instead of a progress bar", () => {
+    // 没有进度行就没有 100%、重置倒计时与耗尽告警（与 WorkBuddy 无套餐同法）
+    expect(
+      parseUsageLines({ used: 0, total: 0, remaining: 0, percent: 0, resetsAt: null }),
+    ).toEqual([{ type: "text", label: "积分余量", value: "未分配积分" }]);
+  });
+
+  it("renders the real trial-account response end to end", () => {
+    // fixture 是真机响应原样落盘（账号标识打码）：容器键 snake_case、重置时刻 camelCase，
+    // 四个配额容器全为 0，nextResetAt 停在 2026-01-06——三条规则同时作用在这份数据上
+    const usage = parseUsageData(
+      readFixture("qoder-usage-trial.json"),
+      Date.parse("2026-09-24T11:08:00Z"),
+    );
+    expect(usage).not.toBeNull();
+    expect(parseUsageLines(usage!)).toEqual([{ type: "text", label: "积分余量", value: "未分配积分" }]);
   });
 });
 

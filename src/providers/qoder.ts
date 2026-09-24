@@ -10,11 +10,12 @@ import type {
 import type { ProviderModule } from "./types";
 import { formatInt } from "../lib/utils";
 
-// 端点与请求形态依据社区先例 CodexBar（steipete/CodexBar，docs/qoder.md 与
-// QoderUsageFetcher.swift，2026-09-22 交叉验证；非公开 web 接口、随官方改版需跟随
-// 维护，接入边界见 ADR-0030）：
-// - 唯一数据源：GET /api/v2/me/usages/big_model_credits（账号控制台大模型积分汇总，
-//   无请求级历史/token 口径端点，故无统计页，卡片即全部展示面）
+// 端点与请求形态依据社区先例 CodexBar（steipete/CodexBar：docs/qoder.md 与实现
+// Sources/CodexBarCore/Resources/Plugins/qoder.js，2026-09-24 逐行核对；非公开 web 接口、
+// 随官方改版需跟随维护，接入边界见 ADR-0030）：
+// - 唯一数据源：GET /api/v2/me/usages/big_model_credits（账号控制台大模型积分汇总）。
+//   本期只读它，故无统计页——但「没有历史端点」这个说法已被证伪：官网用量页自己就有每日
+//   消耗热力图、按天/周/月趋势与「Credits 记录」列表，只是端点没去侦察（ADR-0030）
 // - 双登录域：国际站 qoder.com 与中国站 qoder.com.cn，Cookie 不互通；站点是实例的
 //   显式属性（不从粘贴内容判站）
 // - 凭据是单个网页 Cookie 的值：真机验证只需 qoder_session_cookie 这一对（2026-09-23），
@@ -106,11 +107,16 @@ interface QuotaContainerRaw {
   quota_summary?: QuotaSummaryRaw;
 }
 
+/** 只声明我方读取的键（其余 plan_quota / resource_package_quota /
+ *  dedicated_resource_package_quota / quota_detail / unit 一律忽略，见下）。
+ *  真机样本的键名混用两套：容器是 snake_case（`total_quota`），两个重置时刻是 camelCase
+ *  （`nextResetAt`），故两套都留。
+ *  **没有 shared_quota**：CodexBar 插件读的那个键在真机两个站点都不存在，而两份样本对账
+ *  证明 total_quota 就是 plan + 资源包 + 专属资源包的汇总位（2000+1200=3200、2000+534=2534、
+ *  0+666=666），再叠一次是重复计数，故不实现（ADR-0030 §4） */
 export interface QoderUsageData {
   totalQuota?: QuotaContainerRaw;
   total_quota?: QuotaContainerRaw;
-  sharedQuota?: QuotaContainerRaw;
-  shared_quota?: QuotaContainerRaw;
   nextResetAt?: unknown;
   next_reset_at?: unknown;
 }
@@ -151,7 +157,6 @@ export interface QoderUsage {
   percent: number;
   resetsAt: Date | null;
 }
-
 /** 重置时刻：ISO 串或 epoch（秒/毫秒自适应，CodexBar 解码器同款）；解析不出返回 null */
 export function parseNextReset(raw: unknown): Date | null {
   if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) {
@@ -166,33 +171,48 @@ export function parseNextReset(raw: unknown): Date | null {
 }
 
 /**
- * 汇总解析与合并（CodexBar mergedQuota 同口径，ADR-0030）：totalQuota 与 sharedQuota
- * 的 used/total/remaining 逐项相加；余量缺失按 max(0, limit−used) 推。
- * 百分比一律按合并后的 used/total 计算，不取接口下发的 usagePercentage——下发值的
- * 量纲（0~100 还是 0~1）没有真机数据可证，猜错会让主指标、阈值告警、托盘环与耗尽告警
- * 同时静默失真；used/total 是必填字段，合并与单配额两条路径因此同口径。
- * 总量为 0 且用量为 0 视为 100%（额度耗尽形态），总量为 0 但用量非 0 是矛盾数据，
- * 整体拒收。结构不完整返回 null（解析失败）。
+ * 汇总解析（ADR-0030）：只读 `total_quota.quota_summary`，余量缺失按 max(0, limit−used) 推。
+ *
+ * 两份真机样本（2026-09-24，体验版国际站 + 付费中国站）对账证明 total_quota 就是
+ * plan_quota + resource_package_quota + dedicated_resource_package_quota 的汇总位
+ * （2000+1200=3200、2000+534=2534、0+666=666），所以三个分容器与 quota_detail 一律不读，
+ * 更不再叠 CodexBar 那个真机不存在的 shared_quota（叠了是重复计数）。
+ *
+ * 百分比一律本地按 used/total 计算，不取下发的 usage_percentage：中国站付费样本
+ * （__fixtures__/qoder-usage-china.json）证实它是 0~100 的**向上取整**整数——2534/3200=79.19
+ * 下发 80，明细里 34/100 下发 35。用它就是把精度丢掉，还会让阈值告警在边界上比真实用量先响
+ * （阈值设 80 时实际 79.19% 已经告）。CodexBar 插件相反：它优先信下发值，只在有 shared 容器时
+ * 才本地算，所以体验版（无 shared、下发 0）它显示 0% 而非 100%——那个「零总量=100」只是它
+ * shared 分支的兜底，我方首版把它当成了通用口径（见 ADR-0030 §3）。零总量样本下发的
+ * usage_percentage 恰为 0，也正面证伪了「零总量就是耗尽」。结构不完整返回 null（解析失败）。
+ *
+ * 零总量（total=0 且 used=0）是「这个套餐没分配积分」（样本即如此），不是「用满等重置」——
+ * 真用满时接口回的是 used=limit>0（付费样本的 plan 就是 2000/2000），百分比自然算到 100，
+ * 无需伪造。故零总量下百分比与重置时刻都置空，展示口径由 parseUsageLines 按 total 判为
+ * 中性事实行。
+ *
+ * 重置时刻只认未来的：体验版样本里 nextResetAt=1767708936459（2026-01-06 22:15 CST）相对
+ * 当天已是八个月前，和 lastResetAt 一起算出个 14 天周期停在原地——未分配积分的账号周期是
+ * 冻结的。照挂就是卡片上永远显示「1/6 22:15 重置」、切到相对口径更是「即将重置」，两句都是
+ * 假话。（付费样本这一项正常：1790382507566 = 2026-09-26 08:28:27 CST，与官网「将于 2026年
+ * 9月26日 08:28:27 刷新配额」逐字对得上。）
  */
-export function parseUsageData(data: QoderUsageData | undefined): QoderUsage | null {
+export function parseUsageData(data: QoderUsageData | undefined, now = Date.now()): QoderUsage | null {
   if (!data || typeof data !== "object") return null;
-  const summaryOf = (container: QuotaContainerRaw | undefined): QuotaSummaryRaw | undefined =>
-    container?.quotaSummary ?? container?.quota_summary;
-  const base = parseQuotaSummary(summaryOf(data.totalQuota ?? data.total_quota));
-  if (!base) return null;
-  const shared = parseQuotaSummary(summaryOf(data.sharedQuota ?? data.shared_quota));
-  const remainingOf = (summary: QoderQuotaSummary): number =>
-    summary.remainingValue ?? Math.max(0, summary.limitValue - summary.usedValue);
-  const resetsAt = parseNextReset(data.nextResetAt ?? data.next_reset_at);
-
-  const used = base.usedValue + (shared?.usedValue ?? 0);
-  const total = base.limitValue + (shared?.limitValue ?? 0);
+  const container = data.totalQuota ?? data.total_quota;
+  const summary = container?.quotaSummary ?? container?.quota_summary;
+  const quota = parseQuotaSummary(summary);
+  if (!quota) return null;
+  const used = quota.usedValue;
+  const total = quota.limitValue;
+  const remaining = quota.remainingValue ?? Math.max(0, total - used);
+  const rawReset = parseNextReset(data.nextResetAt ?? data.next_reset_at);
+  const resetsAt = rawReset && rawReset.getTime() > now ? rawReset : null;
   if (total <= 0) {
-    // 零总量：零用量按 100%（耗尽形态，CodexBar 同款）；有用量是矛盾数据
-    if (used > 0) return null;
-    return { used: 0, total: 0, remaining: 0, percent: 100, resetsAt };
+    // 零总量却还有用量或余量：矛盾数据，整体拒收（CodexBar 插件同一条判定）
+    if (used > 0 || remaining > 0) return null;
+    return { used: 0, total: 0, remaining: 0, percent: 0, resetsAt: null };
   }
-  const remaining = remainingOf(base) + (shared ? remainingOf(shared) : 0);
   return { used, total, remaining, percent: (used / total) * 100, resetsAt };
 }
 
@@ -202,6 +222,11 @@ const clampPercent = (value: number): number => Math.min(100, Math.max(0, value)
  *  告警、额度耗尽与托盘环；value 带余量数值打 balance 标记（速览余额位同 WorkBuddy
  *  惯例显示余量），resetsAt 有则携带（卡片自动出重置倒计时行） */
 export function parseUsageLines(usage: QoderUsage): MetricLine[] {
+  if (usage.total <= 0) {
+    // 未分配积分（体验版）走中性事实行，与 WorkBuddy 无套餐同法（workbuddy.ts:284）：
+    // 不出进度行，红条、已用 100%、重置倒计时、耗尽告警与托盘满环就都无从产生
+    return [{ type: "text", label: "积分余量", value: "未分配积分" }];
+  }
   const lines: MetricLine[] = [
     {
       type: "progress",
