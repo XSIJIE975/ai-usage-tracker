@@ -4,7 +4,7 @@ import { providerFormSpecs, type CredentialFieldSpec, type ThresholdSpec } from 
 import type { FormErrorCode } from "./error-codes";
 
 /** 备注长度上限：表单层此前无任何上限，Rust 侧也只 unwrap_or_default 不校验 */
-export const NOTE_MAX_LENGTH = 60;
+export const NOTE_MAX_LENGTH = 20;
 
 /** 站点在表单里永远是合法枚举值（下拉有默认值），必填性由 schema 兜住而不靠 UI 保证 */
 const SITE_VALUES: ProviderSite[] = ["china", "international"];
