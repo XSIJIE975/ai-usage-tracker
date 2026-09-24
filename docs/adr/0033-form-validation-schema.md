@@ -22,7 +22,7 @@ Status: accepted
 - **校验时机 `mode: "onTouched"`**：首次失焦后跟随输入，既不在用户还没写完就报，也不等到提交才一次糊满屏。
 - **无障碍原语收敛到 `src/components/ui/field.tsx`**：`data-invalid` / `aria-invalid` / `aria-describedby`，`FieldError` 带 `role="alert"` 且只在错误出现那一刻挂载。
 - **提交失败按视觉顺序聚焦首个错误字段**（`shouldFocusError: false`）：RHF 自己那套按已注册 ref 的顺序找，凭据格走 Controller 没有 ref，焦点会被丢给备注框。
-- **阈值不再静默 clamp**：原先超范围会被 `Math.min/Math.max` 改成用户没写过的数，现在报范围错误。备注补 60 字上限（此前两侧都不管）。
+- **阈值不再静默 clamp**：原先超范围会被 `Math.min/Math.max` 改成用户没写过的数，现在报范围错误。备注补 20 字上限（此前两侧都不管）。
 - **`form-specs.ts` 留在 `src/forms/`，不放 `src/providers/`**：`allowed-hosts.test.ts` 按目录扫「前端会打出去的地址」，而这张表里的域名是给人看的取数指引，混进去会让那道守卫失去「文件即会发请求」的语义。
 
 Rust 侧的字符级校验保留不动，作为第二道闸（纵深，不是主界面）。
