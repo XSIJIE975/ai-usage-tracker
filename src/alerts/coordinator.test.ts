@@ -454,6 +454,57 @@ describe("WorkBuddy 积分阈值规则", () => {
   });
 });
 
+describe("Qoder 多窗口积分规则（ADR-0030 拆分）", () => {
+  const qdInstance = (overrides: Partial<ProviderInstance> = {}): ProviderInstance => ({
+    ...instance({ id: "qd-1", providerId: "qoder", threshold: 80, balanceThreshold: null }),
+    ...overrides,
+  });
+  /** 与 parseUsageLines 的真实产出同形：订阅行带 resetsAt，资源包行不带 */
+  const qdSnapshot = (...lines: ProviderSnapshot["lines"]): ProviderSnapshot => ({
+    instanceId: "qd-1",
+    providerId: "qoder",
+    providerName: "Qoder",
+    status: "ok",
+    updatedAt: 0,
+    lines,
+  });
+  const planLine = (percent: number) => ({
+    type: "progress" as const,
+    label: "订阅积分",
+    used: percent,
+    limit: 100,
+    percentUsed: percent,
+    value: "666",
+    balance: true,
+    resetsAt: "2026-09-26T00:28:27.566Z",
+  });
+  const packLine = (percent: number) => ({
+    type: "progress" as const,
+    label: "资源包积分",
+    used: percent,
+    limit: 100,
+    percentUsed: percent,
+  });
+
+  it("订阅见底而合并口径未到阈值：两条规则都该响，且告警点名订阅窗", () => {
+    // 真机处境（2026-09-24 中国站付费样本）：订阅 2000/2000 + 资源包 534/1200
+    // 合并算只有 79.19%，拆分前耗尽与阈值双双不响
+    const fires = evaluateRules(
+      qdInstance({ threshold: 80 }),
+      qdSnapshot(planLine(100), packLine(44.5), { type: "text", label: "资源包", value: "余 {remain}" }),
+    );
+    expect(fires.map((fire) => fire.ruleKey)).toEqual(["qd-1:quota", "qd-1:exhausted"]);
+    expect(fires[0]!.params.percent).toBe("100.0");
+    expect(fires[1]!.params.names).toBe("「订阅积分」");
+  });
+
+  it("资源包见底而订阅宽裕：耗尽照报资源包，阈值不被短窗冲高带着响", () => {
+    const fires = evaluateRules(qdInstance({ threshold: 80 }), qdSnapshot(planLine(20), packLine(100)));
+    expect(fires.map((fire) => fire.ruleKey)).toEqual(["qd-1:exhausted"]);
+    expect(fires[0]!.params.names).toBe("「资源包积分」");
+  });
+});
+
 describe("额度耗尽规则（ADR-0021）", () => {
   const windowed = (
     providerId: "glm" | "opencode-go",

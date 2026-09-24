@@ -8,7 +8,7 @@ describe("providerHasStats（种类 + 站点能力，ADR-0030/0031）", () => {
   });
 
   it("没有明细数据源的种类与站点都不出统计入口", () => {
-    // qoder 整个种类没有历史端点
+    // qoder 的历史端点还没侦察到（官网用量页确有热力图与记录列表，见 ADR-0030）
     expect(providerHasStats({ providerId: "qoder", site: "china" })).toBe(false);
     expect(providerHasStats({ providerId: "qoder", site: "international" })).toBe(false);
   });

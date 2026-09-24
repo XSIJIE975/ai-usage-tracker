@@ -136,6 +136,15 @@ describe("ringWindows 环层序（ADR-0017：周期短→长，取最紧三扇�
     expect(candidate.ringWindows.map((w) => w.label)).toEqual(["第一窗", "第二窗"]);
   });
 
+  it("Qoder 两窗（订阅带重置时刻、资源包不带）：外环订阅、内环资源包，badge 取最紧的 100%", () => {
+    // 2026-09-24 真机付费样本的形状：订阅 2000/2000 见底 + 资源包 534/1200
+    const plan = progress("订阅积分", 100, "2026-09-26T00:28:27.566Z");
+    const pack = progress("资源包积分", 44.5);
+    const candidate = build([plan, pack]);
+    expect(candidate.percent).toBe(100); // ADR-0020：badge 盯最紧窗，合并口径的 79 不再遮蔽它
+    expect(candidate.ringWindows.map((w) => w.label)).toEqual(["订阅积分", "资源包积分"]);
+  });
+
   it("周期缺失的扇排在已知周期扇之后，已知扇之间按周期短→长", () => {
     const unknown = progress("未知周期窗", 10);
     const weekly = progress("周窗", 20, "2026-09-13T00:00:00.000Z", 7 * DAY_MS);
