@@ -44,3 +44,5 @@ Status: accepted
 **dev 构建刻意更松**：`devCsp` 的 `script-src` 带 `'unsafe-inline'`、`connect-src` 带 `ws://localhost:1420` 与 `http://localhost:1420` —— Vite React-Refresh 的 preamble 是内联模块脚本，HMR 要连本地 ws，不给就起不来。代价要说清：**dev 环境拿不到脚本层的 CSP 防护**，而 dev 也连着真实凭据在用；真正拦住这次场景的是第 1 层的转义，不是 CSP。用 `TAURI_DEV_HOST` 上真机调试时 HMR 端口是 1421，需要临时把那个地址加进 `devCsp` 的 `connect-src`。
 
 **CSP 没解决的那半**：渲染进程仍能经 `invoke` 调到 `vault_credentials` 拿明文凭据（编辑凭据表单需要它）。所以 XSS 一旦成立，CSP 只能挡住"往外发"，挡不住"通过 IPC 要凭据"。彻底的收口要把凭据读取从渲染进程移走（改后端代填掩码值 + 只在保存时接收新值），那是独立的一轮改动，本期不做，只在此登记。
+
+**验证**：2026-09-25 使用者本机 `pnpm tauri build --no-sign` 出的 **release 包**实测正常 —— 界面、托盘三窗口、统计页图表与图片均未触发拦截，即 `script-src 'self'`（无 `unsafe-inline`）下应用能完整跑起来。dev 侧的 `devCsp` 由日常开发持续覆盖。
