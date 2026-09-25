@@ -19,7 +19,7 @@ import { useGlobalRefresh } from "./use-global-refresh";
 import { OverviewCards } from "./deepseek/OverviewCards";
 import { ModelUsageTable } from "./deepseek/ModelUsageTable";
 import { customRangeError, isoDate, resolveRangeMs, statsRangePolicy, timeRangeOptions, type TimeRange } from "./time-range";
-import { useLanguage, useT } from "../../i18n";
+import { applyParams, useLanguage, useT } from "../../i18n";
 import type { ProviderInstance } from "../../types/ipc";
 /** 费用量纲的坐标/悬浮格式化器（模块级稳定引用，见下方 yFormat/tooltipFormat 注释） */
 const formatYuanCompact = (value: number) => `¥${formatCompact(value)}`;
@@ -52,7 +52,8 @@ function RefreshOverlay() {
 }
 
 export function DeepSeekStats({ instance }: { instance: ProviderInstance }) {
-  const [range, setRange] = useState<TimeRange>(() => statsRangePolicy(instance.providerId).defaultRange);
+  const policy = statsRangePolicy(instance.providerId);
+  const [range, setRange] = useState<TimeRange>(policy.defaultRange);
   const [apiKeyId, setApiKeyId] = useState("all");
   const [metric, setMetric] = useState<UsageMetric>("tokens");
   const [customFrom, setCustomFrom] = useState(() => isoDate(new Date(Date.now() - 6 * DAY_MS)));
@@ -216,7 +217,7 @@ export function DeepSeekStats({ instance }: { instance: ProviderInstance }) {
             <EmptyState
               icon={<CalendarRange className="h-5 w-5" />}
               title={t("时间范围无效")}
-              description={t(customError)}
+              description={applyParams(t(customError), { days: policy.maxCustomDays })}
             />
           </CardContent>
         </Card>

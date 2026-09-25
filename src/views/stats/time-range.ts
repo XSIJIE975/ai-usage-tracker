@@ -43,7 +43,8 @@ export const customRangeError = (
   if (toBase > today) return "结束日期不能晚于今天";
   const { maxCustomDays } = statsRangePolicy(kind);
   if (toBase - startMs > (maxCustomDays - 1) * DAY_MS) {
-    return `自定义范围最多 ${maxCustomDays} 天（官方接口限制）`;
+    // 天数留给渲染端填（applyParams）：整串烘焙进中文会把英文字典撑成每档一个键
+    return "自定义范围最多 {days} 天（官方接口限制）";
   }
   return null;
 };

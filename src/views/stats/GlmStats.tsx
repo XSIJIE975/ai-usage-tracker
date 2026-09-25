@@ -44,7 +44,7 @@ import {
   timeRangeOptions,
   type TimeRange,
 } from "./time-range";
-import { useLanguage, useT } from "../../i18n";
+import { applyParams, useLanguage, useT } from "../../i18n";
 import type { ProviderInstance } from "../../types/ipc";
 import {
   aggregateModelUsage,
@@ -74,9 +74,8 @@ function RefreshOverlay() {
 }
 
 export function GlmStats({ instance }: { instance: ProviderInstance }) {
-  const [range, setRange] = useState<TimeRange>(() =>
-    statsRangePolicy(instance.providerId).defaultRange,
-  );
+  const policy = statsRangePolicy(instance.providerId);
+  const [range, setRange] = useState<TimeRange>(policy.defaultRange);
   const [metric, setMetric] = useState<UsageMetric>("tokens");
   const [customFrom, setCustomFrom] = useState(() =>
     isoDate(new Date(Date.now() - 6 * DAY_MS)),
@@ -285,7 +284,7 @@ export function GlmStats({ instance }: { instance: ProviderInstance }) {
             <EmptyState
               icon={<CalendarRange className="h-5 w-5" />}
               title={t("时间范围无效")}
-              description={t(customError)}
+              description={applyParams(t(customError), { days: policy.maxCustomDays })}
             />
           </CardContent>
         </Card>

@@ -7,10 +7,11 @@ import { Label } from "../../../components/ui/label";
 import { IconButton } from "../../../components/ui/icon-button";
 import { EmptyState } from "../../../components/ui/empty-state";
 import { StackedBars } from "../../../components/charts/StackedBars";
-import { aggregateWorkbuddyUsage, fetchWorkbuddyUsage } from "../../../providers/workbuddy-stats";
+import { Heatmap } from "../../../components/charts/Heatmap";
+import { aggregateQoderUsage, fetchQoderHeatmap, fetchQoderUsage } from "../../../providers/qoder-stats";
 import { createUsageCache } from "../../../stats/usage-cache";
 import { useAppStore } from "../../../store/useAppStore";
-import { formatCompact, formatInt, cn } from "../../../lib/utils";
+import { cn, formatCompact, formatInt } from "../../../lib/utils";
 import { StatsStateCard } from "../StatsStateCard";
 import { useStatsFetch } from "../use-stats-fetch";
 import { useAutoRefresh } from "../use-auto-refresh";
@@ -19,23 +20,25 @@ import { customRangeError, isoDate, resolveRangeMs, statsRangePolicy, timeRangeO
 import { formatDayLabel } from "../deepseek/usage-aggregation";
 import { applyParams, useLanguage, useT } from "../../../i18n";
 import type { ProviderInstance } from "../../../types/ipc";
-import { WorkbuddyOverviewCards } from "./WorkbuddyOverviewCards";
-import { WorkbuddyModelTable } from "./WorkbuddyModelTable";
-import { WorkbuddyPurposeDonut } from "./WorkbuddyPurposeDonut";
-import { WorkbuddyUsageTable } from "./WorkbuddyUsageTable";
+import { QoderOverviewCards } from "./QoderOverviewCards";
+import { QoderOperationDonut } from "./QoderOperationDonut";
+import { QoderModelTable } from "./QoderModelTable";
+import { QoderUsageTable } from "./QoderUsageTable";
 
-type WorkbuddyMetric = "credits" | "requests";
+type QoderMetric = "credits" | "requests";
 
 const usageCache = createUsageCache();
+/** 热力图与明细是两份独立数据（前者固定近一年，后者随档位走），分开缓存 */
+const heatmapCache = createUsageCache();
 const DAY_MS = 86_400_000;
 
-const metricOptions: { value: WorkbuddyMetric; label: string }[] = [
+const metricOptions: { value: QoderMetric; label: string }[] = [
   { value: "credits", label: "积分消耗" },
-  { value: "requests", label: "请求次数" },
+  { value: "requests", label: "记录条数" },
 ];
 
 /** 格式化器必须是模块层稳定引用：内联箭头函数每次渲染都是新身份，会穿透 StackedBars 的
- *  option useMemo 导致每次渲染 setOption 重建图表（违背「hover 不 setOption」铁律） */
+ *  option useMemo 导致每次渲染 setOption 重建图表（与 WorkBuddy 统计同一铁律） */
 const formatCreditsCompact = (value: number) => formatCompact(Number(value.toFixed(2)));
 const formatCreditsPrecise = (value: number) => value.toFixed(2);
 const formatCountPrecise = (value: number) => formatInt(value);
@@ -49,11 +52,11 @@ function RefreshOverlay() {
   );
 }
 
-export function WorkbuddyStats({ instance }: { instance: ProviderInstance }) {
+export function QoderStats({ instance }: { instance: ProviderInstance }) {
   const policy = statsRangePolicy(instance.providerId);
   const [range, setRange] = useState<TimeRange>(policy.defaultRange);
-  const [metric, setMetric] = useState<WorkbuddyMetric>("credits");
-  const [customFrom, setCustomFrom] = useState(() => isoDate(new Date(Date.now() - 6 * DAY_MS)));
+  const [metric, setMetric] = useState<QoderMetric>("credits");
+  const [customFrom, setCustomFrom] = useState(() => isoDate(new Date(Date.now() - 29 * DAY_MS)));
   const [customTo, setCustomTo] = useState(() => isoDate(new Date()));
   const [refreshTick, setRefreshTick] = useState(0);
 
@@ -65,30 +68,33 @@ export function WorkbuddyStats({ instance }: { instance: ProviderInstance }) {
     range === "custom" ? customRangeError(instance.providerId, customFrom, customTo) : null;
   const t = useT();
   const language = useLanguage();
-  // cache key 前缀 instanceId：同种类两个实例的统计互不串数据
-  const cacheKey =
-    rangeMs === null ? null : `${instance.id}:${rangeMs.startMs}:${rangeMs.endMs}`;
+  const cacheKey = rangeMs === null ? null : `${instance.id}:${rangeMs.startMs}:${rangeMs.endMs}`;
   const { state, isRefreshing } = useStatsFetch(
     usageCache,
     cacheKey,
     () =>
       rangeMs === null
         ? Promise.reject(new Error("时间范围无效"))
-        : fetchWorkbuddyUsage(instance, rangeMs.startMs, rangeMs.endMs),
+        : fetchQoderUsage(instance, rangeMs.startMs, rangeMs.endMs),
+    refreshTick,
+  );
+  // 近一年分布与档位无关，只随刷新重取
+  const heatmap = useStatsFetch(
+    heatmapCache,
+    `heatmap:${instance.id}`,
+    () => fetchQoderHeatmap(instance),
     refreshTick,
   );
 
   const refresh = () => {
     if (cacheKey !== null) usageCache.invalidate(cacheKey);
+    heatmapCache.invalidate(`heatmap:${instance.id}`);
     setRefreshTick((tick) => tick + 1);
   };
 
-  // 接入全局自动刷新
   useAutoRefresh(refresh, instance);
-  // 接入顶栏手动全局刷新
   useGlobalRefresh(refresh, instance.id);
 
-  /** 全局刷新状态：顶栏「刷新」进行中（全局）或该实例单刷进行中 */
   const globalRefreshing = useAppStore(
     (state) => state.loading || Boolean(state.refreshingInstances[instance.id]),
   );
@@ -96,7 +102,7 @@ export function WorkbuddyStats({ instance }: { instance: ProviderInstance }) {
 
   const bundle = state.kind === "ready" ? state.data : null;
   const aggregates = useMemo(
-    () => (bundle && rangeMs ? aggregateWorkbuddyUsage(bundle.rows, rangeMs.startMs, rangeMs.endMs) : null),
+    () => (bundle && rangeMs ? aggregateQoderUsage(bundle.rows, rangeMs.startMs, rangeMs.endMs) : null),
     [bundle, rangeMs],
   );
   const dayLabels = useMemo(
@@ -110,13 +116,13 @@ export function WorkbuddyStats({ instance }: { instance: ProviderInstance }) {
 
   const yFormat = metric === "credits" ? formatCreditsCompact : formatCountPrecise;
   const tooltipFormat = metric === "credits" ? formatCreditsPrecise : formatCountPrecise;
-  const chartTitle = metric === "credits" ? "积分消耗趋势" : "请求次数趋势";
+  const chartTitle = metric === "credits" ? "积分消耗趋势" : "记录条数趋势";
   const hasUsage = (aggregates?.totalRequests ?? 0) > 0;
   const emptyUsageHint = (
     <EmptyState
       icon={<Activity className="h-5 w-5" />}
       title={t("所选时间范围内暂无用量数据")}
-      description={t("调整时间范围，或确认 WorkBuddy 登录凭据有效。")}
+      description={t("调整时间范围，或确认 Qoder 登录凭据有效。")}
     />
   );
 
@@ -203,24 +209,47 @@ export function WorkbuddyStats({ instance }: { instance: ProviderInstance }) {
     return <StatsStateCard state={state} onRetry={refresh} />;
   }
 
+  const heatmapData = heatmap.state.kind === "ready" ? heatmap.state.data : null;
+
   return (
     <div className="space-y-4">
-      {/* 筛选工具条 */}
       {filterToolbar}
 
-      {/* 指标总览 */}
+      {/* 近一年每日消耗分布（固定 366 天，与上面的档位选择器无关，同官网口径） */}
+      <Card className="relative">
+        {heatmap.isRefreshing && <RefreshOverlay />}
+        <CardHeader>
+          <CardTitle>{t("近一年每日 Credits 消耗分布")}</CardTitle>
+          <CardDescription>
+            {heatmapData
+              ? `${t("全年合计")} ${heatmapData.total.toFixed(2)} ${heatmapData.unit} · ${t("分档阈值由官网下发")}`
+              : t("消耗分布取数中或暂不可用，不影响下方明细统计。")}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="px-4 pb-4">
+          {heatmapData && heatmapData.items.length > 0 ? (
+            <Heatmap days={heatmapData.items} levels={heatmapData.levels} unit={heatmapData.unit} />
+          ) : (
+            <EmptyState
+              icon={<CalendarRange className="h-5 w-5" />}
+              title={t("暂无消耗分布数据")}
+              description={t("近一年没有可统计的消耗记录，或身份接口暂不可用。")}
+            />
+          )}
+        </CardContent>
+      </Card>
+
       <div className="relative">
         {busy && <RefreshOverlay />}
-        <WorkbuddyOverviewCards aggregates={aggregates} />
+        <QoderOverviewCards aggregates={aggregates} />
       </div>
 
-      {/* 图表区：每日趋势 + 用途分布 */}
       <div className="grid gap-4 xl:grid-cols-5">
         <Card className="relative xl:col-span-3">
           {busy && <RefreshOverlay />}
           <CardHeader>
             <CardTitle>{t(chartTitle)}</CardTitle>
-            <CardDescription>{t("按模型堆叠，悬停查看每日明细。")}</CardDescription>
+            <CardDescription>{t("按用途堆叠，悬停查看每日明细。")}</CardDescription>
           </CardHeader>
           <CardContent className="px-4 pb-4">
             {hasUsage ? (
@@ -235,11 +264,11 @@ export function WorkbuddyStats({ instance }: { instance: ProviderInstance }) {
           {busy && <RefreshOverlay />}
           <CardHeader>
             <CardTitle>{t("用途分布")}</CardTitle>
-            <CardDescription>{t("按积分消耗占比展示请求用途。")}</CardDescription>
+            <CardDescription>{t("按积分消耗占比展示用途。")}</CardDescription>
           </CardHeader>
           <CardContent className="flex min-h-[300px] items-center px-4 pb-4">
             {hasUsage ? (
-              <WorkbuddyPurposeDonut aggregates={aggregates} />
+              <QoderOperationDonut aggregates={aggregates} />
             ) : (
               <div className="w-full">{emptyUsageHint}</div>
             )}
@@ -247,28 +276,24 @@ export function WorkbuddyStats({ instance }: { instance: ProviderInstance }) {
         </Card>
       </div>
 
-      {/* 模型维度表 */}
       <Card className="relative">
         {busy && <RefreshOverlay />}
         <CardHeader>
           <CardTitle>{t("模型明细")}</CardTitle>
-          <CardDescription>{t("各模型的请求次数与积分消耗。")}</CardDescription>
+          <CardDescription>{t("各模型的记录条数与积分消耗。")}</CardDescription>
         </CardHeader>
         <CardContent>
-          {hasUsage ? <WorkbuddyModelTable aggregates={aggregates} /> : emptyUsageHint}
+          {hasUsage ? <QoderModelTable aggregates={aggregates} /> : emptyUsageHint}
         </CardContent>
       </Card>
 
-      {/* 消耗明细 */}
       <Card className="relative">
         {busy && <RefreshOverlay />}
         <CardHeader>
           <CardTitle>{t("消耗明细")}</CardTitle>
-          <CardDescription>{t("逐条请求的积分消耗；摘要为官网截断版原文。")}</CardDescription>
+          <CardDescription>{t("逐条记录的积分消耗；金额是官网给的美元原价，未计费记录显示为「—」。")}</CardDescription>
         </CardHeader>
-        <CardContent>
-          {hasUsage ? <WorkbuddyUsageTable rows={bundle.rows} /> : emptyUsageHint}
-        </CardContent>
+        <CardContent>{hasUsage ? <QoderUsageTable rows={bundle.rows} /> : emptyUsageHint}</CardContent>
       </Card>
     </div>
   );

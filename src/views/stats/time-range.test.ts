@@ -21,7 +21,7 @@ describe("自定义范围上限按供应商分叉", () => {
   const to = daysAgo(0);
 
   it("100 天跨度：30 天上限的供应商拒收，qoder 受理", () => {
-    expect(customRangeError("glm", from, to)).toBe("自定义范围最多 30 天（官方接口限制）");
+    expect(customRangeError("glm", from, to)).toBe("自定义范围最多 {days} 天（官方接口限制）");
     expect(customRangeError("qoder", from, to)).toBeNull();
     expect(resolveRangeMs("glm", "custom", from, to)).toBeNull();
     expect(resolveRangeMs("qoder", "custom", from, to)).not.toBeNull();
@@ -29,7 +29,7 @@ describe("自定义范围上限按供应商分叉", () => {
 
   it("qoder 也拒超过自身上限的跨度，且倒挂与未来日期照旧拒", () => {
     expect(customRangeError("qoder", daysAgo(400), to)).toBe(
-      "自定义范围最多 366 天（官方接口限制）",
+      "自定义范围最多 {days} 天（官方接口限制）",
     );
     expect(customRangeError("qoder", to, from)).toBe("开始日期不能晚于结束日期");
     expect(customRangeError("qoder", from, daysAgo(-1))).toBe("结束日期不能晚于今天");

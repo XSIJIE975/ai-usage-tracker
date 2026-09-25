@@ -7,10 +7,9 @@ describe("providerHasStats（种类 + 站点能力，ADR-0030/0031）", () => {
     expect(providerHasStats({ providerId: "workbuddy", site: "china" })).toBe(true);
   });
 
-  it("没有明细数据源的种类与站点都不出统计入口", () => {
-    // qoder 的历史端点还没侦察到（官网用量页确有热力图与记录列表，见 ADR-0030）
-    expect(providerHasStats({ providerId: "qoder", site: "china" })).toBe(false);
-    expect(providerHasStats({ providerId: "qoder", site: "international" })).toBe(false);
+  it("qoder 两站都出统计入口（histories 与 credits-heatmap 同契约，免费号也有完整历史）", () => {
+    expect(providerHasStats({ providerId: "qoder", site: "china" })).toBe(true);
+    expect(providerHasStats({ providerId: "qoder", site: "international" })).toBe(true);
   });
 
   it("workbuddy 两站都有消耗明细（国际站用量页与中国站同款，2026-09-22 真机确认）", () => {

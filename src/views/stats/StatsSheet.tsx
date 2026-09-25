@@ -2,6 +2,7 @@ import { Sheet, SheetBody, SheetContent, SheetDescription, SheetHeader, SheetTit
 import { DeepSeekStats } from "./DeepSeekStats";
 import { OpenCodeStats } from "./OpenCodeStats";
 import { GlmStats } from "./GlmStats";
+import { QoderStats } from "./qoder/QoderStats";
 import { WorkbuddyStats } from "./workbuddy/WorkbuddyStats";
 import { SiteBadge } from "../../components/SiteBadge";
 import { displayName } from "../../lib/instance";
@@ -17,10 +18,13 @@ const STATS_COMPONENTS = {
   // WorkBuddy 统计基于官网消耗明细接口（get-user-request-usage，2026-09-21 实测接入），
   // 纯只读，白名单见 ADR-0029
   workbuddy: WorkbuddyStats,
+  // Qoder 统计基于 big_model_credits/histories 逐条明细 + credits-heatmap 近一年分布
+  // （两站同契约，2026-09-25 实测；免费号也有完整历史，故不按付费门禁），见 ADR-0030
+  qoder: QoderStats,
 } as const;
 
-/** 该实例有没有统计面：种类没挂统计模块（qoder 无历史/明细数据源，ADR-0030），或本站
- *  没有那个数据源（workbuddy 国际站无消耗明细，ADR-0031 能力表）都不出「查看统计」入口 */
+/** 该实例有没有统计面：种类没挂统计模块，或本站没有那个数据源（workbuddy 国际站无消耗明细，
+ *  ADR-0031 能力表）时不出「查看统计」入口 */
 export function providerHasStats(
   instance: Pick<ProviderInstance, "providerId" | "site">,
 ): boolean {
