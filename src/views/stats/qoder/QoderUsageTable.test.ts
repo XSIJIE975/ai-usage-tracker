@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { discountLabel } from "./QoderUsageTable";
+import { discountLabel, recordBadge } from "./QoderUsageTable";
 
 describe("discountLabel", () => {
   it("官网给的是乘数，界面说「几折」", () => {
@@ -14,5 +14,17 @@ describe("discountLabel", () => {
     expect(discountLabel(1)).toBeNull();
     expect(discountLabel(0)).toBeNull();
     expect(discountLabel(Number.NaN)).toBeNull();
+  });
+});
+
+describe("recordBadge", () => {
+  it("未计费优先于折扣角标（Not Charged 的 factor 样本里恒为 1）", () => {
+    expect(recordBadge({ kind: "Not Charged", discountFactor: 1 })).toBe("未计费");
+    expect(recordBadge({ kind: "Not Charged", discountFactor: 0.5 })).toBe("未计费");
+  });
+
+  it("Charged 走折扣角标，无折扣时不给角标", () => {
+    expect(recordBadge({ kind: "Charged", discountFactor: 0.2 })).toBe("2 折");
+    expect(recordBadge({ kind: "Charged", discountFactor: 1 })).toBeNull();
   });
 });

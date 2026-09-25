@@ -7,6 +7,13 @@ import type { QoderUsageRow } from "../../../providers/qoder-stats";
 
 const PAGE_SIZE = 50;
 
+/** 积分格角标：未计费优先。样本里 Not Charged 的 `discount_factor` 恒为 1（官网没打折，
+ *  是免费调用），即使哪天不恒为 1，「这条没扣积分」也是比"几折"更该露的那件事 */
+export function recordBadge(row: { kind: string; discountFactor: number }): string | null {
+  if (row.kind === "Not Charged") return "未计费";
+  return discountLabel(row.discountFactor);
+}
+
 /** 折扣角标：官网给的是乘数（0.5 = 打五折），1 或脏值不显示 */
 export function discountLabel(factor: number): string | null {
   if (!Number.isFinite(factor) || factor <= 0 || factor >= 1) return null;
@@ -56,7 +63,7 @@ export function QoderUsageTable({ rows }: { rows: QoderUsageRow[] }) {
         </THead>
         <TBody>
           {pageRows.map((row, index) => {
-            const discount = discountLabel(row.discountFactor);
+            const badge = recordBadge(row);
             return (
               <Tr key={`${row.time}-${safePage * PAGE_SIZE + index}`}>
                 <Td className="tnum whitespace-nowrap text-fg-muted">
@@ -75,8 +82,8 @@ export function QoderUsageTable({ rows }: { rows: QoderUsageRow[] }) {
                 </Td>
                 <Td align="right" className="font-medium">
                   {row.credits.toFixed(2)}
-                  {discount && (
-                    <span className="tnum ml-1 text-[11px] font-normal text-fg-muted">{discount}</span>
+                  {badge && (
+                    <span className="tnum ml-1 text-[11px] font-normal text-fg-muted">{t(badge)}</span>
                   )}
                 </Td>
                 <Td align="right" className="tnum text-fg-secondary">

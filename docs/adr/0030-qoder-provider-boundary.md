@@ -35,6 +35,7 @@ Status: accepted
    - **热力图 `GET /api/v1/me/ai-conversations/credits-heatmap?userId=&days=366`**：响应 `{ year, unit, levels[4], items[{date,value}], total }`。分档阈值 `levels` 直接用官方下发的，组件不自己发明分位数（`Heatmap` 是通用组件，阈值由调用方喂）。它固定近一年、与档位选择器无关，且独立缓存——它失败不阻塞下面四块。
    - **两条已知口径差异（别当 bug 查）**：① `histories.credits` 服务端已按 2 位小数舍入（实测 06-23 = 1.44），`heatmap` 同一天给原值 1.4547109588 —— 两处数字天生不完全相等；② `heatmap` 的 `total` 是整年合计、`items` 是逐日值，fixture 里刻意保留两者不一致，用来证明我方不做「items 之和 == total」这种断言。热力图当天那一格实测为 0 而明细有当日记录，按返回原样画、不做补值。
    - **`operation` 与 `model_category` 原样显示不翻译**：前者是官网 UI 上的功能名（Agent / Quest Mode / Repo Wiki / Security Scan / Voice Input / Experts / Optimize Input / Ask），翻成中文会让统计页与官网按钮对不上；后者随官方上新无限增长（实测 11 种，含 `Qwen3.8-Max-Preview`），翻译表必然过期。这与 WorkBuddy 相反——它的 `agentPurpose` 是内部标识符（`conversation`、`enhance-prompt`），所以那边建了 `purposeLabel` 映射。
+   - **「未扣积分」的构成（口径，别当 bug 查）**：概览卡第四格 = Σ(`original_credits` − `credits`)，它同时容纳两种来源 —— 官网活动折扣（`kind=Charged` 且 `discount_factor<1`，实测 0.5/0.4/0.2/0.1）与完全未计费调用（`kind="Not Charged"`，样本里 `discount_factor` 恒为 1，即官网没打折而是免费）。所以这个词刻意不断言"怎么省的"，副标题写的就是算法本身（折前合计减去实扣）；明细行用角标区分二者（未计费行显示「未计费」，优先于折扣角标）。曾命名为「折扣节省」，把免费额度说成了折扣，2026-09-25 改掉。
    - **金额只作一列展示**：`cost` 是官网自己给的 USD，原样列进明细（未计费记录显示「—」），不进图、不进汇总卡、不参与任何余额逻辑——Qoder 积分不是现金账户（术语卡已定），一切聚合用折后 `credits`。折扣在积分格以角标（「5 折」）出现，不并列折前数字，避免两个数互相打架。
 
 ## Considered Options
