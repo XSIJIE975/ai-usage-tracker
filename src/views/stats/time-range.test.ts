@@ -73,6 +73,24 @@ describe("自定义范围上限按供应商分叉", () => {
     expect(resolveRangeMs("qoder", "custom", from, to)).not.toBeNull();
   });
 
+  it("区间无效的每条路径都必须带成因，否则抽屉会停在无话可说的 loading", () => {
+    const today = isoDate(new Date());
+    const invalid: Array<[string, string]> = [
+      ["", today], // 起始被清空
+      [today, ""], // 结束被清空
+      ["不是日期", today], // 解析不出数字
+      [today, daysAgo(3)], // 倒挂
+      [daysAgo(200), today], // 超 30 天上限
+    ];
+    for (const [from, to] of invalid) {
+      expect(resolveRangeMs("glm", "custom", from, to), `${from}~${to}`).toBeNull();
+      expect(customRangeError("glm", from, to), `${from}~${to}`).not.toBeNull();
+    }
+    // 合法输入两边都放行
+    expect(resolveRangeMs("glm", "custom", daysAgo(10), today)).not.toBeNull();
+    expect(customRangeError("glm", daysAgo(10), today)).toBeNull();
+  });
+
   it("qoder 也拒超过自身上限的跨度，且倒挂与未来日期照旧拒", () => {
     expect(customRangeError("qoder", daysAgo(400), to)).toBe(LIMIT_MESSAGE);
     expect(customRangeError("qoder", to, from)).toBe("开始日期不能晚于结束日期");

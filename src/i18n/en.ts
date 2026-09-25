@@ -512,6 +512,7 @@ export const en: Record<string, string> = {
   "时间范围无效": "Invalid time range",
   "开始日期不能晚于结束日期": "Start date can't be after the end date",
   "结束日期不能晚于今天": "End date can't be in the future",
+  "请填写完整的开始与结束日期": "Fill in both the start and end dates",
   "自定义范围最多 {days} 天（{note}）": "Custom range is limited to {days} days ({note})",
   "官方接口限制": "provider API limit",
   "本工具的上限": "this tool's own cap",

@@ -38,8 +38,10 @@ export const statsRangePolicy = (kind: ProviderKind): StatsRangePolicy =>
   POLICIES[kind] ?? FALLBACK_POLICY;
 
 /**
- * 自定义范围校验：返回用户可读的错误文案，合法返回 null。
- * 输入未填完整时返回 null（由 resolveRangeMs 的非法判断兜底）。
+ * 自定义范围校验：返回用户可读的错误文案（含占位符），合法返回 null。
+ * 不变式：**`resolveRangeMs` 对自定义档返回 null 的每一条路径，这里都必须给出对应成因** ——
+ * 抽屉只在 customError 非空时显示原因，而区间为 null 会让 cacheKey 变 null、取数 effect 直接
+ * 早退，于是界面停在 loading 且无话可说（日期输入被清空就是这条死路）。
  */
 export const customRangeError = (
   kind: ProviderKind,
@@ -49,7 +51,7 @@ export const customRangeError = (
   const today = localMidnight(new Date());
   const startMs = parseLocalDateMs(customFrom);
   const toBase = parseLocalDateMs(customTo);
-  if (startMs === null || toBase === null) return null;
+  if (startMs === null || toBase === null) return "请填写完整的开始与结束日期";
   if (toBase < startMs) return "开始日期不能晚于结束日期";
   if (toBase > today) return "结束日期不能晚于今天";
   const { maxCustomDays } = statsRangePolicy(kind);
