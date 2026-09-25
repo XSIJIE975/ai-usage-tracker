@@ -286,6 +286,22 @@ describe("parseUsageLines", () => {
     expect(primaryProgressLine(lines)?.label).toBe("订阅积分");
   });
 
+  it("订阅恒零被过滤掉时，主窗退到资源包行（有分配的窗里挑周期最长的）", () => {
+    // 只有订阅行带 resetsAt 这条约定在「没有订阅行」时无从生效，此时 primaryProgressLine
+    // 按快照顺序取首行=资源包；这是可接受的退化，但不能是静默的，故在此钉住
+    const view = parseUsageView(
+      asUsageData({
+        plan_quota: { quota_summary: { used_value: 0, limit_value: 0, remaining_value: 0 } },
+        resource_package_quota: { quota_summary: { used_value: 20, limit_value: 100, remaining_value: 80 } },
+        total_quota: { quota_summary: { used_value: 20, limit_value: 100, remaining_value: 80 } },
+      }),
+      NOW,
+    )!;
+    const lines = parseUsageLines(view);
+    expect(lines[0].label).toBe("资源包积分");
+    expect(primaryProgressLine(lines)?.label).toBe("资源包积分");
+  });
+
   it("marks only the first progress line as the balance carrier", () => {
     const view = parseUsageView(
       asUsageData({

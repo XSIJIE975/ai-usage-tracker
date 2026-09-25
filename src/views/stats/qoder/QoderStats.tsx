@@ -18,7 +18,7 @@ import { useAutoRefresh } from "../use-auto-refresh";
 import { useGlobalRefresh } from "../use-global-refresh";
 import { customRangeError, isoDate, resolveRangeMs, statsRangePolicy, timeRangeOptions, type TimeRange } from "../time-range";
 import { formatDayLabel } from "../deepseek/usage-aggregation";
-import { applyParams, useLanguage, useT } from "../../../i18n";
+import { renderTemplate, useLanguage, useT } from "../../../i18n";
 import type { ProviderInstance } from "../../../types/ipc";
 import { QoderOverviewCards } from "./QoderOverviewCards";
 import { QoderOperationDonut } from "./QoderOperationDonut";
@@ -197,7 +197,7 @@ export function QoderStats({ instance }: { instance: ProviderInstance }) {
             <EmptyState
               icon={<CalendarRange className="h-5 w-5" />}
               title={t("时间范围无效")}
-              description={applyParams(t(customError), { days: policy.maxCustomDays })}
+              description={renderTemplate(customError, { days: policy.maxCustomDays, note: policy.limitNote }, t)}
             />
           </CardContent>
         </Card>

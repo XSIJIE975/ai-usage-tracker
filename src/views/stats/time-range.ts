@@ -7,20 +7,30 @@ export interface StatsRangePolicy {
   maxCustomDays: number;
   /** 打开抽屉时的默认档 */
   defaultRange: TimeRange;
+  /** 上限的成因（进用户文案）：是官方接口挡着，还是本工具自己设的闸——两者不能混为一谈 */
+  limitNote: "官方接口限制" | "本工具的上限";
 }
 
 /** 没在表里的供应商走这份——现状：30 天上限 + 近 7 天默认 */
-const FALLBACK_POLICY: StatsRangePolicy = { maxCustomDays: 30, defaultRange: "7d" };
+const FALLBACK_POLICY: StatsRangePolicy = {
+  maxCustomDays: 30,
+  defaultRange: "7d",
+  limitNote: "官方接口限制",
+};
 
 /**
  * 时间范围策略按供应商声明（数值要有出处，别当分支写进各抽屉）：
- * - 30 天：DeepSeek / GLM 的用量接口实测只支持约 30 天动态窗口；WorkBuddy 与 OpenCode Go
- *   沿用同一个保守值——**未单独实测过上限**，不代表官方限制就是 30 天。
- * - qoder 366 天：`big_model_credits/histories` 实测 `page_size=1000` 一次回 535 条、
- *   `start_time`/`end_time` 任意区间都受理，且官网用量页自己就给近一年热力图（ADR-0030）。
+ * - deepseek / glm：用量接口实测只支持约 30 天动态窗口，故成因写「官方接口限制」。
+ * - workbuddy：沿用 30 天这个保守值，**未单独实测过上限**，故成因写「本工具的上限」。
+ * - opencode-go：不走本模块（自己的区间口径），这里只为将来接入留位。
+ * - qoder：`big_model_credits/histories` 实测 `page_size=1000` 一次回 535 条、
+ *   `start_time`/`end_time` 任意区间都受理，且官网用量页自己就给近一年热力图（ADR-0030），
+ *   故放开到 366 天；默认档取近 30 天（真机样本里一次重置跨了 95 天，7 天窗常常是空的）。
  */
 const POLICIES: Partial<Record<ProviderKind, StatsRangePolicy>> = {
-  qoder: { maxCustomDays: 366, defaultRange: "30d" },
+  workbuddy: { maxCustomDays: 30, defaultRange: "7d", limitNote: "本工具的上限" },
+  "opencode-go": { maxCustomDays: 30, defaultRange: "7d", limitNote: "本工具的上限" },
+  qoder: { maxCustomDays: 366, defaultRange: "30d", limitNote: "本工具的上限" },
 };
 
 export const statsRangePolicy = (kind: ProviderKind): StatsRangePolicy =>
@@ -43,8 +53,9 @@ export const customRangeError = (
   if (toBase > today) return "结束日期不能晚于今天";
   const { maxCustomDays } = statsRangePolicy(kind);
   if (toBase - startMs > (maxCustomDays - 1) * DAY_MS) {
-    // 天数留给渲染端填（applyParams）：整串烘焙进中文会把英文字典撑成每档一个键
-    return "自定义范围最多 {days} 天（官方接口限制）";
+    // 天数与成因都留给渲染端填（renderTemplate 会先 t() 字符串参数）：
+    // 整串烘焙进中文会让英文字典每档、每种成因各存一个键
+    return "自定义范围最多 {days} 天（{note}）";
   }
   return null;
 };

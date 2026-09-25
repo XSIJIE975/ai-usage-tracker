@@ -120,15 +120,18 @@ function classify(result: HttpResult): { kind: "ok" } | { kind: "expired" } | { 
   return { kind: "ok" };
 }
 
-/** 明细响应 → 行数组（字段名只有 snake_case 一套，两站实测如此，不做没证据的双兼容） */
+/** 明细响应 → 行数组（字段名只有 snake_case 一套，两站实测如此，不做没证据的双兼容）。
+ *  分页元数据缺失时是 null 而不是 0 —— 0 会被读成「只有 0 条」，那是把取不全伪装成完整 */
 export function parseHistories(
   bodyText: string,
-): { kind: "ok"; value: { rows: QoderUsageRow[]; total: number; lastPage: number } } | { kind: "parse"; detail: string } {
+):
+  | { kind: "ok"; value: { rows: QoderUsageRow[]; total: number | null; lastPage: number | null } }
+  | { kind: "parse"; detail: string } {
   try {
     const json = JSON.parse(bodyText) as HistoriesEnvelope;
     const rawRows = Array.isArray(json.data) ? json.data : [];
     // 服务端回的行数不该超过我们请求的 page_size；超了就是契约变了，
-    // 按页大小截断并报错，而不是把任意大的响应留在内存里
+    // 报错停下而不是把任意大的响应留在内存里
     if (rawRows.length > PAGE_SIZE) return { kind: "parse", detail: "单页条数超过请求上限" };
     const rows = rawRows.map((row) => ({
       time: num(row.time),
@@ -145,12 +148,21 @@ export function parseHistories(
     }));
     return {
       kind: "ok",
-      value: { rows, total: num(json.page_result?.total_size), lastPage: num(json.page_result?.last_page) },
+      value: {
+        rows,
+        total: countOr(json.page_result?.total_size),
+        lastPage: countOr(json.page_result?.last_page),
+      },
     };
   } catch {
     // 不带 error.message：V8 的解析错误会附上响应体开头若干字符
     return { kind: "parse", detail: "响应不是合法 JSON" };
   }
+}
+
+/** 分页元数据专用：缺失或非数值返回 null（区别于 0 条） */
+function countOr(raw: unknown): number | null {
+  return typeof raw === "number" && Number.isFinite(raw) && raw >= 0 ? raw : null;
 }
 
 const statsError = <T>(message: string, params?: Record<string, string | number>): StatsResult<T> => ({
@@ -191,7 +203,10 @@ export async function fetchQoderUsage(
     }
     const { historiesUrl } = qoderSiteConfig(qoderSiteOf(instance));
     const rows: QoderUsageRow[] = [];
-    let total = 0;
+    let total: number | null = null;
+    let lastPage: number | null = null;
+    /** 是否明确收口（末页/空页/条数够齐）；没收口就是取不全，不能当完整数据出图 */
+    let complete = false;
     for (let page = 1; page <= MAX_PAGES; page += 1) {
       const query = new URLSearchParams({
         page: String(page),
@@ -212,11 +227,31 @@ export async function fetchQoderUsage(
       if (parsed.kind === "parse") {
         return statsError<QoderUsageBundle>("消耗明细返回数据解析失败：{detail}", { detail: parsed.detail });
       }
-      rows.push(...parsed.value.rows);
-      total = parsed.value.total;
-      if (parsed.value.rows.length === 0 || rows.length >= total || page >= parsed.value.lastPage) break;
+      const pageRows = parsed.value.rows;
+      total = parsed.value.total ?? total;
+      lastPage = parsed.value.lastPage ?? lastPage;
+      rows.push(...pageRows);
+      // 三条收口依据，任一成立即停：空页、短页（page_size 是我们请求的，服务端不会少给）、
+      // 或分页元数据说到了末页/条数齐了
+      if (pageRows.length === 0 || pageRows.length < PAGE_SIZE) complete = true;
+      else if (lastPage != null && page >= lastPage) complete = true;
+      else if (total != null && rows.length >= total) complete = true;
+      if (complete) break;
     }
-    return { status: "ok", data: { rows, total: total || rows.length } };
+    if (!complete) {
+      return statsError<QoderUsageBundle>(
+        "消耗明细未取全（已取 {count} 条，达到 {pages} 页上限），请缩小时间范围。",
+        { count: rows.length, pages: MAX_PAGES },
+      );
+    }
+    // 服务端自称有更多条却只给到末页：元数据自相矛盾，同样不静默当完整数据
+    if (total != null && rows.length < total) {
+      return statsError<QoderUsageBundle>(
+        "消耗明细分页元数据自相矛盾（声明 {total} 条，实得 {count} 条）。",
+        { total, count: rows.length },
+      );
+    }
+    return { status: "ok", data: { rows, total: total ?? rows.length } };
   } catch (error) {
     return statsError<QoderUsageBundle>("消耗明细查询失败：{detail}", {
       detail: sanitizeErrorDetail(error instanceof Error ? error.message : String(error)),

@@ -19,7 +19,7 @@ import { useGlobalRefresh } from "./use-global-refresh";
 import { OverviewCards } from "./deepseek/OverviewCards";
 import { ModelUsageTable } from "./deepseek/ModelUsageTable";
 import { customRangeError, isoDate, resolveRangeMs, statsRangePolicy, timeRangeOptions, type TimeRange } from "./time-range";
-import { applyParams, useLanguage, useT } from "../../i18n";
+import { renderTemplate, useLanguage, useT } from "../../i18n";
 import type { ProviderInstance } from "../../types/ipc";
 /** 费用量纲的坐标/悬浮格式化器（模块级稳定引用，见下方 yFormat/tooltipFormat 注释） */
 const formatYuanCompact = (value: number) => `¥${formatCompact(value)}`;
@@ -217,7 +217,7 @@ export function DeepSeekStats({ instance }: { instance: ProviderInstance }) {
             <EmptyState
               icon={<CalendarRange className="h-5 w-5" />}
               title={t("时间范围无效")}
-              description={applyParams(t(customError), { days: policy.maxCustomDays })}
+              description={renderTemplate(customError, { days: policy.maxCustomDays, note: policy.limitNote }, t)}
             />
           </CardContent>
         </Card>

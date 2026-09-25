@@ -114,10 +114,12 @@ describe("fetchQoderUsage", () => {
     expect(url).toContain("order=-1");
   });
 
-  it("按 last_page 续拉，合并成一整份明细", async () => {
-    const rows = (historiesFixture() as { data: unknown[] }).data;
-    const pageOne = httpResult({ data: rows.slice(0, 4), page_result: { last_page: 2, total_size: 6 } });
-    const pageTwo = httpResult({ data: rows.slice(4), page_result: { last_page: 2, total_size: 6 } });
+  it("首页给满 page_size 时按 last_page 续拉，合并成一整份明细", async () => {
+    // 真实形状：page_size=1000 的首页必须满页才继续，短页即视为末页
+    const rows = (historiesFixture() as { data: Array<Record<string, unknown>> }).data;
+    const fullPage = Array.from({ length: 1000 }, (_, index) => ({ ...rows[0], time: index }));
+    const pageOne = httpResult({ data: fullPage, page_result: { last_page: 2, total_size: 1006 } });
+    const pageTwo = httpResult({ data: rows, page_result: { last_page: 2, total_size: 1006 } });
     mockInvoke
       .mockResolvedValueOnce({ cookie: true })
       .mockResolvedValueOnce(pageOne)
@@ -125,8 +127,8 @@ describe("fetchQoderUsage", () => {
     const result = await fetchQoderUsage(instance({ id: "u-pages" }), startMs, endMs);
     expect(result.status).toBe("ok");
     if (result.status !== "ok") return;
-    expect(result.data.rows).toHaveLength(6);
-    expect(result.data.total).toBe(6);
+    expect(result.data.rows).toHaveLength(1006);
+    expect(result.data.total).toBe(1006);
     expect(mockInvoke).toHaveBeenCalledTimes(3);
     expect(String((mockInvoke.mock.calls[2]?.[1] as Record<string, unknown>).url)).toContain("page=2");
   });
@@ -263,6 +265,41 @@ describe("响应上限与错误净化", () => {
       .mockResolvedValueOnce(httpResult({ unit: "credits", levels: [], items, total: 20 }));
     const result = await fetchQoderHeatmap(instance({ id: "s-items" }), 7);
     expect(result).toMatchObject({ status: "error", message: "消耗分布条目数与请求天数不符" });
+  });
+  it("响应没有 page_result 时按短页收口，不当成「只有 0 条」", async () => {
+    mockInvoke
+      .mockResolvedValueOnce({ cookie: true })
+      .mockResolvedValueOnce(httpResult({ data: [{ time: 1782196272012, credits: 1 }] }));
+    const result = await fetchQoderUsage(instance({ id: "s-nometa" }), startMs, endMs);
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") return;
+    expect(result.data.rows).toHaveLength(1);
+    expect(result.data.total).toBe(1);
+  });
+
+  it("每页都给满又拿不到分页元数据：撞页数上限时显式报错，不交半份数据", async () => {
+    const full = httpResult({ data: Array.from({ length: 1000 }, (_, i) => ({ time: i, credits: 1 })) });
+    mockInvoke.mockResolvedValueOnce({ cookie: true }).mockResolvedValue(full);
+    const result = await fetchQoderUsage(instance({ id: "s-endpage" }), startMs, endMs);
+    expect(result).toMatchObject({
+      status: "error",
+      message: "消耗明细未取全（已取 {count} 条，达到 {pages} 页上限），请缩小时间范围。",
+      params: { count: 10000, pages: 10 },
+    });
+  });
+
+  it("声明的 total_size 大于实得条数时报元数据自相矛盾", async () => {
+    mockInvoke
+      .mockResolvedValueOnce({ cookie: true })
+      .mockResolvedValueOnce(
+        httpResult({ data: [{ time: 1, credits: 1 }], page_result: { total_size: 535, last_page: 1 } }),
+      );
+    const result = await fetchQoderUsage(instance({ id: "s-lie" }), startMs, endMs);
+    expect(result).toMatchObject({
+      status: "error",
+      message: "消耗明细分页元数据自相矛盾（声明 {total} 条，实得 {count} 条）。",
+      params: { total: 535, count: 1 },
+    });
   });
 });
 
