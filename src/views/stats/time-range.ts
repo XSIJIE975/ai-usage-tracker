@@ -1,21 +1,49 @@
+import type { ProviderKind } from "../../types/ipc";
+
 export type TimeRange = "today" | "yesterday" | "7d" | "30d" | "month" | "lastMonth" | "custom";
 
-/** 自定义范围上限：DeepSeek / 智谱等用量接口均仅支持约 30 天动态窗口 */
-export const MAX_CUSTOM_RANGE_DAYS = 30;
+export interface StatsRangePolicy {
+  /** 自定义区间的最大跨度（含首尾两天），超出直接报错 */
+  maxCustomDays: number;
+  /** 打开抽屉时的默认档 */
+  defaultRange: TimeRange;
+}
+
+/** 没在表里的供应商走这份——现状：30 天上限 + 近 7 天默认 */
+const FALLBACK_POLICY: StatsRangePolicy = { maxCustomDays: 30, defaultRange: "7d" };
+
+/**
+ * 时间范围策略按供应商声明（数值要有出处，别当分支写进各抽屉）：
+ * - 30 天：DeepSeek / GLM 的用量接口实测只支持约 30 天动态窗口；WorkBuddy 与 OpenCode Go
+ *   沿用同一个保守值——**未单独实测过上限**，不代表官方限制就是 30 天。
+ * - qoder 366 天：`big_model_credits/histories` 实测 `page_size=1000` 一次回 535 条、
+ *   `start_time`/`end_time` 任意区间都受理，且官网用量页自己就给近一年热力图（ADR-0030）。
+ */
+const POLICIES: Partial<Record<ProviderKind, StatsRangePolicy>> = {
+  qoder: { maxCustomDays: 366, defaultRange: "30d" },
+};
+
+export const statsRangePolicy = (kind: ProviderKind): StatsRangePolicy =>
+  POLICIES[kind] ?? FALLBACK_POLICY;
 
 /**
  * 自定义范围校验：返回用户可读的错误文案，合法返回 null。
  * 输入未填完整时返回 null（由 resolveRangeMs 的非法判断兜底）。
  */
-export const customRangeError = (customFrom: string, customTo: string): string | null => {
+export const customRangeError = (
+  kind: ProviderKind,
+  customFrom: string,
+  customTo: string,
+): string | null => {
   const today = localMidnight(new Date());
   const startMs = parseLocalDateMs(customFrom);
   const toBase = parseLocalDateMs(customTo);
   if (startMs === null || toBase === null) return null;
   if (toBase < startMs) return "开始日期不能晚于结束日期";
   if (toBase > today) return "结束日期不能晚于今天";
-  if (toBase - startMs > (MAX_CUSTOM_RANGE_DAYS - 1) * DAY_MS) {
-    return `自定义范围最多 ${MAX_CUSTOM_RANGE_DAYS} 天（官方接口限制）`;
+  const { maxCustomDays } = statsRangePolicy(kind);
+  if (toBase - startMs > (maxCustomDays - 1) * DAY_MS) {
+    return `自定义范围最多 ${maxCustomDays} 天（官方接口限制）`;
   }
   return null;
 };
@@ -54,6 +82,7 @@ export const isoDate = (date: Date): string => {
  * （自定义范围含首尾两天）。自定义起止非法或倒挂时返回 null。
  */
 export const resolveRangeMs = (
+  kind: ProviderKind,
   range: TimeRange,
   customFrom: string,
   customTo: string,
@@ -86,9 +115,10 @@ export const resolveRangeMs = (
       const startMs = parseLocalDateMs(customFrom);
       const toBase = parseLocalDateMs(customTo);
       if (startMs === null || toBase === null || toBase < startMs) return null;
-      // 用量接口仅支持约 30 天动态窗口：结束不晚于今天，且跨度（含首尾）最多 30 天
+      // 上限按供应商声明（见 statsRangePolicy）：结束不晚于今天，且跨度（含首尾）不超过该值
+      const { maxCustomDays } = statsRangePolicy(kind);
       if (toBase > today) return null;
-      if (toBase - startMs > (MAX_CUSTOM_RANGE_DAYS - 1) * DAY_MS) return null;
+      if (toBase - startMs > (maxCustomDays - 1) * DAY_MS) return null;
       return { startMs, endMs: toBase + DAY_MS };
     }
   }

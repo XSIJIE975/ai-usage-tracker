@@ -18,7 +18,7 @@ import { useAutoRefresh } from "./use-auto-refresh";
 import { useGlobalRefresh } from "./use-global-refresh";
 import { OverviewCards } from "./deepseek/OverviewCards";
 import { ModelUsageTable } from "./deepseek/ModelUsageTable";
-import { customRangeError, isoDate, resolveRangeMs, timeRangeOptions, type TimeRange } from "./time-range";
+import { customRangeError, isoDate, resolveRangeMs, statsRangePolicy, timeRangeOptions, type TimeRange } from "./time-range";
 import { useLanguage, useT } from "../../i18n";
 import type { ProviderInstance } from "../../types/ipc";
 /** 费用量纲的坐标/悬浮格式化器（模块级稳定引用，见下方 yFormat/tooltipFormat 注释） */
@@ -52,15 +52,19 @@ function RefreshOverlay() {
 }
 
 export function DeepSeekStats({ instance }: { instance: ProviderInstance }) {
-  const [range, setRange] = useState<TimeRange>("7d");
+  const [range, setRange] = useState<TimeRange>(() => statsRangePolicy(instance.providerId).defaultRange);
   const [apiKeyId, setApiKeyId] = useState("all");
   const [metric, setMetric] = useState<UsageMetric>("tokens");
   const [customFrom, setCustomFrom] = useState(() => isoDate(new Date(Date.now() - 6 * DAY_MS)));
   const [customTo, setCustomTo] = useState(() => isoDate(new Date()));
   const [refreshTick, setRefreshTick] = useState(0);
 
-  const rangeMs = useMemo(() => resolveRangeMs(range, customFrom, customTo), [range, customFrom, customTo]);
-  const customError = range === "custom" ? customRangeError(customFrom, customTo) : null;
+  const rangeMs = useMemo(
+    () => resolveRangeMs(instance.providerId, range, customFrom, customTo),
+    [instance.providerId, range, customFrom, customTo],
+  );
+  const customError =
+    range === "custom" ? customRangeError(instance.providerId, customFrom, customTo) : null;
   const t = useT();
   const language = useLanguage();
   // cache key 前缀 instanceId：同种类两个实例的统计互不串数据

@@ -40,6 +40,7 @@ import {
   customRangeError,
   isoDate,
   resolveRangeMs,
+  statsRangePolicy,
   timeRangeOptions,
   type TimeRange,
 } from "./time-range";
@@ -73,7 +74,9 @@ function RefreshOverlay() {
 }
 
 export function GlmStats({ instance }: { instance: ProviderInstance }) {
-  const [range, setRange] = useState<TimeRange>("7d");
+  const [range, setRange] = useState<TimeRange>(() =>
+    statsRangePolicy(instance.providerId).defaultRange,
+  );
   const [metric, setMetric] = useState<UsageMetric>("tokens");
   const [customFrom, setCustomFrom] = useState(() =>
     isoDate(new Date(Date.now() - 6 * DAY_MS)),
@@ -82,11 +85,13 @@ export function GlmStats({ instance }: { instance: ProviderInstance }) {
   const [refreshTick, setRefreshTick] = useState(0);
 
   const rangeMs = useMemo(
-    () => resolveRangeMs(range, customFrom, customTo),
-    [range, customFrom, customTo],
+    () => resolveRangeMs(instance.providerId, range, customFrom, customTo),
+    [instance.providerId, range, customFrom, customTo],
   );
   const customError =
-    range === "custom" ? customRangeError(customFrom, customTo) : null;
+    range === "custom"
+      ? customRangeError(instance.providerId, customFrom, customTo)
+      : null;
   const t = useT();
   const language = useLanguage();
   // cache key 前缀 instanceId：同种类两个实例的统计互不串数据

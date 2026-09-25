@@ -15,7 +15,7 @@ import { StatsStateCard } from "../StatsStateCard";
 import { useStatsFetch } from "../use-stats-fetch";
 import { useAutoRefresh } from "../use-auto-refresh";
 import { useGlobalRefresh } from "../use-global-refresh";
-import { customRangeError, isoDate, resolveRangeMs, timeRangeOptions, type TimeRange } from "../time-range";
+import { customRangeError, isoDate, resolveRangeMs, statsRangePolicy, timeRangeOptions, type TimeRange } from "../time-range";
 import { formatDayLabel } from "../deepseek/usage-aggregation";
 import { useLanguage, useT } from "../../../i18n";
 import type { ProviderInstance } from "../../../types/ipc";
@@ -50,14 +50,18 @@ function RefreshOverlay() {
 }
 
 export function WorkbuddyStats({ instance }: { instance: ProviderInstance }) {
-  const [range, setRange] = useState<TimeRange>("7d");
+  const [range, setRange] = useState<TimeRange>(() => statsRangePolicy(instance.providerId).defaultRange);
   const [metric, setMetric] = useState<WorkbuddyMetric>("credits");
   const [customFrom, setCustomFrom] = useState(() => isoDate(new Date(Date.now() - 6 * DAY_MS)));
   const [customTo, setCustomTo] = useState(() => isoDate(new Date()));
   const [refreshTick, setRefreshTick] = useState(0);
 
-  const rangeMs = useMemo(() => resolveRangeMs(range, customFrom, customTo), [range, customFrom, customTo]);
-  const customError = range === "custom" ? customRangeError(customFrom, customTo) : null;
+  const rangeMs = useMemo(
+    () => resolveRangeMs(instance.providerId, range, customFrom, customTo),
+    [instance.providerId, range, customFrom, customTo],
+  );
+  const customError =
+    range === "custom" ? customRangeError(instance.providerId, customFrom, customTo) : null;
   const t = useT();
   const language = useLanguage();
   // cache key 前缀 instanceId：同种类两个实例的统计互不串数据
