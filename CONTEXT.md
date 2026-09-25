@@ -128,7 +128,7 @@ _Avoid_：用量（WorkBuddy 没有 token 口径的用量，只有积分消耗�
 
 ## Qoder
 
-第五个受支持的供应商（provider 标识 `qoder`），追踪阿里 Qoder 的大模型积分余量。数据来自账号控制台的只读私有接口 `GET /api/v2/me/usages/big_model_credits`（凭 CodexBar 先例接入，见 ADR-0030），凭据是网页会话 Cookie 的**值**——只取 `qoder_session_cookie` 这一个键，键名与 `Cookie:` 头由后端拼（ADR-0030 二次修订）。站点（国际站 qoder.com / 中国站 qoder.com.cn）是实例的显式属性，两套登录域 Cookie 不互通。仍然只读、只此一个端点：一个端点内部读四个配额容器出行（见「Qoder 积分」），但不做统计页（历史与明细端点存在但未侦察），卡片即全部展示面。官网确有「每日签到送 100 积分」活动，而领取入口只在 Qoder 桌面端浮窗——本工具不接（限时活动，判据要写死活动额度与有效期两个常量，理由见 ADR-0030 Considered Options）。
+第五个受支持的供应商（provider 标识 `qoder`），追踪阿里 Qoder 的大模型积分余量。数据来自账号控制台的只读私有接口 `GET /api/v2/me/usages/big_model_credits`（凭 CodexBar 先例接入，见 ADR-0030），凭据是网页会话 Cookie 的**值**——只取 `qoder_session_cookie` 这一个键，键名与 `Cookie:` 头由后端拼（ADR-0030 二次修订）。站点（国际站 qoder.com / 中国站 qoder.com.cn）是实例的显式属性，两套登录域 Cookie 不互通。仍然只读、无任何动作接口：卡片读汇总端点里的四个配额容器出行（见「Qoder 积分」）；统计抽屉另读逐条明细与近一年分布两个端点（契约与口径见 ADR-0030 §6），两站同契约、免费号也有完整历史，故两站都出「查看统计」。官网确有「每日签到送 100 积分」活动，而领取入口只在 Qoder 桌面端浮窗——本工具不接（限时活动，判据要写死活动额度与有效期两个常量，理由见 ADR-0030 Considered Options）。
 _Avoid_：把 qoder.com 与 qoder.com.cn 当同一账号（登录域不互通）；官方 API（个人账号没有，Teams/企业版才有，鉴权是 Organization API Key）；贴整段 Cookie 头（凭据槽只放 `qoder_session_cookie` 的值本体）；代领签到（做不到，也不该做）
 
 ## Qoder 积分
