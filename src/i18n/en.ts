@@ -244,6 +244,8 @@ export const en: Record<string, string> = {
   "{minutes} 分钟后重置": "{minutes}min to reset",
   "{hours} 小时": "{hours} h",
   "{minutes} 分钟": "{minutes} min",
+  "少": "Less",
+  "多": "More",
   "上一页": "Previous",
   "下一页": "Next",
   "第": "Page",
