@@ -206,13 +206,9 @@ export async function fetchQoderUsage(
   }
 }
 
-/** userId 是个人信息：只在内存里按实例缓存，不落盘、不进日志（重贴凭据后随进程重启失效） */
-const userIdCache = new Map<string, string>();
-
-/** 热力图要 userId 入参，而我们的凭据只有 Cookie 值 → 先打一次身份端点，只取 id */
+/** 身份端点：每次都重取，**不按实例缓存 userId**。缓存在换号（同实例重贴别的账号 Cookie）
+ *  之后会命中旧号，热力图就变成别人的数据；这个 GET 只有一个轻量响应，不值得换那类错 */
 export async function fetchQoderUserId(instance: ProviderInstance): Promise<StatsResult<string>> {
-  const cached = userIdCache.get(instance.id);
-  if (cached) return { status: "ok", data: cached };
   if (!(await hasCredential(instance))) {
     return { status: "needs_config", message: CREDENTIAL_MISSING_MESSAGE };
   }
@@ -226,7 +222,6 @@ export async function fetchQoderUserId(instance: ProviderInstance): Promise<Stat
   try {
     const id = str((JSON.parse(result.bodyText) as MeEnvelope).id);
     if (!id) return statsError<string>("身份接口未返回账号标识，无法取近一年消耗分布");
-    userIdCache.set(instance.id, id);
     return { status: "ok", data: id };
   } catch (error) {
     return statsError<string>("身份接口返回数据解析失败：{detail}", {

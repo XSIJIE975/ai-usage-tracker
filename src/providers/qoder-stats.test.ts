@@ -153,14 +153,17 @@ describe("fetchQoderUsage", () => {
 });
 
 describe("fetchQoderUserId", () => {
-  it("只取 id，并按实例缓存在内存里", async () => {
-    mockInvoke.mockResolvedValueOnce({ cookie: true }).mockResolvedValueOnce(httpResult(readJson("qoder-me.json")));
+  it("每次调用都重取身份（按实例缓存会在换号后命中旧号）", async () => {
+    mockInvoke
+      .mockResolvedValueOnce({ cookie: true })
+      .mockResolvedValueOnce(httpResult(readJson("qoder-me.json")))
+      .mockResolvedValueOnce({ cookie: true })
+      .mockResolvedValueOnce(httpResult(readJson("qoder-me.json")));
     const first = await fetchQoderUserId(instance({ id: "u-id" }));
     expect(first).toEqual({ status: "ok", data: "019ef31d-0000-0000-0000-000000000000" });
-    // 第二次命中缓存：不再发任何请求（身份端点每实例只打一次）
     const second = await fetchQoderUserId(instance({ id: "u-id" }));
     expect(second).toEqual(first);
-    expect(mockInvoke).toHaveBeenCalledTimes(2);
+    expect(mockInvoke).toHaveBeenCalledTimes(4); // 两轮各：凭据状态 + 身份请求
   });
 
   it("响应里的账号名与邮箱不进返回值", async () => {
