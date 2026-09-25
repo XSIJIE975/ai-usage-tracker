@@ -8,7 +8,7 @@ import { modelColor, getThemeColors } from "./palette";
 import { useEffectiveTheme } from "../../lib/theme";
 import { useChartLegend } from "../../hooks/use-chart-legend";
 import { ChartLegend } from "./ChartLegend";
-import { cn, formatPlain } from "../../lib/utils";
+import { cn, escapeHtml, formatPlain } from "../../lib/utils";
 
 echarts.use([PieChart, TooltipComponent, LegendComponent, CanvasRenderer]);
 
@@ -158,7 +158,7 @@ export function Donut({
           return (
             `<div style="display:flex;align-items:center;gap:8px;opacity:${opacity};font-weight:${fontWeight};font-size:13px;">` +
             `<span style="flex:none">${params.marker}</span>` +
-            `<span style="flex:1 1 auto;color:${nameColor}">${params.name}</span>` +
+            `<span style="flex:1 1 auto;color:${nameColor}">${escapeHtml(String(params.name))}</span>` +
             `<span style="flex:none;color:${valueColor};font-weight:${fontWeight}">${format(params.value)}（${params.percent.toFixed(1)}%）</span>` +
             `</div>`
           );

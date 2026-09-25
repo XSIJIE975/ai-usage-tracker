@@ -99,6 +99,19 @@ interface HeatmapEnvelope {
 const num = (raw: unknown): number => (typeof raw === "number" && Number.isFinite(raw) ? raw : 0);
 const str = (raw: unknown): string => (typeof raw === "string" ? raw : "");
 
+/**
+ * 错误文案净化：reqwest 的 Display 带完整请求地址（我们的 query 里有 `userId`，那是账号标识），
+ * V8 的 JSON.parse 消息会带上响应体开头若干字符。两者都不能原样进界面
+ * （ADR-0030 §6「不回显响应体」）。
+ */
+export function sanitizeErrorDetail(text: string): string {
+  return text
+    .replace(/\s*https?:\/\/\S+/g, "")
+    .replace(/[\r\n]+/g, " ")
+    .trim()
+    .slice(0, 160);
+}
+
 /** 响应体分类：401/403 与「200 + 登录页 HTML」同义，出路都是重贴 Cookie */
 function classify(result: HttpResult): { kind: "ok" } | { kind: "expired" } | { kind: "http"; status: number } {
   if (result.status === 401 || result.status === 403) return { kind: "expired" };
@@ -113,7 +126,11 @@ export function parseHistories(
 ): { kind: "ok"; value: { rows: QoderUsageRow[]; total: number; lastPage: number } } | { kind: "parse"; detail: string } {
   try {
     const json = JSON.parse(bodyText) as HistoriesEnvelope;
-    const rows = (json.data ?? []).map((row) => ({
+    const rawRows = Array.isArray(json.data) ? json.data : [];
+    // 服务端回的行数不该超过我们请求的 page_size；超了就是契约变了，
+    // 按页大小截断并报错，而不是把任意大的响应留在内存里
+    if (rawRows.length > PAGE_SIZE) return { kind: "parse", detail: "单页条数超过请求上限" };
+    const rows = rawRows.map((row) => ({
       time: num(row.time),
       beginAt: num(row.begin_at),
       finishAt: num(row.finish_at),
@@ -130,8 +147,9 @@ export function parseHistories(
       kind: "ok",
       value: { rows, total: num(json.page_result?.total_size), lastPage: num(json.page_result?.last_page) },
     };
-  } catch (error) {
-    return { kind: "parse", detail: error instanceof Error ? error.message : String(error) };
+  } catch {
+    // 不带 error.message：V8 的解析错误会附上响应体开头若干字符
+    return { kind: "parse", detail: "响应不是合法 JSON" };
   }
 }
 
@@ -201,7 +219,7 @@ export async function fetchQoderUsage(
     return { status: "ok", data: { rows, total: total || rows.length } };
   } catch (error) {
     return statsError<QoderUsageBundle>("消耗明细查询失败：{detail}", {
-      detail: error instanceof Error ? error.message : String(error),
+      detail: sanitizeErrorDetail(error instanceof Error ? error.message : String(error)),
     });
   }
 }
@@ -223,10 +241,9 @@ export async function fetchQoderUserId(instance: ProviderInstance): Promise<Stat
     const id = str((JSON.parse(result.bodyText) as MeEnvelope).id);
     if (!id) return statsError<string>("身份接口未返回账号标识，无法取近一年消耗分布");
     return { status: "ok", data: id };
-  } catch (error) {
-    return statsError<string>("身份接口返回数据解析失败：{detail}", {
-      detail: error instanceof Error ? error.message : String(error),
-    });
+  } catch {
+    // 不带 error.message（会附响应体开头），也不带 URL
+    return statsError<string>("身份接口返回数据解析失败");
   }
 }
 
@@ -248,29 +265,31 @@ export async function fetchQoderHeatmap(
     }
     try {
       const json = JSON.parse(result.bodyText) as HeatmapEnvelope;
-      const items = Array.isArray(json.items)
-        ? json.items.map((item: Record<string, unknown>) => ({
-            date: str(item?.date),
-            value: num(item?.value),
-          }))
-        : [];
+      const rawItems = Array.isArray(json.items) ? json.items : [];
+      // 请求的是 days 天，多出来的条目（含被灌大的响应）不进内存也不进 DOM：
+      // 热力图每格一个节点，近一年上限 366 + 一周对齐余量
+      if (rawItems.length > days + 7) {
+        return statsError<QoderHeatmap>("消耗分布条目数与请求天数不符");
+      }
+      const items = rawItems.map((item: Record<string, unknown>) => ({
+        date: str(item?.date),
+        value: num(item?.value),
+      }));
       return {
         status: "ok",
         data: {
           unit: str(json.unit) || "credits",
-          levels: Array.isArray(json.levels) ? json.levels.map(num) : [],
+          levels: Array.isArray(json.levels) ? json.levels.slice(0, 8).map(num) : [],
           items,
           total: num(json.total),
         },
       };
-    } catch (error) {
-      return statsError<QoderHeatmap>("消耗分布返回数据解析失败：{detail}", {
-        detail: error instanceof Error ? error.message : String(error),
-      });
+    } catch {
+      return statsError<QoderHeatmap>("消耗分布返回数据解析失败");
     }
   } catch (error) {
     return statsError<QoderHeatmap>("消耗分布查询失败：{detail}", {
-      detail: error instanceof Error ? error.message : String(error),
+      detail: sanitizeErrorDetail(error instanceof Error ? error.message : String(error)),
     });
   }
 }

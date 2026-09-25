@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  escapeHtml,
   formatHoursLabel,
   formatRefreshLabel,
   formatReset,
@@ -27,6 +28,16 @@ describe("normalizeOpenCodeAuthCookie", () => {
 
   it("extracts the auth cookie from a full cookie list", () => {
     expect(normalizeOpenCodeAuthCookie("foo=1; auth=abc; bar=2")).toBe("abc");
+  });
+});
+
+describe("escapeHtml", () => {
+  it("转义 ECharts tooltip（innerHTML 落点）会解释的字符", () => {
+    expect(escapeHtml('<img src=x onerror=alert(1)>')).toBe(
+      "&lt;img src=x onerror=alert(1)&gt;",
+    );
+    expect(escapeHtml('a & b "c" \'d\'')).toBe("a &amp; b &quot;c&quot; &#39;d&#39;");
+    expect(escapeHtml("GLM-5.2")).toBe("GLM-5.2");
   });
 });
 

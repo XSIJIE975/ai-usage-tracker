@@ -213,6 +213,59 @@ describe("fetchQoderHeatmap", () => {
   });
 });
 
+describe("响应上限与错误净化", () => {
+  const startMs = localDay(2026, 6, 23);
+  const endMs = startMs + 86_400_000;
+
+  it("单页行数超过请求上限时报错，不把任意大的响应灌进内存", () => {
+    const huge = httpResult({
+      data: Array.from({ length: 1001 }, () => ({ credits: 1 })),
+      page_result: { total_size: 1001, last_page: 1 },
+    });
+    mockInvoke.mockResolvedValueOnce({ cookie: true }).mockResolvedValueOnce(huge);
+    return expect(
+      fetchQoderUsage(instance({ id: "s-oversize" }), startMs, endMs),
+    ).resolves.toMatchObject({
+      status: "error",
+      params: { detail: "单页条数超过请求上限" },
+    });
+  });
+
+  it("解析失败不回显响应体片段", async () => {
+    mockInvoke
+      .mockResolvedValueOnce({ cookie: true })
+      .mockResolvedValueOnce(httpResult('{"id": "secret-account-name"'));
+    const result = await fetchQoderUsage(instance({ id: "s-parse" }), startMs, endMs);
+    expect(JSON.stringify(result)).not.toContain("secret-account-name");
+    expect(result).toMatchObject({ params: { detail: "响应不是合法 JSON" } });
+  });
+
+  it("网络错误不带请求 URL（query 里有 userId）", async () => {
+    mockInvoke
+      .mockResolvedValueOnce({ cookie: true })
+      .mockRejectedValueOnce(
+        new Error(
+          "error sending request for url (https://qoder.com.cn/api/v1/me/usages/big_model_credits/histories?page=1&userId=019ef31d-4bc7)",
+        ),
+      );
+    const result = await fetchQoderUsage(instance({ id: "s-network" }), startMs, endMs);
+    const detail = String((result as { params?: Record<string, unknown> }).params?.detail);
+    expect(detail).not.toContain("https://");
+    expect(detail).not.toContain("userId=");
+    expect(detail).not.toContain("019ef31d");
+  });
+
+  it("热力图条目数与请求天数不符时报错", async () => {
+    const items = Array.from({ length: 20 }, (_, index) => ({ date: `2026-09-${String(index + 1).padStart(2, "0")}`, value: 1 }));
+    mockInvoke
+      .mockResolvedValueOnce({ cookie: true })
+      .mockResolvedValueOnce(httpResult(readJson("qoder-me.json")))
+      .mockResolvedValueOnce(httpResult({ unit: "credits", levels: [], items, total: 20 }));
+    const result = await fetchQoderHeatmap(instance({ id: "s-items" }), 7);
+    expect(result).toMatchObject({ status: "error", message: "消耗分布条目数与请求天数不符" });
+  });
+});
+
 describe("aggregateQoderUsage", () => {
   const rows = (historiesFixture() as { data: Array<Record<string, unknown>> }).data.map((row) => ({
     time: Number(row.time),

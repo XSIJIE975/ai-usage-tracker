@@ -34,6 +34,18 @@ export function formatHoursLabel(hours: number | string, translate?: (s: string)
   return applyParams(t("{hours} 小时"), { hours });
 }
 
+/** HTML 转义。ECharts 的 tooltip 在默认 html 渲染下走 `innerHTML`（不转义），
+ *  而系列名/分类名可能直接来自供应商接口响应（如 Qoder 的 operation、model_category），
+ *  拼 HTML 串之前必须过这一层。`p.marker` 是 ECharts 自己生成的小圆点 HTML，保持原样。 */
+export function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 export function formatRefreshLabel(minutes: number, translate?: (s: string) => string) {
   const t = translate ?? ((s: string) => s);
   if (minutes < 1) return t("已禁用");
