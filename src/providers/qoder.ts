@@ -56,21 +56,46 @@ export function isValidSessionCookieValue(value: string): boolean {
   return COOKIE_VALUE_CHARS.test(value);
 }
 
+/** 站点档案：端点与 Origin/Referer 都按站取（ADR-0031）。
+ *  统计页用的三个端点与汇总端点同域同鉴权，一并记在这里（契约见 ADR-0030 的侦察记录） */
 interface SiteConfig {
   origin: string;
   usageUrl: string;
+  /** 身份端点：只为拿 `id`（热力图要 userId 入参），响应里的 name/email/avatar 一律不取 */
+  meUrl: string;
+  /** 逐条消耗明细（统计页数据源） */
+  historiesUrl: string;
+  /** 近一年每日 Credits 消耗分布（官方给好分档阈值） */
+  heatmapUrl: string;
 }
 
 const SITES: Record<ProviderSite, SiteConfig> = {
   china: {
     origin: "https://qoder.com.cn",
     usageUrl: "https://qoder.com.cn/api/v2/me/usages/big_model_credits",
+    meUrl: "https://qoder.com.cn/api/v1/me",
+    historiesUrl: "https://qoder.com.cn/api/v1/me/usages/big_model_credits/histories",
+    heatmapUrl: "https://qoder.com.cn/api/v1/me/ai-conversations/credits-heatmap",
   },
   international: {
     origin: "https://qoder.com",
     usageUrl: "https://qoder.com/api/v2/me/usages/big_model_credits",
+    meUrl: "https://qoder.com/api/v1/me",
+    historiesUrl: "https://qoder.com/api/v1/me/usages/big_model_credits/histories",
+    heatmapUrl: "https://qoder.com/api/v1/me/ai-conversations/credits-heatmap",
   },
 };
+
+/** 站点档案（统计页取端点用；凭据通道与请求头与卡片完全相同） */
+export function qoderSiteConfig(site: ProviderSite): SiteConfig {
+  return SITES[site];
+}
+
+/** 凭据缺失与失效的两句话在卡片与统计页共用，避免两处口径漂移 */
+export const CREDENTIAL_MISSING_MESSAGE =
+  "请在设置中粘贴 Qoder 会话 Cookie（qoder_session_cookie）的值";
+export const CREDENTIAL_EXPIRED_MESSAGE =
+  "Qoder 登录凭据无效或已过期，请在设置中重新粘贴 qoder_session_cookie 的值";
 
 /** 实例的取数站点：site 缺失/未知值回退中国站（中文环境默认） */
 export function qoderSiteOf(instance: Pick<ProviderInstance, "site">): ProviderSite {
@@ -415,7 +440,7 @@ export function processUsageResult(result: HttpResult): UsageOutcome {
     return {
       ok: false,
       lines: [],
-      error: "Qoder 登录凭据无效或已过期，请在设置中重新粘贴 qoder_session_cookie 的值",
+      error: CREDENTIAL_EXPIRED_MESSAGE,
     };
   }
   if (result.status !== 200) {
@@ -460,7 +485,7 @@ async function fetchQoderSnapshot(instance: ProviderInstance): Promise<ProviderS
       providerName: PROVIDER_NAME,
       status: "needs_config",
       updatedAt,
-      message: "请在设置中粘贴 Qoder 会话 Cookie（qoder_session_cookie）的值",
+      message: CREDENTIAL_MISSING_MESSAGE,
       lines: [],
     };
   }
