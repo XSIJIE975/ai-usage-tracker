@@ -1,3 +1,4 @@
+import { dayOffsetMs, daySpan } from "../../lib/utils";
 import type { ProviderKind } from "../../types/ipc";
 
 export type TimeRange = "today" | "yesterday" | "7d" | "30d" | "month" | "lastMonth" | "custom";
@@ -52,13 +53,16 @@ export const customRangeError = (
   if (toBase < startMs) return "开始日期不能晚于结束日期";
   if (toBase > today) return "结束日期不能晚于今天";
   const { maxCustomDays } = statsRangePolicy(kind);
-  if (toBase - startMs > (maxCustomDays - 1) * DAY_MS) {
+  if (daySpan(startMs, toBase) + 1 > maxCustomDays) {
     // 天数与成因都留给渲染端填（renderTemplate 会先 t() 字符串参数）：
     // 整串烘焙进中文会让英文字典每档、每种成因各存一个键
     return "自定义范围最多 {days} 天（{note}）";
   }
   return null;
 };
+
+/** n 天前的 "YYYY-MM-DD"：抽屉里自定义范围的初始值（同样按日历日推，不减毫秒） */
+export const isoDateDaysAgo = (n: number): string => isoDate(new Date(dayOffsetMs(Date.now(), -n)));
 
 export const timeRangeOptions: { value: TimeRange; label: string }[] = [
   { value: "today", label: "今天" },
@@ -69,8 +73,6 @@ export const timeRangeOptions: { value: TimeRange; label: string }[] = [
   { value: "lastMonth", label: "上月" },
   { value: "custom", label: "自定义范围" },
 ];
-
-const DAY_MS = 86_400_000;
 
 /** 本地时区当日零点毫秒 */
 const localMidnight = (date: Date): number =>
@@ -102,18 +104,18 @@ export const resolveRangeMs = (
   const today = localMidnight(new Date());
   switch (range) {
     case "today":
-      return { startMs: today, endMs: today + DAY_MS };
+      return { startMs: today, endMs: dayOffsetMs(today, 1) };
     case "yesterday":
-      return { startMs: today - DAY_MS, endMs: today };
+      return { startMs: dayOffsetMs(today, -1), endMs: today };
     case "7d":
-      return { startMs: today - 6 * DAY_MS, endMs: today + DAY_MS };
+      return { startMs: dayOffsetMs(today, -6), endMs: dayOffsetMs(today, 1) };
     case "30d":
-      return { startMs: today - 29 * DAY_MS, endMs: today + DAY_MS };
+      return { startMs: dayOffsetMs(today, -29), endMs: dayOffsetMs(today, 1) };
     case "month": {
       const now = new Date();
       return {
         startMs: new Date(now.getFullYear(), now.getMonth(), 1).getTime(),
-        endMs: today + DAY_MS,
+        endMs: dayOffsetMs(today, 1),
       };
     }
     case "lastMonth": {
@@ -130,8 +132,8 @@ export const resolveRangeMs = (
       // 上限按供应商声明（见 statsRangePolicy）：结束不晚于今天，且跨度（含首尾）不超过该值
       const { maxCustomDays } = statsRangePolicy(kind);
       if (toBase > today) return null;
-      if (toBase - startMs > (maxCustomDays - 1) * DAY_MS) return null;
-      return { startMs, endMs: toBase + DAY_MS };
+      if (daySpan(startMs, toBase) + 1 > maxCustomDays) return null;
+      return { startMs, endMs: dayOffsetMs(toBase, 1) };
     }
   }
 };

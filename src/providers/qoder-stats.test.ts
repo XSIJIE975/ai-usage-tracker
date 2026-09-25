@@ -377,4 +377,19 @@ describe("aggregateQoderUsage", () => {
       "2026-09-30",
     ]);
   });
+
+  it("跨月与整年都逐日连续、不重不漏", () => {
+    const crossing = qoderDayLabels(localDay(2026, 2, 27), localDay(2026, 3, 2) + 86_400_000);
+    expect(crossing).toEqual(["2026-02-27", "2026-02-28", "2026-03-01", "2026-03-02"]);
+    const year = qoderDayLabels(localDay(2025, 10, 1), localDay(2026, 10, 1));
+    expect(year).toHaveLength(365);
+    expect(new Set(year).size).toBe(365);
+    expect(year[0]).toBe("2025-10-01");
+    expect(year[year.length - 1]).toBe("2026-09-30");
+  });
+
+  it("区间被灌大时按防御上限收口，不无界生成标签", () => {
+    const huge = qoderDayLabels(localDay(2000, 1, 1), localDay(2030, 1, 1));
+    expect(huge).toHaveLength(800);
+  });
 });

@@ -39,6 +39,7 @@ import { GlmToolUsageTable } from "./glm/ToolUsageTable";
 import {
   customRangeError,
   isoDate,
+  isoDateDaysAgo,
   resolveRangeMs,
   statsRangePolicy,
   timeRangeOptions,
@@ -55,7 +56,6 @@ import {
 } from "./glm/usage-aggregation";
 
 const usageCache = createUsageCache();
-const DAY_MS = 86_400_000;
 
 type UsageMetric = "tokens" | "requests";
 
@@ -78,7 +78,7 @@ export function GlmStats({ instance }: { instance: ProviderInstance }) {
   const [range, setRange] = useState<TimeRange>(policy.defaultRange);
   const [metric, setMetric] = useState<UsageMetric>("tokens");
   const [customFrom, setCustomFrom] = useState(() =>
-    isoDate(new Date(Date.now() - 6 * DAY_MS)),
+    isoDateDaysAgo(6),
   );
   const [customTo, setCustomTo] = useState(() => isoDate(new Date()));
   const [refreshTick, setRefreshTick] = useState(0);

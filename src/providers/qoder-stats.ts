@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { dayOffsetMs } from "../lib/utils";
 import type { HttpResult, InstanceCredentialStatus, ProviderInstance } from "../types/ipc";
 import type { StatsResult } from "./stats-result";
 import {
@@ -29,8 +30,8 @@ import {
 const PAGE_SIZE = 1000;
 /** 分页防御上限：10 页 ×1000 条，越界按已得数据收口（与 workbuddy-stats 同策略） */
 const MAX_PAGES = 10;
-const DAY_MS = 86_400_000;
-
+/** 日标签的防御上限：档位上限是 366 天，这里留一倍余量，纯函数被灌大也不无界生成 */
+const MAX_DAY_LABELS = 800;
 /** 逐条消耗明细的一行。刻意不取的字段：`name`（两站 562 条样本恒为空串）、
  *  `discount_visible`（恒 true）、`original_cost`（折前金额没有展示位） */
 export interface QoderUsageRow {
@@ -371,13 +372,14 @@ export const qoderDayKey = (ms: number): string => {
   return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
 };
 
-/** 区间内的连续日标签（含首尾）；endMs 是结束日次日零点，故减一毫秒再取日 */
+/** 区间内的连续自然日标签（含首尾）；endMs 是结束日次日零点，故 cursor < endMs 即覆盖到末日。
+ *  逐日按日历推进（`dayOffsetMs`），不用 ±86400000 —— 后者跨夏令时会漂出一天 */
 export function qoderDayLabels(startMs: number, endMs: number): string[] {
-  const first = new Date(startMs);
   const labels: string[] = [];
-  const lastMs = endMs - 1;
-  for (let cursor = first.getTime(); cursor <= lastMs; cursor += DAY_MS) {
+  for (let cursor = startMs; cursor < endMs; cursor = dayOffsetMs(cursor, 1)) {
     labels.push(qoderDayKey(cursor));
+    // 防御：本函数是纯函数，调用方的区间若被灌大，这里不无界生成 DOM 级的标签数
+    if (labels.length >= MAX_DAY_LABELS) break;
   }
   return labels;
 }

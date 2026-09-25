@@ -16,7 +16,7 @@ import { StatsStateCard } from "../StatsStateCard";
 import { useStatsFetch } from "../use-stats-fetch";
 import { useAutoRefresh } from "../use-auto-refresh";
 import { useGlobalRefresh } from "../use-global-refresh";
-import { customRangeError, isoDate, resolveRangeMs, statsRangePolicy, timeRangeOptions, type TimeRange } from "../time-range";
+import { customRangeError, isoDate, isoDateDaysAgo, resolveRangeMs, statsRangePolicy, timeRangeOptions, type TimeRange } from "../time-range";
 import { formatDayLabel } from "../deepseek/usage-aggregation";
 import { renderTemplate, useLanguage, useT } from "../../../i18n";
 import type { ProviderInstance } from "../../../types/ipc";
@@ -30,7 +30,6 @@ type QoderMetric = "credits" | "requests";
 const usageCache = createUsageCache();
 /** 热力图与明细是两份独立数据（前者固定近一年，后者随档位走），分开缓存 */
 const heatmapCache = createUsageCache();
-const DAY_MS = 86_400_000;
 
 const metricOptions: { value: QoderMetric; label: string }[] = [
   { value: "credits", label: "积分消耗" },
@@ -56,7 +55,7 @@ export function QoderStats({ instance }: { instance: ProviderInstance }) {
   const policy = statsRangePolicy(instance.providerId);
   const [range, setRange] = useState<TimeRange>(policy.defaultRange);
   const [metric, setMetric] = useState<QoderMetric>("credits");
-  const [customFrom, setCustomFrom] = useState(() => isoDate(new Date(Date.now() - 29 * DAY_MS)));
+  const [customFrom, setCustomFrom] = useState(() => isoDateDaysAgo(29));
   const [customTo, setCustomTo] = useState(() => isoDate(new Date()));
   const [refreshTick, setRefreshTick] = useState(0);
 

@@ -54,6 +54,21 @@ export function formatRefreshLabel(minutes: number, translate?: (s: string) => s
   return formatHoursLabel(hours % 1 === 0 ? hours : hours.toFixed(1), translate);
 }
 
+/**
+ * 本地日历日偏移：入参可为任意时刻或毫秒，返回「它所在的那一天 + n 天」的本地零点毫秒。
+ * 刻意用 `Date(y, m, d + n)` 而不是 `± n × 86400000` —— 定毫秒步长在跨夏令时的时区里
+ * 每次漂一小时，攒够一天就会重复或漏掉某个日期标签（本机 CST 无夏令时，测不出来）。
+ */
+export function dayOffsetMs(base: Date | number, n: number): number {
+  const date = typeof base === "number" ? new Date(base) : new Date(base.getTime());
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + n).getTime();
+}
+
+/** 两个本地零点之间的整天数（四舍五入掉夏令时的 ±1 小时） */
+export function daySpan(fromMs: number, toMs: number): number {
+  return Math.round((toMs - fromMs) / 86_400_000);
+}
+
 export function formatClock(ts: number | string | null | undefined) {
   if (!ts) return "暂无数据";
   const date = typeof ts === "string" ? new Date(ts) : new Date(ts);

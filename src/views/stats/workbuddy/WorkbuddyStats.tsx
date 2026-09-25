@@ -15,7 +15,7 @@ import { StatsStateCard } from "../StatsStateCard";
 import { useStatsFetch } from "../use-stats-fetch";
 import { useAutoRefresh } from "../use-auto-refresh";
 import { useGlobalRefresh } from "../use-global-refresh";
-import { customRangeError, isoDate, resolveRangeMs, statsRangePolicy, timeRangeOptions, type TimeRange } from "../time-range";
+import { customRangeError, isoDate, isoDateDaysAgo, resolveRangeMs, statsRangePolicy, timeRangeOptions, type TimeRange } from "../time-range";
 import { formatDayLabel } from "../deepseek/usage-aggregation";
 import { renderTemplate, useLanguage, useT } from "../../../i18n";
 import type { ProviderInstance } from "../../../types/ipc";
@@ -27,7 +27,6 @@ import { WorkbuddyUsageTable } from "./WorkbuddyUsageTable";
 type WorkbuddyMetric = "credits" | "requests";
 
 const usageCache = createUsageCache();
-const DAY_MS = 86_400_000;
 
 const metricOptions: { value: WorkbuddyMetric; label: string }[] = [
   { value: "credits", label: "积分消耗" },
@@ -53,7 +52,7 @@ export function WorkbuddyStats({ instance }: { instance: ProviderInstance }) {
   const policy = statsRangePolicy(instance.providerId);
   const [range, setRange] = useState<TimeRange>(policy.defaultRange);
   const [metric, setMetric] = useState<WorkbuddyMetric>("credits");
-  const [customFrom, setCustomFrom] = useState(() => isoDate(new Date(Date.now() - 6 * DAY_MS)));
+  const [customFrom, setCustomFrom] = useState(() => isoDateDaysAgo(6));
   const [customTo, setCustomTo] = useState(() => isoDate(new Date()));
   const [refreshTick, setRefreshTick] = useState(0);
 

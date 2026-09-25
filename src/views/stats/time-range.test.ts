@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { daySpan } from "../../lib/utils";
 import { customRangeError, isoDate, resolveRangeMs, statsRangePolicy } from "./time-range";
 
 /** 距今 n 天的 "YYYY-MM-DD" */
@@ -30,6 +31,34 @@ describe("statsRangePolicy", () => {
       defaultRange: "30d",
       limitNote: "本工具的上限",
     });
+  });
+});
+
+describe("区间按日历日推进（不再 ±86400000 定步长）", () => {
+  it("每一档的起止都是本地零点，且跨度是整数个日历天", () => {
+    for (const [range, days] of [["today", 1], ["yesterday", 1], ["7d", 7], ["30d", 30]] as const) {
+      const span = resolveRangeMs("glm", range, "", "");
+      expect(span, range).not.toBeNull();
+      if (!span) continue;
+      const { startMs, endMs } = span;
+      const midnight = (ms: number) => {
+        const date = new Date(ms);
+        return date.getHours() === 0 && date.getMinutes() === 0 && date.getSeconds() === 0;
+      };
+      expect(midnight(startMs), `${range} start`).toBe(true);
+      expect(midnight(endMs), `${range} end`).toBe(true);
+      expect(daySpan(startMs, endMs), range).toBe(days);
+    }
+  });
+
+  it("自定义上限按日历天计数：往前 29 天是 30 天（收），往前 30 天是 31 天（拒）", () => {
+    const to = isoDate(new Date());
+    const from30 = new Date();
+    from30.setDate(from30.getDate() - 29);
+    const from31 = new Date();
+    from31.setDate(from31.getDate() - 30);
+    expect(customRangeError("glm", isoDate(from30), to)).toBeNull();
+    expect(customRangeError("glm", isoDate(from31), to)).toBe(LIMIT_MESSAGE);
   });
 });
 

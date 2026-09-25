@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  dayOffsetMs,
+  daySpan,
   escapeHtml,
   formatHoursLabel,
   formatRefreshLabel,
@@ -38,6 +40,23 @@ describe("escapeHtml", () => {
     );
     expect(escapeHtml('a & b "c" \'d\'')).toBe("a &amp; b &quot;c&quot; &#39;d&#39;");
     expect(escapeHtml("GLM-5.2")).toBe("GLM-5.2");
+  });
+});
+
+describe("dayOffsetMs / daySpan", () => {
+  const midnight = (y: number, m: number, d: number) => new Date(y, m - 1, d).getTime();
+
+  it("按日历日推进，跨月跨年都落在目标日的本地零点", () => {
+    expect(dayOffsetMs(midnight(2026, 12, 31), 1)).toBe(midnight(2027, 1, 1));
+    expect(dayOffsetMs(midnight(2026, 3, 1), -1)).toBe(midnight(2026, 2, 28));
+    expect(dayOffsetMs(midnight(2024, 2, 28), 1)).toBe(midnight(2024, 2, 29));
+    // 入参带时分秒时先归到当日零点，不会把时间部分带进结果
+    expect(dayOffsetMs(new Date(2026, 5, 23, 14, 14, 3), 0)).toBe(midnight(2026, 6, 23));
+  });
+
+  it("daySpan 把夏令时的 ±1 小时抹平成整天数", () => {
+    expect(daySpan(midnight(2026, 6, 23), midnight(2026, 7, 23))).toBe(30);
+    expect(daySpan(midnight(2026, 6, 23), midnight(2026, 6, 23) + 23 * 3_600_000)).toBe(1);
   });
 });
 
