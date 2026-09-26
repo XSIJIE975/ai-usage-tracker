@@ -283,7 +283,8 @@ describe("parseUsageLines", () => {
     const view = parseUsageView(readFixture("qoder-usage-china.json"), CHINA_NOW)!;
     const lines = parseUsageLines(view);
     expect(lines[1].resetsAt).toBeUndefined();
-    expect(primaryProgressLine(lines)?.label).toBe("订阅积分");
+    // 按采样时刻比距离：样本里的重置是 2026-09-26 08:28 CST，跑过那一刻再比就是过去值
+    expect(primaryProgressLine(lines, CHINA_NOW)?.label).toBe("订阅积分");
   });
 
   it("订阅恒零被过滤掉时，主窗退到资源包行（有分配的窗里挑周期最长的）", () => {
@@ -299,7 +300,7 @@ describe("parseUsageLines", () => {
     )!;
     const lines = parseUsageLines(view);
     expect(lines[0].label).toBe("资源包积分");
-    expect(primaryProgressLine(lines)?.label).toBe("资源包积分");
+    expect(primaryProgressLine(lines, NOW)?.label).toBe("资源包积分");
   });
 
   it("marks only the first progress line as the balance carrier", () => {

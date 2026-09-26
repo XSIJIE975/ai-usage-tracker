@@ -468,6 +468,10 @@ describe("Qoder 多窗口积分规则（ADR-0030 拆分）", () => {
     updatedAt: 0,
     lines,
   });
+  // 订阅行的重置时刻取一个远未来点，别照抄样本里的 2026-09-26T00:28Z：primaryProgressLine
+  // 用墙上时钟给「不带 resetsAt 的行」外推，照抄的时刻跑过当天就成了过去值，资源包行会
+  // 反超成主窗，这两条在同一天下午就翻了（evaluateRules 走默认时钟，故只能靠时刻本身稳）
+  const PLAN_RESETS_AT = "2030-01-01T00:00:00.000Z";
   const planLine = (percent: number) => ({
     type: "progress" as const,
     label: "订阅积分",
@@ -476,7 +480,7 @@ describe("Qoder 多窗口积分规则（ADR-0030 拆分）", () => {
     percentUsed: percent,
     value: "666",
     balance: true,
-    resetsAt: "2026-09-26T00:28:27.566Z",
+    resetsAt: PLAN_RESETS_AT,
   });
   const packLine = (percent: number) => ({
     type: "progress" as const,

@@ -16,13 +16,16 @@ export function parseMetricValue(raw: string): number | null {
  * nextResetTime）不能用「空串=最近」参与比较——那会让周窗落选、阈值告警退化为盯
  * 5h 短窗的日常冲高——改用结构化周期 windowPeriodMs（ADR-0017）外推：周期越长
  * 离下一次重置越远。
+ *
+ * `now` 是那个外推的锚点，两种距离必须在同一时刻上才可比，故由入参给出而非写死：
+ * 真机样本里的重置时刻过了当天就变成过去值，用例绑在墙上时钟上会在某个时刻静默翻转
+ * （2026-09-26 CI 实测：订阅行让位给资源包行，阈值告警盯错了窗）。生产调用点用默认值。
  */
-export function primaryProgressLine(lines: MetricLine[]): MetricLine | null {
+export function primaryProgressLine(lines: MetricLine[], now: number = Date.now()): MetricLine | null {
   const progressLines = lines.filter(
     (line) => line.type === "progress" && typeof line.percentUsed === "number",
   );
   if (progressLines.length === 0) return null;
-  const now = Date.now();
   const resetDistance = (line: MetricLine): number => {
     if (line.resetsAt) {
       const parsed = Date.parse(line.resetsAt);
