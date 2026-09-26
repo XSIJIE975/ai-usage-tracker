@@ -56,7 +56,7 @@
     "category": "DeveloperTool",
     "publisher": "XSIJIE",
     "shortDescription": "Cross-platform AI usage and quota tracker",
-    "longDescription": "Track AI subscription quotas and API usage for OpenCode Go, DeepSeek and Zhipu GLM from the system tray — balance, quota windows, usage charts and threshold alerts. All data stays on your device.",
+    "longDescription": "Track AI subscription quotas and API usage for OpenCode Go, DeepSeek, Zhipu GLM, Tencent WorkBuddy / CodeBuddy and Qoder from the system tray — balance, quota windows, usage charts and threshold alerts. All data stays on your device.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
