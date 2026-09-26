@@ -1,84 +1,110 @@
-# AI Usage Tracker / AI 用量助手
+# AI 用量助手 / AI Usage Tracker
 
-一款跨平台桌面工具，帮你在系统托盘随时掌握 AI 订阅额度与 API 用量。内置 OpenCode Go、DeepSeek、智谱 GLM 三个 Provider。
+常驻系统托盘的跨平台桌面工具，用来看 AI 订阅额度与 API 用量：余量进度、重置倒计时、消耗趋势与逐条明细，以及额度见底时的系统通知。内置五家供应商，其中腾讯 WorkBuddy / CodeBuddy 与 Qoder 各分中国站与国际站。凭据与用量数据全部留在本机，不上传任何服务。
 
 ## 功能
 
-- 系统托盘快速面板：点击托盘图标即可查看 OpenCode Go 的 5 小时/周/月额度、DeepSeek 余额和智谱 GLM 配额进度，无需打开主窗口；双击面板顶栏可打开主窗口并收起面板，面板高度随内容自适应。
-- 供应商多实例：同一供应商可添加多份配置（如两个 DeepSeek 账号），各自独立追踪、统计与告警；实例可写备注作为卡片标题。
-- 用量总览：按实例分卡片展示额度进度、账户余额与重置倒计时；卡片网格支持拖拽排序与置顶；额度使用超七成时进度条自动转为警示色。
-- 用量统计：卡片「查看统计」打开右侧统计抽屉，支持按时间范围、模型等维度查看 Token 消耗与请求趋势。
-- 凭据本地加密：凭据以 AES-256-GCM 加密存储在本机，加密密钥托管在系统钥匙串（Windows 凭据管理器 / macOS 钥匙串 / Linux Secret Service），启动即用、全程无需输入密码。
-- OpenCode Go：优先调用官方 `/zen/go/v1/usage` 接口，接口未上线时自动降级为抓取后台页面解析真实额度。
-- DeepSeek：通过官方 API Key 查询账户余额与可用状态。
-- 智谱 GLM：一枚 Coding Plan API Key 同时驱动配额卡片与用量统计——总览展示套餐档位（Lite / Pro / Max）、5 小时窗口与每周配额进度及重置倒计时；配额已用比例达到阈值时发送系统通知。
-- 刷新策略：全局间隔 5–120 分钟可调（超过 60 分钟以小时显示），可按 Provider 单独关闭自动刷新，手动刷新始终拉取全部 Provider。
+### 用量总览
 
-## 开发环境
+- 按实例分卡片展示额度进度、账户余额与重置倒计时；同一供应商可添加多份配置（例如两个 DeepSeek 账号），各自独立追踪、统计与告警。
+- 卡片网格支持拖拽排序与置顶；额度进度条已用到 70% 转警示色、90% 转危险色。
+- 含「已用 / 总量」的进度行可点击翻面，在百分比与具体数值之间切换；重置时间可在相对倒计时与绝对时刻之间切换。
+- 实例可写备注（20 字以内）作为卡片标题，留空时显示供应商名。
+- 分站点经营的供应商，卡片与统计页标题会在供应商标识旁标注「中国站 / 国际站」，同一家账号的两张卡片分得开。
+
+### 托盘与两个面板
+
+- **速览面板**：单击托盘图标弹出，自动锚定到托盘图标所在的屏幕角落。有列表与卡片两种形态，可指定只显示其中几个实例，点击别处即收起。
+- **快速面板**：默认快捷键 `Alt+U`（可在设置里改）或托盘右键「显示快速面板」打开，用紧凑卡片列出全部实例，底部显示下次自动刷新的倒计时；双击标题栏打开主窗口并收起面板，失焦自动隐藏可关。
+- **托盘图标**三选一：静态品牌图标（有告警时亮红点）、多层用量环（外环到内环对应周期由短到长，最多三层）、双横条计量（已用比例最高的两个窗口）。环形计量方案在 macOS 上还会在图标旁显示最紧窗口的已用百分比。悬停时 tooltip 列出实例与各配额窗口的进度。图标展示哪个实例可自动选取，也可钉选。
+- 托盘右键菜单：打开主窗口 / 显示快速面板 / 退出。
+
+### 用量统计
+
+- 卡片底部「查看统计」打开右侧统计抽屉，五家供应商都有。可看区间内的消耗趋势（按用途或模型堆叠）、用途占比、模型明细与逐条记录；具体有哪几块取决于各家数据可得性。
+- 时间范围：今天 / 昨天 / 近 7 天 / 近 30 天 / 本月 / 上月 / 自定义。上限按各家实际能力给——Qoder 可选到一年，DeepSeek、智谱 GLM、WorkBuddy 为 30 天；OpenCode Go 按自然月看。
+
+### 告警
+
+- **阈值告警**：按实例设置，单位随各家——DeepSeek 与智谱 GLM 是余额（元），OpenCode Go、WorkBuddy、Qoder 是已用百分比，智谱 GLM 两项都有。留空即不告警，没有默认值。
+- **额度耗尽**：任一配额窗口用到 100% 即告警，与阈值设置无关。
+- **事件通知**：智谱重置卡到账、WorkBuddy 签到成功与喵喵旅行奖励到账。
+- 采用边沿触发：越过阈值的那一刻通知一次，回落到阈值之下后才会再次提醒；重复提醒间隔 1 / 3 / 6 / 12 / 24 小时或关闭，默认 6 小时。
+- 取数失败（凭据过期、接口改版）只在卡片上点名原因，不额外发系统通知；错误期间该实例的告警状态保持冻结，不会因刷新失败而误报或漏报。
+
+### 凭据与本地加密
+
+- 凭据以 AES-256-GCM 加密存在本机，加密用的设备密钥随机生成并托管在系统钥匙串（Windows 凭据管理器 / macOS 钥匙串 / Linux Secret Service），启动即用，全程不需要输入主密码。
+- 配置弹窗把必填项标出来，漏填、把 `Cookie:` 前缀或键名一起贴进来、值里混入分号空格换行中文，都会在保存前直接指出该怎么贴；填完可先点「测试」验证连通，再保存。
+- Cookie、Authorization、User-Agent 等请求头由程序按各家要求统一拼装，即使输入框里误粘了整行请求头，也不会出现两份互相冲突的凭据让服务端读到错的那个。
+
+## 支持的供应商
+
+| 供应商 | 站点 | 需要填写 | 能看到什么 |
+| --- | --- | --- | --- |
+| OpenCode Go | 单站 | Workspace ID、Auth Cookie；API Key 可选 | 5 小时 / 周 / 月三档额度进度与重置倒计时；按月看费用与用量历史 |
+| DeepSeek | 单站 | API Key；UserToken 可选（统计用） | 账户余额与可用状态；按 API Key 的 Token、请求次数与费用趋势 |
+| 智谱 GLM | 单站 | Coding Plan API Key | 套餐档位与 5 小时 / 每周配额进度、账户余额、重置卡；模型与工具用量明细 |
+| 腾讯 WorkBuddy / CodeBuddy | 中国站 / 国际站 | session、session\_2、User-Agent 三项 | 积分余量与套餐明细、逐条消耗明细；中国站的签到、连续登录与喵喵旅行进度 |
+| Qoder | 中国站 / 国际站 | qoder\_session\_cookie 的值 | 订阅积分与资源包积分分别成行、各自的重置或到期时间、近一年消耗分布 |
+
+### 凭据怎么拿
+
+弹窗里每个字段下面都有对应提示，WorkBuddy 与 Qoder 的提示会跟着所选站点切换；下面是同一套步骤的文字版。
+
+1. **添加实例**：主窗口右上角「添加供应商」→ 选供应商（WorkBuddy 与 Qoder 先选账号所在站点）→ 按提示粘贴凭据 → 测试通过后保存。
+2. **OpenCode Go**：Workspace ID 是后台 URL 里的 `wrk_...`；Auth Cookie 从登录后的 `opencode.ai` 开发者工具 → Application → Cookies 里复制名为 `auth` 的 Value（这一格兼容误粘的 `Cookie:` 或 `auth=` 前缀，会自动取值）。API Key 可选，官方用量接口上线后才用得上。
+3. **DeepSeek**：API Key 在 platform.deepseek.com 生成，形如 `sk-...`。UserToken 可选，只有用量统计页需要：登录后在开发者工具的 Local Storage 里找到键 `userToken`，它是个 JSON 对象，复制其中 `token` 字段的字符串值。
+4. **智谱 GLM**：bigmodel.cn 控制台 → Coding Plan 页 → 「生成 API Key」。如果你在 Claude Code 里配过智谱 GLM，`ANTHROPIC_AUTH_TOKEN` 就是同一枚密钥，直接复用。
+5. **WorkBuddy**：登录对应站点 → 开发者工具 → Network → 刷新页面 → 任选一条该站请求 → 请求标头，按每格提示分别取 `session`、`session_2` 两个 Cookie 的值和整行 User-Agent。**三项必须来自同一条请求**，User-Agent 须与登录时逐字节相同，每格只贴值不带键名。
+6. **Qoder**：登录对应站点 → 开发者工具 → Application → Cookies → 找到名为 `qoder_session_cookie` 的 Cookie，只复制它的 Value 粘贴，不带键名与 `Cookie:` 前缀。
+
+站点说明：Qoder 的 `qoder.com.cn` 与 `qoder.com`、WorkBuddy 的 `workbuddy.cn` 与 `workbuddy.ai` 是两套互不相通的登录域，同一账号在两个站点的凭据不通用，换站后要重贴该站的凭据。
+
+## 刷新策略
+
+- 全局刷新间隔预设 5 / 10 / 15 / 30 / 60 / 120 分钟，默认 5 分钟，所有供应商共用同一间隔。
+- 可在单个实例的配置弹窗里关闭它的自动刷新；顶栏的手动刷新始终拉取全部实例（包括关了自动刷新的那些）。
+- 只有应用在运行时才会刷新，退出后不会有新数据。
+
+## 数据与安全
+
+- 凭据存在应用数据目录的 `vault.json`（AES-256-GCM），加密密钥是随机生成的设备密钥，托管在系统钥匙串；用量快照、实例与设置存在同目录的 `ai-usage-tracker.db`（SQLite）。
+- 出站范围收紧到最小：界面受内容安全策略限制，只能与本机程序通信，取数全部在 Rust 侧完成；请求目的地按供应商逐家登记白名单，只放行该家的官方域名（精确主机名、仅 HTTPS、禁止端口与 URL 内嵌凭据），发往未登记域名的请求一律拦下并说明原因。除各家官方域名与 GitHub Releases 的更新源之外，没有任何遥测或上报目标。
+- 保留策略：用量快照留 30 天，通知留 30 天且最多 200 条，超出自动清理；删除实例会连带清掉它的快照、通知与告警状态。
+- 钥匙串中的设备密钥丢失（重装系统、更换设备）后凭据无法解密，需要重新录入。
+- 自动更新走 GitHub Releases 的 `latest.json`，产物用 minisign 签名；启动后静默检查一次，也可在设置里手动检查并下载安装。
+- 开发版与安装版数据完全隔离（应用标识分别为 `com.aiusagetracker.desktop.dev` 与 `com.aiusagetracker.desktop`），两者可并存。
+
+## 已知边界
+
+- **私有接口**：Qoder 未对个人账号开放用量 API，数据取自账号控制台的网页接口；WorkBuddy 用网页登录态会话；OpenCode Go 官方 `/usage` 接口尚未上线，额度主要靠解析后台页面得到；DeepSeek 的用量统计、智谱的配额与余额同样走控制台私有接口。这类通道官方无兼容性承诺，平台改版可能失效。
+- **会话类凭据会过期**：WorkBuddy 的会话有效期由服务端掌控，换浏览器、换机器、浏览器升版都得重填三项；Qoder、OpenCode Go、DeepSeek 的 Cookie 与令牌同理。失效时卡片与弹窗会点名要重填哪一格，重填即恢复。
+- WorkBuddy 的网关校验 session、session\_2、User-Agent 三项同源，缺一即拒；User-Agent 必须逐字节相同，程序不猜兜底值。
+- WorkBuddy 的每日签到、连续登录与喵喵旅行是中国站独有玩法，国际站没有对应功能。
+- macOS 安装包未经 Apple 公证，首次打开需在 Finder 中右键选择「打开」以绕过 Gatekeeper；Windows 安装包未做 Authenticode 代码签名（更新产物另有 minisign 签名）。
+- 桌面端已在 Windows 实机完成验证；macOS 与 Linux 由三平台 CI 构建验证。
+
+## 开发
 
 需要 Node.js 22+、pnpm 10+ 和 Rust stable 工具链。
 
 ```sh
 pnpm install
-pnpm tauri dev
+pnpm tauri:dev      # 开发实例，用独立的应用标识与数据目录，可与安装版并存
 ```
-
-## 测试与构建
 
 ```sh
-pnpm test
-cd src-tauri && cargo test
-pnpm build
-pnpm tauri build --no-sign
+pnpm test                    # 前端与共享逻辑单测
+pnpm build                   # tsc 类型检查 + 打包
+cd src-tauri && cargo test   # Rust 侧单测
+pnpm tauri build --no-sign   # 本地出安装包
 ```
 
-## 使用
+发版走 changesets：改动合入 `dev`，合入 `main` 后由 CI 生成版本 PR 与更新日志，合并版本 PR 触发三平台构建。安装包形态为 Windows NSIS（x64 / ARM64）、macOS app 与 dmg（universal）、Linux deb 与 AppImage（x86_64 / arm64）。
 
-1. 点击主窗口右上角「添加供应商」，选择供应商并填写凭据（可加备注区分多个账号）：
-   - DeepSeek API Key：`sk-...`
-   - DeepSeek UserToken：platform.deepseek.com 网页登录态令牌，统计使用（获取方式见下）
-   - OpenCode Go Workspace ID：后台 URL 中的 `wrk_...`
-   - OpenCode Auth Cookie：登录 `opencode.ai` 后浏览器里的 `auth` Cookie 值
-   - OpenCode Go API Key（可选）：官方 `/usage` 接口上线后使用
-   - 智谱 Coding Plan API Key：bigmodel.cn 控制台 Coding Plan 页生成（获取方式见下）
-2. 实例的告警阈值与自动刷新开关在其配置弹窗（卡片 ⋯ 菜单）中设置；全局刷新间隔在设置中调整。
-3. 关闭主窗口后应用继续驻留托盘；托盘图标可打开快速面板。
+## 文档
 
-DeepSeek UserToken 获取方式（统计页使用，与 API Key 是两种不同凭据）：
-
-1. 打开 `https://platform.deepseek.com` 并登录。
-2. 按 F12 打开开发者工具，进入 Application → Local Storage → `https://platform.deepseek.com`。
-3. 找到键 `userToken`，其值是一个 JSON 对象，复制其中 `token` 字段的字符串值。
-4. Token 过期后统计页会提示重新填写。
-
-OpenCode Go Auth Cookie 获取方式：
-
-1. 打开 `https://opencode.ai/workspace/{workspaceId}/go` 并登录。
-2. 按 F12，打开 `Application`（Chrome/Edge）或 `Storage`（Firefox）。
-3. 进入 `Cookies -> https://opencode.ai`。
-4. 找到名为 `auth` 的 Cookie，复制 `Value` 列的内容。
-5. 粘贴到设置中即可；程序也兼容 `auth=...`、`Cookie: auth=...` 或完整 Cookie 列表，会自动提取 `auth` 的值。
-
-智谱 Coding Plan API Key 获取方式（配额卡片与用量统计共用这一枚凭据）：
-
-1. 打开 `https://bigmodel.cn` 控制台并登录。
-2. 进入 Coding Plan 页面，点击「生成 API Key」。
-3. 复制生成的 API Key，粘贴到设置中。
-4. 如果你在 Claude Code 中配置过智谱 GLM，与 `ANTHROPIC_AUTH_TOKEN` 是同一枚密钥，直接复用即可。
-
-## 数据与安全
-
-- 凭据保存在应用数据目录的 `vault.json` 中，以 AES-256-GCM 加密；加密密钥为随机生成的设备密钥，托管在系统钥匙串（Windows 凭据管理器 / macOS 钥匙串 / Linux Secret Service）。
-- 用量快照保存在本地 SQLite 数据库 `ai-usage-tracker.db`。
-- 应用不会上传凭据或用量数据到第三方服务。
-- 系统钥匙串中的设备密钥丢失（如重装系统、更换设备）后，凭据无法解密，需要重新录入。
-
-## 已知边界
-
-- OpenCode Go 官方 `/zen/go/v1/usage` 接口尚未上线，目前主要依赖后台页面解析获取额度，页面结构变化时可能需要更新解析器。
-- 网页登录态凭据（DeepSeek UserToken、OpenCode Go Auth Cookie）会过期，遇到 HTTP 401/403 时需要在设置中重新粘贴。
-- 用量统计通过供应商平台的网页端私有接口取数，平台侧无兼容性承诺：OpenCode Go 依赖其前端构建产物中的 `x-server-id` 常量，平台重新部署可能失效；DeepSeek 平台网页接口同理。失效时界面会给出明确错误提示。
-- 智谱官方未公开用量查询 API，配额与统计数据通过智谱控制台私有接口获取（与智谱官方 glm-plan-usage 插件使用同一数据通道），无兼容性承诺；接口变更时错误信息会透出服务端返回码。
-- 智谱 GLM 仅跟踪 Coding Plan 订阅配额，不展示 API 按量付费余额；混合付费用户需在智谱控制台查看余额。
-- macOS 安装包未经 Apple 公证，首次打开需在 Finder 中右键选择「打开」以绕过 Gatekeeper。
-- 桌面端已在 Windows 实机完成验证；macOS 与 Linux 由三平台 CI 构建验证。
+- `CONTEXT.md`：术语表与产品口径（配额窗口、主指标、速览面板等）。
+- `docs/DESIGN.md`：界面与交互设计规范。
+- `docs/adr/`：架构决策记录，逐条说明每家供应商的取数边界与安全策略为什么这么定。
