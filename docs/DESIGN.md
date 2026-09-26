@@ -214,14 +214,27 @@
 - `Donut`：环形占比图，中心合计 + 下方水平 React 图例（百分比 + 数值），合计随显隐实时更新。
 - 序列色通过 `modelColor(name)` 统一取自 chart-1..16，保证跨图表一致。
 - 轴数值用 `formatCompact`（lib/utils），精确值用 `formatInt`。
+- `Heatmap`：日历热力图，按周列铺开（列 = 一周，周日为首行），档位由 `heatLevel(value, levels)`
+  按接口下发的 `levels` 阈值判定；色阶只用 5 个静态类（`bg-surface-2` + 四档 brand 透明度），
+  不随数据动态拼类名——动态类名 Tailwind 扫不到，样式会整块丢。
+- **tooltip 一律按纯文本处理**：ECharts 的 tooltip 走 `innerHTML`，凡拼进去的上游字符串
+  （模型名、用途名、日期）都先过 `escapeHtml`（lib/utils）。这里不接受「供应商不会返回恶意字符串」的假设。
 
 ## 6.6 统计抽屉模块约定 `views/stats/`
 
-- 统计从顶层页签下沉到卡片触发的右侧抽屉：`StatsSheet` 按 `instance.providerId` 挂载
-  `DeepSeekStats` / `OpenCodeStats` / `GlmStats`，标题 = 实例显示名 + 供应商名；
+- 统计从顶层页签下沉到卡片触发的右侧抽屉：`StatsSheet` 按 `instance.providerId` 挂载五家模块
+  （`DeepSeekStats` / `OpenCodeStats` / `GlmStats` / `WorkbuddyStats` / `QoderStats`，各自一个子目录），
+  标题 = 实例显示名 + 供应商名 +（多站种类的）站点徽标；
   每个供应商一个独立文件，新增供应商 = 在 `StatsSheet` 注册映射 + 新建模块文件，互不改对方代码。
+- 时间档位全供应商共用一组（今天 / 昨天 / 近 7 天 / 近 30 天 / 本月 / 上月 / 自定义），但**上限与默认档
+  按供应商声明**在 `statsRangePolicy(kind)`：`maxCustomDays` 决定能选多远，`limitNote` 说明成因
+  （「官方接口限制」还是「本工具的上限」）并写进拒收文案，视图不写死数字。自定义区间按**日历天**判定
+  （`daySpan`），不用固定毫秒步长——一天并不总是 86400000 毫秒。OpenCode Go 例外：按自然月取数，不走档位模块。
 - 同一模块可能同时服务同种类的多个实例：**usageCache 的 key 必须以 instanceId 为前缀**，
   避免两个实例互相串数据。
+- 分页取数只在有**硬依据**时收尾（空页 / 短页 / 到达 `last_page` / 已取满 `total`），触到页数上限就停下并
+  把「取了多少、为什么停」透给用户——宁可少画一块，也不拿半份数据画一张看起来正常的图。
+  上游字符串进图表前统一消毒：错误详情去掉可能带的 URL，响应体设长度上限。
 - 筛选工具条统一放在模块顶部的 `Card p-4` 内，控件带 `Label`。
 
 ## 6.7 图标规范
@@ -234,11 +247,21 @@
 
 ## 6.8 设置页与实例配置弹窗约定
 
-- 设置视图只保留「通用」：自动刷新总开关、刷新间隔（预设档位 `Select`，所有实例共用）、
-  外观、快速面板、关于与更新；顶部承载 `MigrationCard` 与设备密钥丢失横幅。
+- 设置视图只保留「通用」：自动刷新、启动（开机自启 + 静默启动）、外观（主题与界面语言）、用量告警
+  （含重复提醒间隔）、快速面板（全局快捷键与失焦隐藏）、托盘图标与速览面板、关于与更新；
+  顶部承载 `MigrationCard` 与设备密钥丢失横幅。
 - 实例的凭据表单、自动刷新开关与告警阈值全部在配置弹窗 `views/instances/InstanceDialog.tsx`
-  （新建与编辑共用；备注 → 按 kind 渲染的凭据区 → 自动刷新与阈值 → 取消/保存）。
+  （新建与编辑共用；备注 → 站点（仅 `providerSites` 登记的多站种类）→ 按 kind 渲染的凭据区 →
+  自动刷新与阈值 → 取消/保存）。备注上限 20 字。
   编辑时凭据回填明文，凭据库未解锁/待迁移时显示 `notice` 并禁用保存。
+- **凭据区由 `src/forms/form-specs.ts` 一张规格表驱动**（各格的 label / 占位符 / 逐格短提示 / 必填性 /
+  校验谓词 / 选填项的留空后果 / 分站点的长指引），它是表单层的单一事实源；必填性与各 provider 的
+  `needs_config` 判据由 `instance-schema.test.ts` 的必填矩阵钉住两边一致。校验层只出**错误码**
+  （`forms/error-codes.ts`），文案推迟到渲染时翻译——字典不必为每档数值各存一个键。
+- 凭据值**只判定不加工**：存进去的就是用户贴的那段，`Cookie:` 前缀、键名、分号空格换行中文一律当场拒
+  （不改写、不猜着抠值，测试与保存同一口径）；OpenCode Go 的 `auth` Cookie 是唯一保留取值兼容的一格。
+  必填没填 = 格前置红色 `*` + 格下一行红字 + 焦点跳到第一个待补处。连通性「测试」按同一组值一次测完
+  （WorkBuddy 三项同源，故按钮不挂在单格下）。
 - 删除实例走卡片 ⋯ 菜单 + `DeleteInstanceDialog`（AlertDialog）二次确认。
 - 开关类设置即时保存并显示短暂「已保存」反馈（`useSaveFlash` / `SavedHint`）；弹窗内保存为显式按钮。
 - 「关于与更新」卡片（`views/settings/UpdateCard.tsx`）：显示当前版本、检查更新、变更说明与下载进度（`ui/progress`），错误可重试；状态机在 `store/useUpdateStore.ts`，仅已安装运行时可用（开发构建禁用并提示）。
@@ -272,7 +295,7 @@
 - 拖拽用 @dnd-kit：卡片头部左侧 GripVertical 手柄（hover/聚焦显现）、`PointerSensor`
   带 `activationConstraint: { distance: 4 }` 避免吞掉卡内点击、`KeyboardSensor` 键盘可达、
   `DragOverlay` 浮起副本；拖拽结束 `reorder_instances` 落库并广播 `instances-changed`。
-- 卡片头部 = 手柄 + 头像 + 标题（备注，空则供应商名）+ 副标题（供应商名 + 更新时间，
+- 卡片头部 = 手柄 + 头像 + 标题（备注，空则供应商名；多站种类在标题旁挂站点徽标）+ 副标题（供应商名 + 更新时间，
   备注为空时只显示更新时间）+ 状态徽标 + 刷新 + ⋯ 菜单（置顶/编辑配置/删除）；
   底部一行「查看统计」outline 按钮（`needs_config` / `error` 状态禁用并带 title 说明）。
 - 有重置时间的额度行，重置倒计时文本可点击，在「相对倒计时 / 具体时刻」间切换
@@ -297,6 +320,9 @@
 - 异常态不直接展示原始报错：卡片上只放一行按内容轻分类的友好占位（凭据无效或已过期 /
   网络连接失败 / 获取用量失败，`lib/error-hint.ts`）+「详情」入口，点开 `ErrorDetailsDialog`
   查看并可复制完整原文；`needs_config` 保留原文（短且可操作）并在主窗口附「去配置」入口。
+- 账号没有可显示的额度时（未订阅 Coding Plan / 未分配积分 / 无有效套餐）出一条**中性事实行**说明原因，
+  不画百分比也不出倒计时；主窗口卡片与速览面板共用同一句（速览的取行判据是 `glance/data.ts` 的
+  `neutralText`，只在没有任何进度行时上位），免得两处一个报「暂无数据」一个报具体原因。
 - 快速面板卡片为 `compact` 模式：不渲染手柄、菜单、统计按钮。
 
 ## 6.11 快速面板窗口行为

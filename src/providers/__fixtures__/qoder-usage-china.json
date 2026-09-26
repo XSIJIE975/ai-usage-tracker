@@ -1,0 +1,70 @@
+{
+  "user_id": "00000000-0000-4000-8000-000000000000",
+  "quota_key": "big_model_credits",
+  "status": "active",
+  "plan_quota": {
+    "quota_summary": {
+      "used_value": 2000,
+      "limit_value": 2000,
+      "remaining_value": 0,
+      "usage_percentage": 100,
+      "unit": "credits"
+    }
+  },
+  "resource_package_quota": {
+    "quota_summary": {
+      "used_value": 534,
+      "limit_value": 1200,
+      "remaining_value": 666,
+      "usage_percentage": 45,
+      "unit": "credits"
+    },
+    "quota_detail": [
+      {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "limit_value": 100,
+        "used_value": 34,
+        "remaining_value": 66,
+        "unit": "credits",
+        "is_active": true,
+        "usage_percentage": 35,
+        "expires_at": 1792307582568,
+        "source": "RESOURCE_PACKAGE_SOURCE_BONUS",
+        "status": "ACTIVE"
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000002",
+        "limit_value": 500,
+        "used_value": 500,
+        "remaining_value": 0,
+        "unit": "credits",
+        "is_active": true,
+        "usage_percentage": 100,
+        "expires_at": 1790783939000,
+        "source": "RESOURCE_PACKAGE_SOURCE_BONUS",
+        "status": "ACTIVE"
+      }
+    ]
+  },
+  "dedicated_resource_package_quota": {
+    "quota_summary": {
+      "used_value": 0,
+      "limit_value": 0,
+      "remaining_value": 0,
+      "usage_percentage": 0,
+      "unit": "credits"
+    },
+    "quota_detail": null
+  },
+  "total_quota": {
+    "quota_summary": {
+      "used_value": 2534,
+      "limit_value": 3200,
+      "remaining_value": 666,
+      "usage_percentage": 80,
+      "unit": "credits"
+    }
+  },
+  "lastResetAt": 1782195243985,
+  "nextResetAt": 1790382507566
+}

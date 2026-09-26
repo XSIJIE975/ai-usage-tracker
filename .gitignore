@@ -33,3 +33,6 @@ release-body.md
 *.key
 *.key.pub
 .zcode/
+
+# Playwright MCP 浏览器工具产物
+.playwright-mcp/

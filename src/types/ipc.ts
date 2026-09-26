@@ -1,4 +1,8 @@
-export type ProviderKind = "deepseek" | "opencode-go" | "glm" | "workbuddy";
+export type ProviderKind = "deepseek" | "opencode-go" | "glm" | "workbuddy" | "qoder";
+
+/** 供应商站点（ADR-0031）：同一供应商的两套登录域，Cookie/凭据不互通。
+ *  哪些种类是多站，单一判据见 lib/instance.ts 的 providerSites */
+export type ProviderSite = "china" | "international";
 
 export interface ProviderInstance {
   id: string;
@@ -11,6 +15,8 @@ export interface ProviderInstance {
   threshold: number | null;
   /** 余额告警阈值（元，低于触发）；仅 glm 使用，null=不告警 */
   balanceThreshold: number | null;
+  /** 站点（仅多站种类有意义，单站种类一律忽略并按 china 处理） */
+  site: ProviderSite;
   createdAt: number;
 }
 
@@ -36,9 +42,10 @@ export interface ProviderRequestOptions {
   method?: "GET" | "POST";
   headers?: Record<string, string>;
   bodyText?: string;
-  /** "session_cookie"：从 vault 槽位读 session 的 Value，校验后拼作 Cookie: session=<值>（workbuddy） */
-  auth?: "bearer" | "cookie" | "none" | "session_cookie";
-  /** bearer/session_cookie 时的凭据槽；bearer 缺省用该种类的主鉴权键 */
+  /** "session_cookie"：从 vault 槽位读 session 的 Value，校验后拼作 Cookie: session=<值>（workbuddy）
+   *  "qoder_cookie"：从 vault 槽位读 qoder_session_cookie 的 Value，校验后拼作 Cookie: qoder_session_cookie=<值>（qoder，ADR-0030） */
+  auth?: "bearer" | "cookie" | "none" | "session_cookie" | "qoder_cookie";
+  /** bearer/session_cookie/qoder_cookie 时的凭据槽；bearer 缺省用该种类的主鉴权键 */
   credentialSlot?: string;
 }
 

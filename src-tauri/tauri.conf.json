@@ -45,7 +45,8 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://github.com https://objects.githubusercontent.com; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'",
+      "devCsp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://github.com https://objects.githubusercontent.com; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost ws://localhost:1420 http://localhost:1420; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'"
     }
   },
   "bundle": {
@@ -55,7 +56,7 @@
     "category": "DeveloperTool",
     "publisher": "XSIJIE",
     "shortDescription": "Cross-platform AI usage and quota tracker",
-    "longDescription": "Track AI subscription quotas and API usage for OpenCode Go, DeepSeek and Zhipu GLM from the system tray — balance, quota windows, usage charts and threshold alerts. All data stays on your device.",
+    "longDescription": "Track AI subscription quotas and API usage for OpenCode Go, DeepSeek, Zhipu GLM, Tencent WorkBuddy / CodeBuddy and Qoder from the system tray — balance, quota windows, usage charts and threshold alerts. All data stays on your device.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

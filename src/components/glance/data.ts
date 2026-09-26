@@ -1,4 +1,4 @@
-import type { MetricLine, ProviderInstance, ProviderKind, ProviderSnapshot } from "../../types/ipc";
+import type { MetricLine, ProviderInstance, ProviderKind, ProviderSite, ProviderSnapshot } from "../../types/ipc";
 import { displayName, selectOrderedInstances } from "../../lib/instance";
 import { firstBalanceLine, primaryProgressLine } from "../../alerts/metric";
 import { applyParams, renderLineValue } from "../../i18n";
@@ -19,8 +19,10 @@ export interface GlanceWindowItem {
 /** 速览面板单实例的展示数据（新布局，与快速面板的卡片无共享） */
 export interface GlanceInstance {
   id: string;
-  /** 供应商类型，用于取官方标识（ProviderKind 是封闭联合，四家都有现成 logo） */
+  /** 供应商类型，用于取官方标识（ProviderKind 是封闭联合，五家都有现成 logo） */
   providerId: ProviderKind;
+  /** 实例站点，多站供应商的徽标要用（ADR-0031） */
+  site: ProviderSite;
   label: string;
   status: ProviderSnapshot["status"] | "no_data";
   refreshing: boolean;
@@ -33,6 +35,9 @@ export interface GlanceInstance {
   windows: GlanceWindowItem[];
   /** 账户余额原文（如 ¥86.40） */
   balanceText: string | null;
+  /** 中性事实行原文（如「未分配积分」「暂无有效套餐」）：快照一条进度行都没有时才有值，
+   *  与主卡片的说法对齐，不再退化成「暂无数据」 */
+  neutralText: string | null;
 }
 
 export function buildGlanceInstances(
@@ -57,9 +62,14 @@ export function buildGlanceInstances(
         line.type === "progress" && typeof line.percentUsed === "number",
     );
     const balance = snapshot ? firstBalanceLine(snapshot.lines) : null;
+    // 中性事实行只在"没有进度行可画"时上位：WorkBuddy 那种「进度行 + 套餐明细行」的快照里，
+    // 明细行是逐项读数，拿来当整实例的状态会说漏内容
+    const neutral =
+      progressLines.length === 0 ? (snapshot?.lines ?? []).find((line) => line.type === "text") : null;
     return {
       id: instance.id,
       providerId: instance.providerId,
+      site: instance.site,
       label: displayName(instance, snapshot ? translate(snapshot.providerName) : ""),
       status: snapshot ? snapshot.status : "no_data",
       refreshing: loading || refreshing[instance.id] === true,
@@ -74,6 +84,7 @@ export function buildGlanceInstances(
         primary: line === primary,
       })),
       balanceText: balance ? (renderLineValue(balance, translate, language) ?? null) : null,
+      neutralText: neutral ? (renderLineValue(neutral, translate, language) ?? null) : null,
     };
   });
 }

@@ -18,8 +18,8 @@ import { useAutoRefresh } from "./use-auto-refresh";
 import { useGlobalRefresh } from "./use-global-refresh";
 import { OverviewCards } from "./deepseek/OverviewCards";
 import { ModelUsageTable } from "./deepseek/ModelUsageTable";
-import { customRangeError, isoDate, resolveRangeMs, timeRangeOptions, type TimeRange } from "./time-range";
-import { useLanguage, useT } from "../../i18n";
+import { customRangeError, isoDate, isoDateDaysAgo, resolveRangeMs, statsRangePolicy, timeRangeOptions, type TimeRange } from "./time-range";
+import { renderTemplate, useLanguage, useT } from "../../i18n";
 import type { ProviderInstance } from "../../types/ipc";
 /** 费用量纲的坐标/悬浮格式化器（模块级稳定引用，见下方 yFormat/tooltipFormat 注释） */
 const formatYuanCompact = (value: number) => `¥${formatCompact(value)}`;
@@ -34,7 +34,6 @@ import {
 } from "./deepseek/usage-aggregation";
 
 const usageCache = createUsageCache();
-const DAY_MS = 86_400_000;
 
 const metricOptions: { value: UsageMetric; label: string }[] = [
   { value: "tokens", label: "Token 消耗" },
@@ -52,15 +51,20 @@ function RefreshOverlay() {
 }
 
 export function DeepSeekStats({ instance }: { instance: ProviderInstance }) {
-  const [range, setRange] = useState<TimeRange>("7d");
+  const policy = statsRangePolicy(instance.providerId);
+  const [range, setRange] = useState<TimeRange>(policy.defaultRange);
   const [apiKeyId, setApiKeyId] = useState("all");
   const [metric, setMetric] = useState<UsageMetric>("tokens");
-  const [customFrom, setCustomFrom] = useState(() => isoDate(new Date(Date.now() - 6 * DAY_MS)));
+  const [customFrom, setCustomFrom] = useState(() => isoDateDaysAgo(6));
   const [customTo, setCustomTo] = useState(() => isoDate(new Date()));
   const [refreshTick, setRefreshTick] = useState(0);
 
-  const rangeMs = useMemo(() => resolveRangeMs(range, customFrom, customTo), [range, customFrom, customTo]);
-  const customError = range === "custom" ? customRangeError(customFrom, customTo) : null;
+  const rangeMs = useMemo(
+    () => resolveRangeMs(instance.providerId, range, customFrom, customTo),
+    [instance.providerId, range, customFrom, customTo],
+  );
+  const customError =
+    range === "custom" ? customRangeError(instance.providerId, customFrom, customTo) : null;
   const t = useT();
   const language = useLanguage();
   // cache key 前缀 instanceId：同种类两个实例的统计互不串数据
@@ -212,7 +216,7 @@ export function DeepSeekStats({ instance }: { instance: ProviderInstance }) {
             <EmptyState
               icon={<CalendarRange className="h-5 w-5" />}
               title={t("时间范围无效")}
-              description={t(customError)}
+              description={renderTemplate(customError, { days: policy.maxCustomDays, note: policy.limitNote }, t)}
             />
           </CardContent>
         </Card>

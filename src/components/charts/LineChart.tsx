@@ -9,7 +9,7 @@ import { useEffectiveTheme } from "../../lib/theme";
 import { useResizeObserver } from "../../hooks/use-resize-observer";
 import { useChartLegend } from "../../hooks/use-chart-legend";
 import { ChartLegend } from "./ChartLegend";
-import { cn, formatPlain } from "../../lib/utils";
+import { cn, escapeHtml, formatPlain } from "../../lib/utils";
 
 echarts.use([LineChart, TooltipComponent, GridComponent, DataZoomComponent, CanvasRenderer]);
 
@@ -109,7 +109,7 @@ export function LineChartView({
             return b.value - a.value;
           });
           const lines = [
-            `<div style="font-weight:600;margin-bottom:6px;color:${colors.fg}">${params[0].name}</div>`,
+            `<div style="font-weight:600;margin-bottom:6px;color:${colors.fg}">${escapeHtml(String(params[0].name))}</div>`,
           ];
           for (const p of sorted) {
             const isActive = p.seriesName === activeName;
@@ -121,7 +121,7 @@ export function LineChartView({
             lines.push(
               `<div style="display:flex;align-items:center;gap:8px;opacity:${opacity};font-weight:${fontWeight};font-size:13px;">` +
                 `<span style="flex:none">${p.marker}</span>` +
-                `<span style="flex:1 1 auto;color:${nameColor}">${p.seriesName}</span>` +
+                `<span style="flex:1 1 auto;color:${nameColor}">${escapeHtml(String(p.seriesName))}</span>` +
                 `<span style="flex:none;color:${valueColor};font-weight:${fontWeight}">${tooltipFormat(p.value)}</span>` +
                 `</div>`,
             );

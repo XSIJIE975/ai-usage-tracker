@@ -15,9 +15,9 @@ import { StatsStateCard } from "../StatsStateCard";
 import { useStatsFetch } from "../use-stats-fetch";
 import { useAutoRefresh } from "../use-auto-refresh";
 import { useGlobalRefresh } from "../use-global-refresh";
-import { customRangeError, isoDate, resolveRangeMs, timeRangeOptions, type TimeRange } from "../time-range";
+import { customRangeError, isoDate, isoDateDaysAgo, resolveRangeMs, statsRangePolicy, timeRangeOptions, type TimeRange } from "../time-range";
 import { formatDayLabel } from "../deepseek/usage-aggregation";
-import { useLanguage, useT } from "../../../i18n";
+import { renderTemplate, useLanguage, useT } from "../../../i18n";
 import type { ProviderInstance } from "../../../types/ipc";
 import { WorkbuddyOverviewCards } from "./WorkbuddyOverviewCards";
 import { WorkbuddyModelTable } from "./WorkbuddyModelTable";
@@ -27,7 +27,6 @@ import { WorkbuddyUsageTable } from "./WorkbuddyUsageTable";
 type WorkbuddyMetric = "credits" | "requests";
 
 const usageCache = createUsageCache();
-const DAY_MS = 86_400_000;
 
 const metricOptions: { value: WorkbuddyMetric; label: string }[] = [
   { value: "credits", label: "积分消耗" },
@@ -50,14 +49,19 @@ function RefreshOverlay() {
 }
 
 export function WorkbuddyStats({ instance }: { instance: ProviderInstance }) {
-  const [range, setRange] = useState<TimeRange>("7d");
+  const policy = statsRangePolicy(instance.providerId);
+  const [range, setRange] = useState<TimeRange>(policy.defaultRange);
   const [metric, setMetric] = useState<WorkbuddyMetric>("credits");
-  const [customFrom, setCustomFrom] = useState(() => isoDate(new Date(Date.now() - 6 * DAY_MS)));
+  const [customFrom, setCustomFrom] = useState(() => isoDateDaysAgo(6));
   const [customTo, setCustomTo] = useState(() => isoDate(new Date()));
   const [refreshTick, setRefreshTick] = useState(0);
 
-  const rangeMs = useMemo(() => resolveRangeMs(range, customFrom, customTo), [range, customFrom, customTo]);
-  const customError = range === "custom" ? customRangeError(customFrom, customTo) : null;
+  const rangeMs = useMemo(
+    () => resolveRangeMs(instance.providerId, range, customFrom, customTo),
+    [instance.providerId, range, customFrom, customTo],
+  );
+  const customError =
+    range === "custom" ? customRangeError(instance.providerId, customFrom, customTo) : null;
   const t = useT();
   const language = useLanguage();
   // cache key 前缀 instanceId：同种类两个实例的统计互不串数据
@@ -186,7 +190,7 @@ export function WorkbuddyStats({ instance }: { instance: ProviderInstance }) {
             <EmptyState
               icon={<CalendarRange className="h-5 w-5" />}
               title={t("时间范围无效")}
-              description={t(customError)}
+              description={renderTemplate(customError, { days: policy.maxCustomDays, note: policy.limitNote }, t)}
             />
           </CardContent>
         </Card>

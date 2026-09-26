@@ -1,0 +1,13 @@
+{
+  "id": "019ef31d-0000-0000-0000-000000000000",
+  "username": "c7e3d197-0000-0000-0000-000000000000",
+  "name": "占位账号名",
+  "email": "someone@example.invalid",
+  "avatar": "https://qoder.com.cn/users/019ef31d-0000-0000-0000-000000000000/default/avatars",
+  "third_party_identities": [
+    {
+      "provider": "aliyun_account_sso",
+      "open_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ]
+}

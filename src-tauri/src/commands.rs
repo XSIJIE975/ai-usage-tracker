@@ -22,6 +22,10 @@ fn http_client() -> &'static reqwest::Client {
             .user_agent("AI Usage Tracker/0.1.0")
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(30))
+            // 只走 https：实测 reqwest 初始请求（client.rs 的 execute_request）与重定向
+            // （redirect.rs 的 check）两处都校验方案，这里挡掉合法域被劫持成 http://
+            // 跳转时的降级；目的地面本身在 instances::validate_request_url
+            .https_only(true)
             .build()
             .expect("HTTP 客户端初始化失败")
     })
@@ -102,10 +106,10 @@ pub fn vault_migrate(
     {
         let mut vault = state.vault.lock().expect("vault lock poisoned");
         vault.migrate(&password)?;
-        // 主密码迁移解锁后补跑实例迁移（启动时因 vault 未解锁被跳过的场景）
+        // 主密码迁移解锁后补跑凭据迁移（启动时因 vault 未解锁被跳过的场景）
         let db = state.db.lock().expect("db lock poisoned");
         if let Err(error) = instances::migrate_to_instances(&mut vault, &db) {
-            eprintln!("实例迁移失败：{error}");
+            eprintln!("凭据迁移失败：{error}");
         }
     }
     let _ = app.emit("vault-status-changed", ());
@@ -220,6 +224,56 @@ fn credential_text(value: &Value) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+/// Qoder 会话 Cookie 通道的缺省浏览器 UA（ADR-0030）：Qoder 网关不绑定登录时 UA
+/// （CodexBar 硬编码 UA 实证），与 WorkBuddy 的逐字节同源校验截然不同。
+/// 平台段随本机编译目标走、Chrome 版本串统一（CodexBar 实证可用的那个版本）：
+/// UA 声称 Macintosh 而 TLS/HTTP2 指纹是本机 Windows，正是 Baxia 风控最容易识别的
+/// 不自洽。版本升级时跟随 CodexBar 更新。调用方显式传 UA 时本值让位（or_insert）
+#[cfg(target_os = "windows")]
+pub const QODER_DEFAULT_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
+#[cfg(target_os = "macos")]
+pub const QODER_DEFAULT_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const QODER_DEFAULT_UA: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
+
+/// Qoder 登录态所在的 Cookie 名。凭据槽存的只是这个键的**值**，键名由这里的鉴权分支
+/// 拼进 Cookie 头（与 WorkBuddy 的 session / session_2 同法：拼装口径不进前端）
+const QODER_SESSION_COOKIE_NAME: &str = "qoder_session_cookie";
+
+/// 凭据相关头只允许由鉴权分支注入：调用方（渲染进程）传来的同名头一律剔除。
+/// 排序挡不住这件事——reqwest 的 `RequestBuilder::header` 内部是 `HeaderMap::append`
+/// （同名会并存两条，先到的那条被网关读到），所以「先铺静态头再注入凭据头」并不等于
+/// 凭据赢；只有按名字过滤才能保证请求里只有一条、且值是 vault 里的。
+const RESERVED_CREDENTIAL_HEADERS: [&str; 3] = ["cookie", "authorization", "user-agent"];
+
+fn is_reserved_credential_header(name: &str) -> bool {
+    RESERVED_CREDENTIAL_HEADERS
+        .iter()
+        .any(|reserved| name.eq_ignore_ascii_case(reserved))
+}
+
+/// Qoder 会话 Cookie 值的字节域（RFC 6265 cookie-value）：可见 ASCII，但排除空白、`"`、`,`、`;`。
+/// 字符集与 `instances::validate_cookie_value`、前端 `providers/qoder.ts` 的
+/// `isValidSessionCookieValue` 逐字符一致——三处任一处收紧都会误伤真机凭据。
+/// 这一道同时挡住两类误输入：把整段 Cookie 头贴进来（带 `;` 与空格）、以及换行等头
+/// 注入字符。前端保存与探测已过同口径白名单，这里兜住「vault 被外部改过」：否则 reqwest
+/// 只在 `send()` 阶段抛一句没有指向的 builder 错误，用户看到的是"网络请求失败"而不是
+/// "凭据里有非法字符"
+fn validate_qoder_session_value(value: &str) -> Result<(), ()> {
+    if value.is_empty() {
+        return Err(());
+    }
+    if !value.chars().all(|c| {
+        c == '!'
+            || ('\u{23}'..='\u{2b}').contains(&c)
+            || ('\u{2d}'..='\u{3a}').contains(&c)
+            || ('\u{3c}'..='\u{7e}').contains(&c)
+    }) {
+        return Err(());
+    }
+    Ok(())
+}
+
 fn normalize_auth_cookie(value: &str) -> String {
     let mut cookie = value.trim();
     if cookie.to_ascii_lowercase().starts_with("cookie:") {
@@ -292,12 +346,16 @@ pub fn create_instance(
     auto_refresh: Option<bool>,
     threshold: Option<f64>,
     balance_threshold: Option<f64>,
+    site: Option<String>,
 ) -> Result<db::StoredInstance, String> {
     if !instances::PROVIDER_KINDS
         .iter()
         .any(|(kind, _)| *kind == provider_id)
     {
         return Err(format!("不支持的供应商：{provider_id}"));
+    }
+    if let Some(site) = site.as_deref() {
+        instances::validate_site(site)?;
     }
     let instance = {
         let db = state.db.lock().expect("db lock poisoned");
@@ -310,6 +368,7 @@ pub fn create_instance(
             auto_refresh: auto_refresh.unwrap_or(true),
             threshold,
             balance_threshold,
+            site: site.unwrap_or_else(|| "china".to_string()),
             created_at: chrono_utc_now(),
         }
     };
@@ -336,6 +395,8 @@ pub struct InstancePatch {
     pub threshold: Option<Option<f64>>,
     #[serde(deserialize_with = "deserialize_double_option")]
     pub balance_threshold: Option<Option<f64>>,
+    /// 站点（仅 qoder 使用，ADR-0030）：缺省=不改；换站后原 Cookie 跨登录域失效，需重贴
+    pub site: Option<String>,
 }
 
 /// serde 对 Option<Option<T>> 的 null 缺省行为是外层 None；
@@ -355,6 +416,9 @@ pub fn update_instance(
     id: String,
     patch: InstancePatch,
 ) -> Result<(), String> {
+    if let Some(site) = patch.site.as_deref() {
+        instances::validate_site(site)?;
+    }
     {
         let db = state.db.lock().expect("db lock poisoned");
         db.update_instance(
@@ -364,6 +428,7 @@ pub fn update_instance(
             patch.pinned,
             patch.threshold,
             patch.balance_threshold,
+            patch.site.as_deref(),
         )?;
     }
     let _ = app.emit("instances-changed", ());
@@ -540,28 +605,64 @@ impl DiagnosisResult {
     }
 }
 
+/// 探测用的 WorkBuddy 三元组：表单里刚填、尚未保存的三个值（camelCase 与前端一致）
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkbuddySessionInput {
+    session: String,
+    session2: String,
+    user_agent: String,
+}
+
 /// 用"刚输入、尚未保存"的凭据值发起一次真实探测请求，验证连通性。
 /// auth: "bearer"（携带 credential 作为 Bearer token）| "cookie"（auth=<normalized credential>）
-/// credential_text：WorkBuddy 登录凭据的粘贴原文（curl / Cookie 头 / 裸 session Value）——
-/// 由 curl_paste 解析出 session+session_2 与 UA 后拼头（与 provider_request 的
-/// session_cookie 通道同款）；给出时忽略 auth/credential
+/// session_triple：WorkBuddy 的 session / session_2 / 登录 UA 三个值——走与 provider_request
+/// 的 session_cookie 通道同一个拼装与校验入口；给出时忽略 auth/credential
 #[tauri::command]
 pub async fn diagnose_request(
     url: String,
     auth: Option<String>,
     credential: Option<String>,
     expect_html: Option<bool>,
-    credential_text: Option<String>,
+    session_triple: Option<WorkbuddySessionInput>,
+    // 随探测附加的静态协议头（如 Qoder 的 Origin/Referer/Bx-V、WorkBuddy 的 x-client-platform），
+    // 让探测与刷新链路的请求形态尽量一致
+    headers: Option<HashMap<String, String>>,
+    // 探测请求的方法：缺省 GET；WorkBuddy 的 billing 族只有 POST，探测要与刷新同法同族
+    // （ADR-0031），否则只能去探一个本站未必存在的 GET 端点
+    method: Option<String>,
+    body_text: Option<String>,
 ) -> Result<DiagnosisResult, String> {
+    // 目的地面先收窄（ADR-0032）：探测的 url 虽由前端常量拼出，但与刷新链路同权，
+    // 不受限就等于给渲染进程一条「把刚粘贴的凭据发去任意域」的通道
+    instances::validate_probe_url(&url)?;
     let client = http_client();
 
-    let mut request = client.request(Method::GET, &url);
-    if let Some(pasted) = credential_text.filter(|value| !value.trim().is_empty()) {
-        // 解析失败（缺 session_2 之外的畸形粘贴）直接抛错，前端 DiagnosisButton
-        // 原样展示 detail——探测链路不猜用户意图，宁可让用户重贴
-        let credential = crate::curl_paste::parse_workbuddy_credential(&pasted)?;
-        request = request.header("Cookie", credential.cookie_header());
-        request = request.header("User-Agent", credential.user_agent_or_default());
+    let method = match method.as_deref() {
+        Some("POST") => Method::POST,
+        _ => Method::GET,
+    };
+    let mut request = client.request(method, &url);
+    // 静态协议头先铺（如 Qoder 的 Origin/Referer/Bx-V），但凭据相关头一律剔除：
+    // 保证请求里的 Cookie / Authorization / User-Agent 只可能来自下面的鉴权分支
+    if let Some(extra) = headers {
+        for (name, value) in extra {
+            if is_reserved_credential_header(&name) {
+                continue;
+            }
+            request = request.header(name, value);
+        }
+    }
+    if let Some(triple) = session_triple {
+        // 复用刷新链路的同一份拼装与字符集校验，探测这里不另写一遍规则：三值合法且
+        // 网关放行，才说明保存后能用（ADR-0029 四次修订的三槽录入）
+        let session = instances::workbuddy_session(&serde_json::json!({
+            "session": triple.session,
+            "session2": triple.session2,
+            "userAgent": triple.user_agent,
+        }))?;
+        request = request.header("Cookie", session.cookie_header);
+        request = request.header("User-Agent", session.user_agent);
     } else {
         match auth.as_deref() {
             Some("bearer") => {
@@ -584,8 +685,31 @@ pub async fn diagnose_request(
                     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Gecko/20100101 Firefox/148.0",
                 );
             }
+            Some("qoder_cookie") => {
+                // 凭据是 qoder_session_cookie 的**值**本体（Qoder，ADR-0030 §2 二次修订）：
+                // 键名由这里拼进 Cookie 头，UA 用缺省 Chrome 常量，与 provider_request 的
+                // qoder_cookie 通道同一拼装口径
+                let value = match credential.filter(|value| !value.trim().is_empty()) {
+                    Some(value) => value,
+                    None => return Ok(DiagnosisResult::new(false, 0, 0, "missing-credential", None)),
+                };
+                if validate_qoder_session_value(&value).is_err() {
+                    return Ok(DiagnosisResult::new(
+                        false,
+                        0,
+                        0,
+                        "invalid-credential-format",
+                        None,
+                    ));
+                }
+                request = request.header("Cookie", format!("{QODER_SESSION_COOKIE_NAME}={value}"));
+                request = request.header("User-Agent", QODER_DEFAULT_UA);
+            }
             _ => {}
         }
+    }
+    if let Some(body) = body_text {
+        request = request.body(body);
     }
 
     let started = std::time::Instant::now();
@@ -621,15 +745,6 @@ pub async fn diagnose_request(
     };
 
     Ok(DiagnosisResult::new(ok, status, latency_ms, code, None))
-}
-
-/// WorkBuddy 凭据粘贴的解析预览：录入界面据此显示 session / session_2 / UA 三项
-/// 是否齐全。解析规则的权威实现就是刷新链路用的那一个，避免「界面说 OK、请求 401」
-#[tauri::command]
-pub fn parse_workbuddy_credential(
-    credential_text: String,
-) -> Result<crate::curl_paste::WorkbuddyCredential, String> {
-    crate::curl_paste::parse_workbuddy_credential(&credential_text)
 }
 
 /// 按界面语言重建托盘右键菜单（zh/en）；菜单事件处理在托盘创建时已注册，重建菜单不影响。
@@ -846,12 +961,21 @@ pub async fn provider_request(
 
     let client = http_client();
 
+    // 凭据由下面的鉴权分支注入，所以目标域名必须由本进程按实例种类判定，不能跟着
+    // 调用方传来的 url 走（ADR-0032）。跨 host 重定向时 reqwest 会剥掉
+    // Cookie/Authorization（redirect.rs 的 remove_sensitive_headers），本检查管的是
+    // 「第一跳去哪」这件事本身
+    instances::validate_request_url(&kind, &url)?;
+
     let method = match method.as_deref().unwrap_or("GET") {
         "POST" => Method::POST,
         _ => Method::GET,
     };
     let mut request = client.request(method, &url);
+    // 调用方传来的凭据相关头先剔除（同名会 append 成两条，靠顺序挡不住），
+    // 之后 Cookie / Authorization / User-Agent 只可能由下面的鉴权分支写入
     let mut headers = headers.unwrap_or_default();
+    headers.retain(|name, _| !is_reserved_credential_header(name));
 
     match auth.as_deref() {
         Some("bearer") => {
@@ -876,20 +1000,36 @@ pub async fn provider_request(
                         .to_string()
                 });
         }
-        Some("session_cookie") => {
-            // vault 槽位存用户粘贴的登录凭据原文（curl / Cookie 头 / 裸 session Value），
-            // 解析与拼头统一收敛在这里：网关要求 session+session_2 成对、且 UA 与登录时
-            // 逐字节相同（见 curl_paste 模块注释），前端不做任何加工也不参与 UA
+        Some("session_cookie") if kind == "workbuddy" => {
+            // 三个槽位（session / session2 / userAgent）存的都是用户填的原文，拼头与
+            // 字符集校验收敛在 instances::workbuddy_session：网关要求 session+session_2
+            // 成对、且 UA 与登录时逐字节相同（ADR-0029），缺一即点名报错而不是兜底猜
+            let session = instances::workbuddy_session(&instance_credentials)?;
+            headers.insert("Cookie".to_string(), session.cookie_header);
+            headers.insert("User-Agent".to_string(), session.user_agent);
+        }
+        Some("session_cookie") => return Err("不支持的 provider session_cookie auth".to_string()),
+        Some("qoder_cookie") => {
+            // vault 槽位存用户粘贴的 qoder_session_cookie 的**值**本体（Qoder 网页登录态，
+            // ADR-0030 §2 二次修订）：键名由这里拼进 Cookie 头，输入本身不加工。UA 缺省用
+            // Chrome 常量（Qoder 网关不校验 UA 与登录会话同源——CodexBar 硬编码 UA 实证，
+            // 与 WorkBuddy 的 session_cookie 通道逐字节 UA 校验是两种网关）。Origin/Referer/
+            // Bx-V 等静态协议头与 WorkBuddy 的 x-client-platform 同先例，由前端随端点定义传入
             let slot = credential_slot
                 .clone()
-                .ok_or_else(|| "session_cookie auth 需要 credential_slot".to_string())?;
-            let pasted = resolve_bearer_key(&kind, &slot, &instance_credentials)?;
-            let credential = crate::curl_paste::parse_workbuddy_credential(pasted)?;
-            headers.insert("Cookie".to_string(), credential.cookie_header());
+                .ok_or_else(|| "qoder_cookie auth 需要 credential_slot".to_string())?;
+            let value = resolve_bearer_key(&kind, &slot, &instance_credentials)?;
+            validate_qoder_session_value(value).map_err(|_| {
+                "凭据不是合法的 Cookie 值，请只粘贴 qoder_session_cookie 的值（不带键名、分号或空格）"
+                    .to_string()
+            })?;
             headers.insert(
-                "User-Agent".to_string(),
-                credential.user_agent_or_default().to_string(),
+                "Cookie".to_string(),
+                format!("{QODER_SESSION_COOKIE_NAME}={value}"),
             );
+            headers
+                .entry("User-Agent".to_string())
+                .or_insert_with(|| QODER_DEFAULT_UA.to_string());
         }
         Some("cookie") => return Err("不支持的 provider cookie auth".to_string()),
         _ => {}
@@ -1114,5 +1254,42 @@ mod tests {
 
         assert_eq!(current["apiKey"], "sk-new");
         assert!(!current.contains_key("workspaceId"));
+    }
+
+    /// reqwest 的 `RequestBuilder::header` 是 append（同名并存两条、先到的被网关读到），
+    /// 所以「凭据只由鉴权分支写入」必须靠按名字剔除调用方传入的同名头来保证
+    #[test]
+    fn caller_supplied_credential_headers_are_dropped() {
+        assert!(is_reserved_credential_header("Cookie"));
+        assert!(is_reserved_credential_header("cookie"));
+        assert!(is_reserved_credential_header("USER-AGENT"));
+        assert!(is_reserved_credential_header("Authorization"));
+        assert!(!is_reserved_credential_header("Referer"));
+        assert!(!is_reserved_credential_header("X-Requested-With"));
+
+        let mut headers = HashMap::new();
+        headers.insert("cookie".to_string(), "attacker=1".to_string());
+        headers.insert("User-Agent".to_string(), "spoofed".to_string());
+        headers.insert("Origin".to_string(), "https://qoder.com".to_string());
+        headers.retain(|name, _| !is_reserved_credential_header(name));
+        assert_eq!(headers.len(), 1, "只留下静态协议头");
+        assert!(headers.contains_key("Origin"));
+    }
+
+    #[test]
+    fn qoder_session_value_rejects_separators_control_and_non_ascii() {
+        assert!(validate_qoder_session_value("qoder_session_cookie_value").is_ok());
+        // base64/JWT 形态的值（= padding 与 | . - _ 都是 cookie-value 合法字符）
+        assert!(validate_qoder_session_value("eyJhbGci.eyJzdWIiOjF9==").is_ok());
+        assert!(validate_qoder_session_value("k7Qx2mZp|1790000000|-_ab12CD").is_ok());
+        // 整段 Cookie 头（分号 + 空格）不是「单个值」
+        assert!(validate_qoder_session_value("session=abc; session_2=def").is_err());
+        assert!(validate_qoder_session_value("a=1\r\nX-Evil: 1").is_err());
+        assert!(validate_qoder_session_value("a=1\nb=2").is_err());
+        assert!(validate_qoder_session_value("a=中文").is_err());
+        assert!(validate_qoder_session_value("a=\t1").is_err());
+        assert!(validate_qoder_session_value("\"abc\"").is_err());
+        assert!(validate_qoder_session_value("a,b").is_err());
+        assert!(validate_qoder_session_value("").is_err());
     }
 }

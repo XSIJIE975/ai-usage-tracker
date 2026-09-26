@@ -17,6 +17,7 @@ const instance = (overrides: Partial<ProviderInstance> = {}): ProviderInstance =
   autoRefresh: true,
   threshold: 50,
   balanceThreshold: null,
+  site: "china",
   createdAt: 0,
   ...overrides,
 });
@@ -450,6 +451,61 @@ describe("WorkBuddy 积分阈值规则", () => {
   it("无进度行的残缺快照不把文本行数值误当百分比（「余 42」是 42 积分）", () => {
     expect(evaluateRules(wbInstance({ threshold: 40 }), wbSnapshot(null, "余 42"))).toEqual([]);
     expect(evaluateRules(wbInstance({ threshold: 40 }), wbSnapshot(null))).toEqual([]);
+  });
+});
+
+describe("Qoder 多窗口积分规则（ADR-0030 拆分）", () => {
+  const qdInstance = (overrides: Partial<ProviderInstance> = {}): ProviderInstance => ({
+    ...instance({ id: "qd-1", providerId: "qoder", threshold: 80, balanceThreshold: null }),
+    ...overrides,
+  });
+  /** 与 parseUsageLines 的真实产出同形：订阅行带 resetsAt，资源包行不带 */
+  const qdSnapshot = (...lines: ProviderSnapshot["lines"]): ProviderSnapshot => ({
+    instanceId: "qd-1",
+    providerId: "qoder",
+    providerName: "Qoder",
+    status: "ok",
+    updatedAt: 0,
+    lines,
+  });
+  // 订阅行的重置时刻取一个远未来点，别照抄样本里的 2026-09-26T00:28Z：primaryProgressLine
+  // 用墙上时钟给「不带 resetsAt 的行」外推，照抄的时刻跑过当天就成了过去值，资源包行会
+  // 反超成主窗，这两条在同一天下午就翻了（evaluateRules 走默认时钟，故只能靠时刻本身稳）
+  const PLAN_RESETS_AT = "2030-01-01T00:00:00.000Z";
+  const planLine = (percent: number) => ({
+    type: "progress" as const,
+    label: "订阅积分",
+    used: percent,
+    limit: 100,
+    percentUsed: percent,
+    value: "666",
+    balance: true,
+    resetsAt: PLAN_RESETS_AT,
+  });
+  const packLine = (percent: number) => ({
+    type: "progress" as const,
+    label: "资源包积分",
+    used: percent,
+    limit: 100,
+    percentUsed: percent,
+  });
+
+  it("订阅见底而合并口径未到阈值：两条规则都该响，且告警点名订阅窗", () => {
+    // 真机处境（2026-09-24 中国站付费样本）：订阅 2000/2000 + 资源包 534/1200
+    // 合并算只有 79.19%，拆分前耗尽与阈值双双不响
+    const fires = evaluateRules(
+      qdInstance({ threshold: 80 }),
+      qdSnapshot(planLine(100), packLine(44.5), { type: "text", label: "资源包", value: "余 {remain}" }),
+    );
+    expect(fires.map((fire) => fire.ruleKey)).toEqual(["qd-1:quota", "qd-1:exhausted"]);
+    expect(fires[0]!.params.percent).toBe("100.0");
+    expect(fires[1]!.params.names).toBe("「订阅积分」");
+  });
+
+  it("资源包见底而订阅宽裕：耗尽照报资源包，阈值不被短窗冲高带着响", () => {
+    const fires = evaluateRules(qdInstance({ threshold: 80 }), qdSnapshot(planLine(20), packLine(100)));
+    expect(fires.map((fire) => fire.ruleKey)).toEqual(["qd-1:exhausted"]);
+    expect(fires[0]!.params.names).toBe("「资源包积分」");
   });
 });
 

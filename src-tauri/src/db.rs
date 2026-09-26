@@ -82,6 +82,9 @@ pub struct StoredInstance {
     pub threshold: Option<f64>,
     /// 余额告警阈值（元，仅 glm 使用）；None=不告警
     pub balance_threshold: Option<f64>,
+    /// 站点（仅 qoder 使用：china 中国站 qoder.com.cn / international 国际站 qoder.com）；
+    /// 两套登录域 Cookie 不互通（ADR-0030）
+    pub site: String,
     pub created_at: i64,
 }
 
@@ -110,6 +113,7 @@ impl Db {
                 auto_refresh      INTEGER NOT NULL DEFAULT 1,
                 threshold         REAL,
                 balance_threshold REAL,
+                site              TEXT NOT NULL DEFAULT 'china',
                 created_at        INTEGER NOT NULL
             );
 
@@ -161,6 +165,7 @@ impl Db {
         let db = Self { conn };
         db.rename_legacy_provider_columns()?;
         db.ensure_instance_balance_threshold_column()?;
+        db.ensure_instance_site_column()?;
         db.ensure_notification_params_column()?;
         // 索引依赖列名，必须在改名之后建
         db.conn
@@ -225,6 +230,28 @@ impl Db {
         if !columns.iter().any(|column| column == "balance_threshold") {
             self.conn
                 .execute_batch("ALTER TABLE provider_instances ADD COLUMN balance_threshold REAL;")
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// 站点列（ADR-0030，仅 qoder 使用）晚于建表语句加入：存量库用 ALTER TABLE 补列
+    /// （缺省中国站），新库建表已含该列，此函数为幂等空操作
+    fn ensure_instance_site_column(&self) -> Result<(), String> {
+        let mut statement = self
+            .conn
+            .prepare("PRAGMA table_info(provider_instances)")
+            .map_err(|error| error.to_string())?;
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<String>, _>>()
+            .map_err(|error| error.to_string())?;
+        if !columns.iter().any(|column| column == "site") {
+            self.conn
+                .execute_batch(
+                    "ALTER TABLE provider_instances ADD COLUMN site TEXT NOT NULL DEFAULT 'china';",
+                )
                 .map_err(|error| error.to_string())?;
         }
         Ok(())
@@ -311,7 +338,7 @@ impl Db {
             .conn
             .prepare(
                 r#"
-                SELECT id, provider_id, note, sort_order, pinned, auto_refresh, threshold, balance_threshold, created_at
+                SELECT id, provider_id, note, sort_order, pinned, auto_refresh, threshold, balance_threshold, site, created_at
                 FROM provider_instances
                 ORDER BY pinned DESC, sort_order ASC, created_at ASC
                 "#,
@@ -328,7 +355,8 @@ impl Db {
                     auto_refresh: row.get::<_, i64>(5)? != 0,
                     threshold: row.get(6)?,
                     balance_threshold: row.get(7)?,
-                    created_at: row.get(8)?,
+                    site: row.get(8)?,
+                    created_at: row.get(9)?,
                 })
             })
             .map_err(|error| error.to_string())?;
@@ -344,7 +372,7 @@ impl Db {
             .conn
             .prepare(
                 r#"
-                SELECT id, provider_id, note, sort_order, pinned, auto_refresh, threshold, balance_threshold, created_at
+                SELECT id, provider_id, note, sort_order, pinned, auto_refresh, threshold, balance_threshold, site, created_at
                 FROM provider_instances WHERE id = ?1
                 "#,
             )
@@ -360,7 +388,8 @@ impl Db {
                     auto_refresh: row.get::<_, i64>(5)? != 0,
                     threshold: row.get(6)?,
                     balance_threshold: row.get(7)?,
-                    created_at: row.get(8)?,
+                    site: row.get(8)?,
+                    created_at: row.get(9)?,
                 })
             })
             .map(|instance| Some(instance))
@@ -383,8 +412,8 @@ impl Db {
                 &format!(
                     r#"
                     INSERT {conflict} INTO provider_instances
-                        (id, provider_id, note, sort_order, pinned, auto_refresh, threshold, balance_threshold, created_at)
-                    VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                        (id, provider_id, note, sort_order, pinned, auto_refresh, threshold, balance_threshold, site, created_at)
+                    VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
                     "#
                 ),
                 rusqlite::params![
@@ -396,6 +425,7 @@ impl Db {
                     instance.auto_refresh as i64,
                     instance.threshold,
                     instance.balance_threshold,
+                    instance.site,
                     instance.created_at,
                 ],
             )
@@ -422,6 +452,7 @@ impl Db {
         pinned: Option<bool>,
         threshold: Option<Option<f64>>,
         balance_threshold: Option<Option<f64>>,
+        site: Option<&str>,
     ) -> Result<(), String> {
         let current = self
             .get_instance(id)?
@@ -431,7 +462,7 @@ impl Db {
             .execute(
                 r#"
                 UPDATE provider_instances
-                SET note = ?2, auto_refresh = ?3, pinned = ?4, threshold = ?5, balance_threshold = ?6
+                SET note = ?2, auto_refresh = ?3, pinned = ?4, threshold = ?5, balance_threshold = ?6, site = ?7
                 WHERE id = ?1
                 "#,
                 rusqlite::params![
@@ -441,6 +472,7 @@ impl Db {
                     pinned.unwrap_or(current.pinned) as i64,
                     threshold.unwrap_or(current.threshold),
                     balance_threshold.unwrap_or(current.balance_threshold),
+                    site.unwrap_or(&current.site),
                 ],
             )
             .map_err(|error| error.to_string())?;

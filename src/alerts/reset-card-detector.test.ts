@@ -11,6 +11,7 @@ const instance = (overrides: Partial<ProviderInstance> = {}): ProviderInstance =
   autoRefresh: true,
   threshold: 80,
   balanceThreshold: null,
+  site: "china",
   createdAt: 0,
   ...overrides,
 });

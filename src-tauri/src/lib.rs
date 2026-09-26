@@ -8,7 +8,6 @@ use tauri::{AppHandle, Emitter, Manager};
 
 mod autostart;
 mod commands;
-mod curl_paste;
 mod db;
 mod instances;
 mod tray_scheme;
@@ -202,7 +201,6 @@ pub fn run() {
             commands::refresh_tray_menu,
             autostart::set_autostart,
             commands::diagnose_request,
-            commands::parse_workbuddy_credential,
             commands::quit_app,
         ])
         .run(tauri::generate_context!())

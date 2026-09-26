@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, LoaderCircle, Save } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, ChevronRight, LoaderCircle, Save } from "lucide-react";
+import { Controller, useForm, useWatch, type FieldError, type FieldErrors } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import {
   Dialog,
   DialogBody,
@@ -11,117 +13,49 @@ import {
 } from "../../components/ui/dialog";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
-import { Label } from "../../components/ui/label";
+import { Field, FieldDescription, FieldError as FieldErrorText, FieldLabel } from "../../components/ui/field";
 import { Separator } from "../../components/ui/separator";
 import { Switch } from "../../components/ui/switch";
+import { Select } from "../../components/ui/select";
 import { SecretField, StatusBadge } from "../settings/CredentialInput";
 import { DiagnosisButton } from "../settings/DiagnosisButton";
 import { useVaultCredentials } from "../settings/use-vault-credentials";
 import { SaveMessageBanner, type SaveMessage } from "../settings/provider-settings";
 import {
-  inspectWorkbuddyCredential,
   testDeepSeekApiKey,
   testDeepSeekUserToken,
   testGlmCodingPlanKey,
   testOpenCodeApiKey,
   testOpenCodeConnection,
+  testQoderCookie,
   testWorkbuddyCredential,
-  type WorkbuddyCredentialParts,
 } from "../../diagnostics";
 import { useAppStore } from "../../store/useAppStore";
-import { normalizeOpenCodeAuthCookie } from "../../lib/utils";
+import { providerFormSpecs, siteProfiles, type ProviderFormSpec } from "../../forms/form-specs";
+import { buildInstanceSchema, NOTE_MAX_LENGTH, type InstanceFormValues } from "../../forms/instance-schema";
+import { renderFormError } from "../../forms/error-codes";
+import { hasMultipleSites, providerSites, SITE_LABELS } from "../../lib/instance";
 import { providerName } from "../../providers";
 import { useT } from "../../i18n";
-import type { ProviderInstance, ProviderKind } from "../../types/ipc";
+import type { ProviderInstance, ProviderKind, ProviderSite } from "../../types/ipc";
 
-interface CredentialFieldSpec {
-  slot: string;
-  label: string;
-  placeholder?: string;
-  help?: string;
-  /** 长凭据（整段 Copy as cURL）用多行框，单行 input 粘贴会吃掉换行 */
-  multiline?: boolean;
-  /** 粘贴原文的解析预览：按 Rust 端同一份规则回显三要素是否齐全 */
-  preview?: "workbuddy-credential";
-  /** 展示前归一化（auth cookie 兼容多种粘贴格式） */
-  normalize?: (value: string) => string;
+/** 站点下拉的选项：标签=短名（域名），中文标签同时是 i18n 键 */
+function siteOptions(kind: ProviderKind): { value: ProviderSite; label: string }[] {
+  const profiles = siteProfiles[kind];
+  if (!profiles) return [];
+  return providerSites(kind).map((site) => ({
+    value: site,
+    label: `${SITE_LABELS[site]}（${profiles[site].domain}）`,
+  }));
 }
-
-interface KindConfig {
-  fields: CredentialFieldSpec[];
-  threshold: { label: string; hint: string; min: number; max: number };
-  /** 第二阈值（可选）：glm 的余额告警阈值（元），与配额百分比阈值并存 */
-  balanceThreshold?: { label: string; hint: string; min: number; max: number };
-}
-
-const KIND_CONFIGS: Record<ProviderKind, KindConfig> = {
-  deepseek: {
-    fields: [
-      {
-        slot: "apiKey",
-        label: "DeepSeek API Key",
-        placeholder: "sk-...",
-      },
-      {
-        slot: "userToken",
-        label: "DeepSeek UserToken",
-        placeholder: "platform.deepseek.com 登录令牌",
-        help: "获取方式：打开 platform.deepseek.com 并登录 → F12 打开开发者工具 → Application(应用) → Local Storage → https://platform.deepseek.com → 找到键 userToken，其值为 JSON 对象，复制其中 token 字段的字符串值。",
-      },
-    ],
-    threshold: { label: "余额告警阈值（元）", hint: "余额低于该值时发送系统通知；留空不告警。", min: 0, max: 1_000_000 },
-  },
-  "opencode-go": {
-    fields: [
-      {
-        slot: "workspaceId",
-        label: "OpenCode Go Workspace ID",
-        placeholder: "wrk_...",
-      },
-      {
-        slot: "cookie",
-        label: "OpenCode Auth Cookie",
-        placeholder: "只粘贴 auth Cookie 的 Value",
-        help: "获取方式：打开 opencode.ai 后台，按 F12 → Application → Cookies → opencode.ai，复制名为 auth 的 Value；不要带 Cookie: 或 auth= 前缀。",
-        normalize: normalizeOpenCodeAuthCookie,
-      },
-      {
-        slot: "apiKey",
-        label: "OpenCode Go API Key（可选）",
-        placeholder: "官方 /usage 接口上线后使用",
-      },
-    ],
-    threshold: { label: "本月额度告警阈值（%）", hint: "本月额度已用达到该百分比时发送系统通知；留空不告警。", min: 1, max: 100 },
-  },
-  glm: {
-    fields: [
-      {
-        slot: "planKey",
-        label: "智谱 Coding Plan API Key",
-        placeholder: "粘贴 API Key",
-        help: "获取方式：打开 bigmodel.cn 控制台 → Coding Plan 页 → 「生成 API Key」，复制生成的 API Key 粘贴到上方。",
-      },
-    ],
-    threshold: { label: "Coding Plan 配额告警阈值（%）", hint: "Coding Plan 配额已用达到该百分比时发送系统通知；留空不告警。", min: 1, max: 100 },
-    balanceThreshold: { label: "余额告警阈值（元）", hint: "账户余额低于该值时发送系统通知；留空不告警。", min: 0, max: 1_000_000 },
-  },
-  workbuddy: {
-    fields: [
-      {
-        slot: "cookie",
-        label: "WorkBuddy 登录凭据",
-        placeholder: "粘贴浏览器 DevTools 的 Copy as cURL 整串",
-        help: "获取方式：登录 workbuddy.cn → F12 → Network(网络) → 刷新页面，右键任意一条 www.workbuddy.cn 请求 → Copy as cURL，整串粘贴到上方。",
-        multiline: true,
-        preview: "workbuddy-credential",
-      },
-    ],
-    threshold: { label: "积分已用告警阈值（%）", hint: "积分已用达到该百分比时发送系统通知；留空不告警。", min: 1, max: 100 },
-  },
-};
 
 /** 连通性诊断在表单层组队：workspaceId+cookie 成对探测，其余单字段探测刚输入的值 */
-function diagnosisFor(kind: ProviderKind, slot: string, values: Record<string, string>) {
+function diagnosisFor(
+  kind: ProviderKind,
+  slot: string,
+  values: Record<string, string>,
+  site: ProviderSite,
+) {
   const value = values[slot] ?? "";
   switch (`${kind}/${slot}`) {
     case "deepseek/apiKey":
@@ -139,83 +73,78 @@ function diagnosisFor(kind: ProviderKind, slot: string, values: Record<string, s
       return { test: () => testOpenCodeApiKey(value), disabled: !value.trim() };
     case "glm/planKey":
       return { test: () => testGlmCodingPlanKey(value), disabled: !value.trim() };
-    case "workbuddy/cookie":
-      return { test: () => testWorkbuddyCredential(value), disabled: !value.trim() };
+    case "qoder/cookie":
+      return {
+        test: () => testQoderCookie(value, site),
+        disabled: !value.trim(),
+      };
     default:
       return null;
   }
 }
 
-const WORKBUDDY_PART_LABELS: Record<keyof WorkbuddyCredentialParts, string> = {
-  session: "session",
-  session2: "session_2",
-  userAgent: "UA",
-};
+/** 成对/成组才有意义的凭据按组探测：WorkBuddy 三值缺一即 401（ADR-0029），
+ *  所以它不挂在哪一格下面，而是三格之后一次探测这三格 */
+function groupDiagnosisFor(
+  kind: ProviderKind,
+  values: Record<string, string>,
+  site: ProviderSite,
+) {
+  if (kind !== "workbuddy") return null;
+  const session = values.session ?? "";
+  const session2 = values.session2 ?? "";
+  const userAgent = values.userAgent ?? "";
+  return {
+    test: () => testWorkbuddyCredential(session, session2, userAgent, site),
+    disabled: !session.trim() || !session2.trim() || !userAgent.trim(),
+  };
+}
 
-/** 粘贴原文的即时回显：三要素缺哪一项直接说，避免「保存后只见 401」。
- *  判定走 Rust 端的 parse_workbuddy_credential——与刷新链路同一份实现 */
-function WorkbuddyCredentialPreview({ raw }: { raw: string }) {
-  const t = useT();
-  const text = raw.trim();
-  const [parts, setParts] = useState<WorkbuddyCredentialParts | null>(null);
-  const [error, setError] = useState<string | null>(null);
+function defaultsFor(instance: ProviderInstance | null, kind: ProviderKind): InstanceFormValues {
+  return {
+    note: instance?.note ?? "",
+    site: instance?.site ?? "china",
+    autoRefresh: instance?.autoRefresh ?? true,
+    threshold: instance?.threshold != null ? String(instance.threshold) : "",
+    balanceThreshold: instance?.balanceThreshold != null ? String(instance.balanceThreshold) : "",
+    credentials: Object.fromEntries(providerFormSpecs[kind].fields.map((f) => [f.slot, ""])),
+  };
+}
 
-  useEffect(() => {
-    if (!text) {
-      setParts(null);
-      setError(null);
-      return;
-    }
-    let settled = false;
-    // 粘贴是一次性动作，300ms 去抖足够；每次按键都打 IPC 反而先看到旧结果
-    const timer = setTimeout(() => {
-      inspectWorkbuddyCredential(text)
-        .then((next) => {
-          if (!settled) {
-            setParts(next);
-            setError(null);
-          }
-        })
-        .catch((reason: unknown) => {
-          if (!settled) {
-            setParts(null);
-            setError(reason instanceof Error ? reason.message : String(reason));
-          }
-        });
-    }, 300);
-    return () => {
-      settled = true;
-      clearTimeout(timer);
-    };
-  }, [text]);
-
-  if (!text) return null;
-  if (error) {
-    return <p className="text-xs leading-relaxed text-danger">{error}</p>;
+/** 提交失败时聚焦第一个错误字段（对齐后台表单的滚动定位）：按视觉顺序找，
+ *  而不是按 FieldErrors 的键序；控件是自绘的，用 DOM id 定位比 ref 传递省事 */
+function firstInvalidFieldId(errors: FieldErrors<InstanceFormValues>, spec: ProviderFormSpec) {
+  const credentials = errors.credentials as Record<string, FieldError> | undefined;
+  if (errors.note?.message) return "instance-note";
+  if (errors.site?.message) return "instance-site";
+  for (const field of spec.fields) {
+    if (credentials?.[field.slot]?.message) return `slot-${field.slot}`;
   }
-  if (!parts) return null;
-  const keys = Object.keys(WORKBUDDY_PART_LABELS) as (keyof WorkbuddyCredentialParts)[];
-  return (
-    <div className="space-y-1">
-      <p className="flex flex-wrap items-center gap-x-3 text-xs">
-        {keys.map((key) => (
-          <span key={key} className={parts[key] ? "text-success" : "text-danger"}>
-            {parts[key] ? "✓" : "✗"} {WORKBUDDY_PART_LABELS[key]}
-          </span>
-        ))}
-      </p>
-      {!parts.session2 || !parts.userAgent ? (
-        <p className="text-xs leading-relaxed text-fg-muted">
-          {t("缺 session_2 或 UA 仍会被网关判 401：请贴 Copy as cURL 整串，不要只贴 Cookie。")}
-        </p>
-      ) : null}
-    </div>
-  );
+  if (errors.threshold?.message) return "instance-threshold";
+  if (errors.balanceThreshold?.message) return "instance-balance-threshold";
+  return undefined;
+}
+
+/** 校验错误渲染：schema 只给错误码，文案在这里按当前语言现翻 */
+function FieldErrorMessage({
+  id,
+  error,
+  params,
+}: {
+  id: string;
+  error?: FieldError;
+  params?: Record<string, string | number>;
+}) {
+  const t = useT();
+  if (!error?.message) return null;
+  return <FieldErrorText id={id}>{renderFormError(error.message, params, t)}</FieldErrorText>;
 }
 
 /**
  * 供应商实例配置弹窗：新建与编辑共用。
  * 结构 = 备注 → 凭据区（按种类渲染）→ 自动刷新与阈值 → 取消/保存。
+ * 表单状态与校验由 react-hook-form 承担，校验规则来自 zod schema
+ * （buildInstanceSchema，按种类 + 新建/编辑态装配），字段规格见 providers/form-specs.ts。
  */
 export function InstanceDialog({
   open,
@@ -231,7 +160,7 @@ export function InstanceDialog({
 }) {
   const editing = instance !== null;
   const kind = instance?.providerId ?? providerId;
-  const config = KIND_CONFIGS[kind];
+  const spec = providerFormSpecs[kind];
   const t = useT();
   const vaultStatus = useAppStore((state) => state.vaultStatus);
   const settings = useAppStore((state) => state.settings);
@@ -248,37 +177,56 @@ export function InstanceDialog({
     instance?.id ?? null,
   );
 
-  const [note, setNote] = useState("");
-  const [values, setValues] = useState<Record<string, string>>({});
-  const [autoRefresh, setAutoRefresh] = useState(true);
-  const [threshold, setThreshold] = useState("");
-  const [balanceThreshold, setBalanceThreshold] = useState("");
-  const [message, setMessage] = useState<SaveMessage>(null);
-  const [saving, setSaving] = useState(false);
+  // 凭据没读出来时不能拿空格子当「用户清空」，必填校验要放行（见 buildInstanceSchema）
+  const credentialsLoaded = !editing || credentials !== null;
+  const schema = useMemo(
+    () => buildInstanceSchema(kind, credentialsLoaded),
+    [kind, credentialsLoaded],
+  );
 
-  // 打开时重置表单：编辑模式回填备注/开关/阈值与凭据明文
+  const {
+    control,
+    register,
+    handleSubmit,
+    reset,
+    setValue,
+    getValues,
+    formState: { errors, isSubmitting },
+  } = useForm<InstanceFormValues>({
+    resolver: zodResolver(schema),
+    // 首次失焦后跟随输入实时纠错：既不在用户还没写完就报，也不等到提交才一次糊满屏
+    mode: "onTouched",
+    // 聚焦交给 firstInvalidFieldId：RHF 自己那套按注册 ref 的顺序找，会把焦点丢给备注框
+    // （它在 handleSubmit 的 invalid 回调之后再抢一次焦点），而凭据格走 Controller 没有 ref
+    shouldFocusError: false,
+    defaultValues: defaultsFor(instance, kind),
+  });
+
+  const credentialValues = useWatch({ control, name: "credentials" }) ?? {};
+  const watchedSite = useWatch({ control, name: "site" });
+  const [message, setMessage] = useState<SaveMessage>(null);
+
+  // 打开时重置表单：编辑模式回填备注/开关/阈值/站点（凭据明文由下方 effect 补）
+  const seeded = useRef(false);
   useEffect(() => {
     if (!open) return;
-    setNote(instance?.note ?? "");
-    setAutoRefresh(instance?.autoRefresh ?? true);
-    setThreshold(instance?.threshold != null ? String(instance.threshold) : "");
-    setBalanceThreshold(instance?.balanceThreshold != null ? String(instance.balanceThreshold) : "");
-    setValues({});
+    reset(defaultsFor(instance, kind));
+    seeded.current = false;
     setMessage(null);
-  }, [open, instance]);
+  }, [open, instance, kind, reset]);
 
+  // 凭据明文是异步读出来的，整个编辑会话只回填一次：之后 reload()（比如清了某格）
+  // 不能再把用户刚删空的格子灌回去——表单值就是事实源，回填只负责建立初值
   useEffect(() => {
-    if (!open || !editing || !credentials) return;
-    setValues((current) => {
-      const next = { ...current };
-      for (const field of config.fields) {
-        if (current[field.slot] === undefined && credentials[field.slot] !== undefined) {
-          next[field.slot] = credentials[field.slot];
-        }
-      }
-      return next;
-    });
-  }, [open, editing, credentials, config.fields]);
+    if (!open || !editing || !credentials || seeded.current) return;
+    const current = getValues("credentials");
+    const next = { ...current };
+    for (const field of spec.fields) {
+      if (!current[field.slot]) next[field.slot] = credentials[field.slot] ?? "";
+    }
+    seeded.current = true;
+    setValue("credentials", next, { shouldValidate: false, shouldDirty: false });
+  }, [open, editing, credentials, spec.fields, getValues, setValue]);
 
   const kindTitle = t(providerName(kind));
 
@@ -290,75 +238,72 @@ export function InstanceDialog({
         ? t("本机设备密钥已丢失，保存时将重建凭据库。")
         : undefined;
 
-  const thresholdConfig = config.threshold;
-  const balanceThresholdConfig = config.balanceThreshold;
-  const thresholdValue = useMemo(() => {
-    const parsed = Number(threshold);
-    return Number.isFinite(parsed) ? Math.min(thresholdConfig.max, Math.max(thresholdConfig.min, Math.round(parsed))) : null;
-  }, [threshold, thresholdConfig.min, thresholdConfig.max]);
-  const balanceThresholdValue = useMemo(() => {
-    if (!balanceThresholdConfig) return null;
-    const parsed = Number(balanceThreshold);
-    return Number.isFinite(parsed)
-      ? Math.min(balanceThresholdConfig.max, Math.max(balanceThresholdConfig.min, Math.round(parsed)))
-      : null;
-  }, [balanceThreshold, balanceThresholdConfig]);
-
-  async function clearCredential(slot: string) {
-    if (!instance) return;
-    setSaving(true);
-    try {
-      await saveInstanceCredentials(instance.id, { [slot]: null });
-      setValues((current) => ({ ...current, [slot]: "" }));
-      await reload();
-      setMessage({ kind: "success", text: t("凭据已清除") });
-    } catch (error) {
-      setMessage({ kind: "error", text: error instanceof Error ? error.message : String(error) });
-    } finally {
-      setSaving(false);
-    }
+  /** 「清除」只清输入框：写库统一发生在保存，中途取消就什么都没被改掉 */
+  function clearCredential(slot: string) {
+    setValue(`credentials.${slot}`, "", { shouldValidate: true });
   }
 
-  async function save() {
-    setSaving(true);
+  const submit = handleSubmit(async (values) => {
     setMessage(null);
     try {
-      const filledCredentials: Record<string, string> = {};
-      for (const field of config.fields) {
-        const raw = (values[field.slot] ?? "").trim();
-        if (raw) filledCredentials[field.slot] = field.normalize ? field.normalize(raw) : raw;
+      // 表单值就是事实源：非空写新值，空写 null（即删掉该槽）。必填格不会以空值走到这里，
+      // 所以「删不掉」的老毛病（空格子被 if (raw) 跳过、库里旧值原封不动）在这里断掉。
+      const written: Record<string, string | null> = {};
+      for (const field of spec.fields) {
+        const raw = (values.credentials[field.slot] ?? "").trim();
+        written[field.slot] = raw ? (field.normalize ? field.normalize(raw) : raw) : null;
       }
+      const threshold = values.threshold.trim();
+      const balanceThreshold = values.balanceThreshold.trim();
       if (editing && instance) {
         await updateInstance(instance.id, {
-          note: note.trim(),
-          autoRefresh,
-          threshold: threshold.trim() === "" ? null : thresholdValue,
-          ...(config.balanceThreshold
-            ? { balanceThreshold: balanceThreshold.trim() === "" ? null : balanceThresholdValue }
+          note: values.note.trim(),
+          autoRefresh: values.autoRefresh,
+          // schema 已保证是范围内整数，不再 Math.min/Math.max 静默改写用户输入
+          threshold: threshold === "" ? null : Number(threshold),
+          ...(spec.balanceThreshold
+            ? { balanceThreshold: balanceThreshold === "" ? null : Number(balanceThreshold) }
             : {}),
+          ...(hasMultipleSites(kind) ? { site: values.site } : {}),
         });
-        if (Object.keys(filledCredentials).length > 0) {
-          await saveInstanceCredentials(instance.id, filledCredentials);
+        // 凭据没读出来时整段跳过：那时格子里的空是「没读到」，写下去等于把凭据删了
+        if (credentialsLoaded) {
+          const delta: Record<string, string | null> = {};
+          for (const field of spec.fields) {
+            const prev = credentials?.[field.slot] ?? null;
+            if (written[field.slot] !== prev) delta[field.slot] = written[field.slot];
+          }
+          if (Object.keys(delta).length > 0) await saveInstanceCredentials(instance.id, delta);
         }
         await reloadInstances();
         await reload();
         await refreshInstance(instance.id);
       } else {
-        const created = await addInstance(kind, note.trim(), filledCredentials, {
-          autoRefresh,
-          threshold: threshold.trim() === "" ? null : thresholdValue,
+        const filled: Record<string, string> = {};
+        for (const [slot, value] of Object.entries(written)) {
+          if (value !== null) filled[slot] = value;
+        }
+        const created = await addInstance(kind, values.note.trim(), filled, {
+          autoRefresh: values.autoRefresh,
+          threshold: threshold === "" ? null : Number(threshold),
           balanceThreshold:
-            config.balanceThreshold && balanceThreshold.trim() !== "" ? balanceThresholdValue : null,
+            spec.balanceThreshold && balanceThreshold !== "" ? Number(balanceThreshold) : null,
+          ...(hasMultipleSites(kind) ? { site: values.site } : {}),
         });
         await refreshInstance(created.id);
       }
       onOpenChange(false);
     } catch (error) {
+      // 后端拒绝不是字段形状的错误，走顶部横幅（ADR-0024：失败必须可见）
       setMessage({ kind: "error", text: error instanceof Error ? error.message : String(error) });
-    } finally {
-      setSaving(false);
     }
-  }
+  }, (nextErrors) => {
+    const id = firstInvalidFieldId(nextErrors, spec);
+    if (id) document.getElementById(id)?.focus();
+  });
+
+  const thresholdConfig = spec.threshold;
+  const balanceThresholdConfig = spec.balanceThreshold;
 
   return (
     <Dialog
@@ -366,7 +311,7 @@ export function InstanceDialog({
       onOpenChange={(next) => {
         // 保存进行中拦下 ESC/遮罩关闭（ADR-0024 可见性）：半途关掉后保存结果
         // 会写进已关闭的弹窗，新建路径用户完全得不到反馈
-        if (!next && saving) return;
+        if (!next && isSubmitting) return;
         onOpenChange(next);
       }}
     >
@@ -389,58 +334,144 @@ export function InstanceDialog({
           )}
           <SaveMessageBanner message={message} />
 
-          <div className="space-y-2.5">
-            <div className="flex items-center justify-between">
-              <Label htmlFor="instance-note">{t("备注")}</Label>
-            </div>
+          <Field invalid={Boolean(errors.note)} className="space-y-2.5">
+            <FieldLabel htmlFor="instance-note">{t("备注")}</FieldLabel>
             <Input
               id="instance-note"
-              value={note}
               placeholder={t("如：公司主账号")}
-              onChange={(event) => setNote(event.currentTarget.value)}
+              aria-invalid={Boolean(errors.note) || undefined}
+              aria-describedby={
+                errors.note ? "instance-note-error instance-note-hint" : "instance-note-hint"
+              }
+              {...register("note")}
             />
-            <p className="text-xs text-fg-muted">{t("备注会作为卡片标题；留空时显示供应商名。")}</p>
-          </div>
+            <FieldErrorMessage id="instance-note-error" error={errors.note} params={{ max: NOTE_MAX_LENGTH }} />
+            <FieldDescription id="instance-note-hint">
+              {t("备注会作为卡片标题；留空时显示供应商名。")}
+            </FieldDescription>
+          </Field>
+
+          {hasMultipleSites(kind) && (
+            <>
+              <Separator />
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <FieldLabel htmlFor="instance-site">{t("站点")}</FieldLabel>
+                  <p className="mt-1 text-[13px] text-fg-muted">
+                    {t("两套登录域互不相通，请选择账号所在的站点；换站后需重新粘贴对应站点的凭据。")}
+                  </p>
+                </div>
+                <Controller
+                  name="site"
+                  control={control}
+                  render={({ field }) => (
+                    <Select
+                      id="instance-site"
+                      // label 是中文源文案（i18n 键），渲染时按界面语言翻译
+                      options={siteOptions(kind).map((option) => ({ ...option, label: t(option.label) }))}
+                      value={field.value}
+                      onChange={field.onChange}
+                      onBlur={field.onBlur}
+                      disabled={isSubmitting}
+                    />
+                  )}
+                />
+              </div>
+            </>
+          )}
 
           <Separator />
 
           <div className="space-y-5">
-            {config.fields.map((field) => (
-              <div key={field.slot} className="space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor={`slot-${field.slot}`}>{t(field.label)}</Label>
-                  {editing && <StatusBadge configured={Boolean(credentialStatus?.[field.slot])} />}
-                </div>
-                <SecretField
-                  id={`slot-${field.slot}`}
-                  value={values[field.slot] ?? ""}
-                  placeholder={field.placeholder ? t(field.placeholder) : undefined}
-                  multiline={field.multiline}
-                  disabled={saveDisabled || saving}
-                  onChange={(value) =>
-                    setValues((current) => ({ ...current, [field.slot]: value }))
-                  }
-                  onClear={() => void clearCredential(field.slot)}
-                  clearDisabled={!(values[field.slot] ?? "").trim() || !editing}
-                />
-                {field.help && (
-                  <p className="text-xs leading-relaxed text-fg-muted">{t(field.help)}</p>
-                )}
-                {field.preview === "workbuddy-credential" && (
-                  <WorkbuddyCredentialPreview raw={values[field.slot] ?? ""} />
-                )}
-                {(() => {
-                  const diagnosis = diagnosisFor(kind, field.slot, values);
-                  if (!diagnosis) return null;
-                  return (
+            {(() => {
+              /* 站点级长指引的位置：多格种类（WorkBuddy 三格）折进组尾的「如何获取？」，
+                 常驻长文会把填写框挤出首屏；单格种类（Qoder）指引就贴在唯一的框下面，
+                 不值得多点一次。逐格「这一格贴什么」由各格的短提示承担，两边不重复 */
+              const siteGuide = siteProfiles[kind]?.[watchedSite]?.help;
+              const collapsedGuide = spec.fields.length > 1;
+              const groupDiagnosis = groupDiagnosisFor(kind, credentialValues, watchedSite);
+              return (
+                <>
+                  {spec.fields.map((field) => {
+                    const inlineHelp = field.help ?? (collapsedGuide ? undefined : siteGuide);
+                    const diagnosis = groupDiagnosis
+                      ? null
+                      : diagnosisFor(kind, field.slot, credentialValues, watchedSite);
+                    const slotError = errors.credentials?.[field.slot];
+                    const hintId = `slot-${field.slot}-hint`;
+                    const optionalHintId = `slot-${field.slot}-optional-hint`;
+                    const errorId = `slot-${field.slot}-error`;
+                    const describedBy = [
+                      field.optionalHint && !field.required ? optionalHintId : null,
+                      inlineHelp ? hintId : null,
+                      slotError ? errorId : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" ");
+                    return (
+                      <Field key={field.slot} invalid={Boolean(slotError)}>
+                        <div className="flex items-center justify-between">
+                          <FieldLabel htmlFor={`slot-${field.slot}`} required={field.required}>
+                            {t(field.label)}
+                          </FieldLabel>
+                          {editing && (
+                            <StatusBadge configured={Boolean(credentialStatus?.[field.slot])} />
+                          )}
+                        </div>
+                        <Controller
+                          name={`credentials.${field.slot}`}
+                          control={control}
+                          render={({ field: input }) => (
+                            <SecretField
+                              id={`slot-${field.slot}`}
+                              value={input.value ?? ""}
+                              placeholder={field.placeholder ? t(field.placeholder) : undefined}
+                              disabled={saveDisabled || isSubmitting}
+                              invalid={Boolean(slotError)}
+                              describedBy={describedBy || undefined}
+                              onChange={(value) => input.onChange(value)}
+                              onBlur={input.onBlur}
+                              onClear={() => void clearCredential(field.slot)}
+                              clearDisabled={
+                                !(credentialValues[field.slot] ?? "").trim() || !editing
+                              }
+                            />
+                          )}
+                        />
+                        <FieldErrorMessage id={errorId} error={slotError} />
+                        {field.optionalHint && !field.required && (
+                          <FieldDescription id={optionalHintId}>{t(field.optionalHint)}</FieldDescription>
+                        )}
+                        {inlineHelp && (
+                          <FieldDescription id={hintId}>{t(inlineHelp)}</FieldDescription>
+                        )}
+                        {diagnosis && (
+                          <DiagnosisButton
+                            test={diagnosis.test}
+                            disabled={saveDisabled || isSubmitting || diagnosis.disabled}
+                          />
+                        )}
+                      </Field>
+                    );
+                  })}
+                  {collapsedGuide && siteGuide && (
+                    <details className="group rounded-md border border-line bg-surface-2 px-3 py-2">
+                      <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs font-medium text-fg-muted transition-colors hover:text-fg [&::-webkit-details-marker]:hidden">
+                        <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
+                        {t("如何获取？")}
+                      </summary>
+                      <p className="mt-2 text-xs leading-relaxed text-fg-muted">{t(siteGuide)}</p>
+                    </details>
+                  )}
+                  {groupDiagnosis && (
                     <DiagnosisButton
-                      test={diagnosis.test}
-                      disabled={saveDisabled || saving || diagnosis.disabled}
+                      test={groupDiagnosis.test}
+                      disabled={saveDisabled || isSubmitting || groupDiagnosis.disabled}
                     />
-                  );
-                })()}
-              </div>
-            ))}
+                  )}
+                </>
+              );
+            })()}
           </div>
 
           <Separator />
@@ -448,54 +479,81 @@ export function InstanceDialog({
           <div className="space-y-4">
             <div className="flex items-center justify-between gap-4">
               <div>
-                <Label>{t("自动刷新")}</Label>
+                <FieldLabel>{t("自动刷新")}</FieldLabel>
                 <p className="mt-1 text-[13px] text-fg-muted">
                   {!settings.refreshEnabled
                     ? t("需先在设置中开启自动刷新总开关。")
                     : t("跟随全局刷新间隔，手动刷新不受此开关影响。")}
                 </p>
               </div>
-              <Switch
-                checked={autoRefresh}
-                disabled={!settings.refreshEnabled}
-                onCheckedChange={setAutoRefresh}
+              <Controller
+                name="autoRefresh"
+                control={control}
+                render={({ field }) => (
+                  <Switch
+                    checked={field.value}
+                    disabled={!settings.refreshEnabled || isSubmitting}
+                    onCheckedChange={field.onChange}
+                  />
+                )}
               />
             </div>
 
             <div className="flex items-center justify-between gap-4">
               <div>
-                <Label htmlFor="instance-threshold">{t(thresholdConfig.label)}</Label>
+                <FieldLabel
+                  htmlFor="instance-threshold"
+                  className={balanceThresholdConfig ? undefined : "whitespace-nowrap"}
+                >
+                  {t(thresholdConfig.label)}
+                </FieldLabel>
                 <p className="mt-1 text-[13px] text-fg-muted">{t(thresholdConfig.hint)}</p>
+                <FieldErrorMessage
+                  id="instance-threshold-error"
+                  error={errors.threshold}
+                  params={{ min: thresholdConfig.min, max: thresholdConfig.max }}
+                />
               </div>
               <input
                 id="instance-threshold"
                 type="number"
-                value={threshold}
                 min={thresholdConfig.min}
                 max={thresholdConfig.max}
                 step={1}
-                disabled={!settings.alertsEnabled}
-                onChange={(event) => setThreshold(event.currentTarget.value)}
-                className="tnum h-9 w-28 rounded-md border border-line bg-surface px-2 text-right text-[13px] text-fg shadow-sm focus-visible:border-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring disabled:opacity-40"
+                disabled={!settings.alertsEnabled || isSubmitting}
+                aria-invalid={Boolean(errors.threshold) || undefined}
+                aria-describedby={errors.threshold ? "instance-threshold-error" : undefined}
+                {...register("threshold")}
+                className="tnum h-9 w-28 shrink-0 rounded-md border border-line bg-surface px-2 text-right text-[13px] text-fg shadow-sm focus-visible:border-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring disabled:opacity-40 aria-[invalid=true]:border-danger"
               />
             </div>
 
             {balanceThresholdConfig && (
               <div className="flex items-center justify-between gap-4">
                 <div>
-                  <Label htmlFor="instance-balance-threshold">{t(balanceThresholdConfig.label)}</Label>
+                  <FieldLabel htmlFor="instance-balance-threshold">
+                    {t(balanceThresholdConfig.label)}
+                  </FieldLabel>
                   <p className="mt-1 text-[13px] text-fg-muted">{t(balanceThresholdConfig.hint)}</p>
+                  <FieldErrorMessage
+                    id="instance-balance-threshold-error"
+                    error={errors.balanceThreshold}
+                    params={{ min: balanceThresholdConfig.min, max: balanceThresholdConfig.max }}
+                  />
                 </div>
                 <input
                   id="instance-balance-threshold"
                   type="number"
-                  value={balanceThreshold}
                   min={balanceThresholdConfig.min}
                   max={balanceThresholdConfig.max}
                   step={1}
-                  disabled={!settings.alertsEnabled}
-                  onChange={(event) => setBalanceThreshold(event.currentTarget.value)}
-                  className="tnum h-9 w-28 rounded-md border border-line bg-surface px-2 text-right text-[13px] text-fg shadow-sm focus-visible:border-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring disabled:opacity-40"
+                  disabled={!settings.alertsEnabled || isSubmitting}
+                  aria-invalid={Boolean(errors.balanceThreshold) || undefined}
+                  aria-describedby={
+                    errors.balanceThreshold ? "instance-balance-threshold-error" : undefined
+                  }
+                  {...register("balanceThreshold")}
+                  className="tnum h-9 w-28 shrink-0 rounded-md border border-line bg-surface px-2 text-right text-[13px] text-fg shadow-sm focus-visible:border-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring disabled:opacity-40 aria-[invalid=true]:border-danger"
                 />
               </div>
             )}
@@ -503,11 +561,11 @@ export function InstanceDialog({
         </DialogBody>
 
         <DialogFooter>
-          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)} disabled={saving}>
+          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)} disabled={isSubmitting}>
             {t("取消")}
           </Button>
-          <Button size="sm" disabled={saveDisabled || saving} onClick={() => void save()}>
-            {saving ? (
+          <Button size="sm" disabled={saveDisabled || isSubmitting} onClick={() => void submit()}>
+            {isSubmitting ? (
               <>
                 <LoaderCircle className="h-4 w-4 animate-spin" /> {t("保存中…")}
               </>

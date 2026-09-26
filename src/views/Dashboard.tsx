@@ -47,7 +47,7 @@ import { IconButton } from "../components/ui/icon-button";
 import { ProviderCard } from "../components/ProviderCard";
 import { NotificationCenterPanel } from "./NotificationCenterPanel";
 import { SettingsView } from "./SettingsView";
-import { StatsSheet } from "./stats/StatsSheet";
+import { providerHasStats, StatsSheet } from "./stats/StatsSheet";
 import { formatClock } from "../lib/utils";
 import { cn } from "../lib/utils";
 import { selectOrderedInstances } from "../lib/instance";
@@ -102,7 +102,8 @@ function SortableProviderCard({
   onTogglePin: () => void;
   onEdit?: () => void;
   onDelete: () => void;
-  onOpenStats: () => void;
+  /** 无统计模块的种类（qoder）不传，卡片不渲染「查看统计」按钮 */
+  onOpenStats?: () => void;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useSortable({
     id: instance.id,
@@ -529,7 +530,12 @@ export function Dashboard() {
                         }
                         onEdit={() => setEditing(instance)}
                         onDelete={() => setDeleting(instance)}
-                        onOpenStats={() => setStatsInstance(instance)}
+                        // 无统计面的实例（qoder，或国际站 workbuddy）不传入口，卡片不渲染「查看统计」
+                        onOpenStats={
+                          providerHasStats(instance)
+                            ? () => setStatsInstance(instance)
+                            : undefined
+                        }
                       />
                     ))}
                   </div>
