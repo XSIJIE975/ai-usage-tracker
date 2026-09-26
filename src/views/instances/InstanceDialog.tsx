@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { AlertTriangle, ChevronRight, LoaderCircle, Save } from "lucide-react";
 import { Controller, useForm, useWatch, type FieldError, type FieldErrors } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -14,6 +15,7 @@ import {
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Field, FieldDescription, FieldError as FieldErrorText, FieldLabel } from "../../components/ui/field";
+import { Segmented } from "../../components/ui/segmented";
 import { Separator } from "../../components/ui/separator";
 import { Switch } from "../../components/ui/switch";
 import { Select } from "../../components/ui/select";
@@ -21,6 +23,7 @@ import { SecretField, StatusBadge } from "../settings/CredentialInput";
 import { DiagnosisButton } from "../settings/DiagnosisButton";
 import { useVaultCredentials } from "../settings/use-vault-credentials";
 import { SaveMessageBanner, type SaveMessage } from "../settings/provider-settings";
+import { WorkbuddyQrLogin, WORKBUDDY_TOKEN_SLOTS } from "./WorkbuddyQrLogin";
 import {
   testDeepSeekApiKey,
   testDeepSeekUserToken,
@@ -176,12 +179,34 @@ export function InstanceDialog({
     unlocked && editing && open,
     instance?.id ?? null,
   );
+  // 实例 prop 是父组件打开弹窗时的快照，表单初值用它；但 tokenAutoRenew 这类
+  // 「开关即写库」的投影必须跟 store 里的最新实例走，否则拨了开关界面不动，
+  // 要关掉重开才见新值——订阅实例列表按 id 取 live 值，找不到（未入列）回落快照
+  const liveInstance = useAppStore((state) =>
+    instance ? state.instances.find((item) => item.id === instance.id) ?? instance : instance,
+  );
 
-  // 凭据没读出来时不能拿空格子当「用户清空」，必填校验要放行（见 buildInstanceSchema）
+  // 凭据没读出来时不能拿空格子当「用户清空」，必填校验要放行（见 buildInstanceSchema）。
   const credentialsLoaded = !editing || credentials !== null;
+  const tokenConfigured = Boolean(credentialStatus?.accessToken);
+  // 登录方式互斥（ADR-0035）：workbuddy 表单二选一——扫码登录 / Cookie 登录，一次只
+  // 渲染所选方式的录入区块。初值按库里凭据形态校正（token 非空即扫码、三格非空即
+  // Cookie、都空默认扫码=主推路径），用户动过选择后以选择为准；qrSessionKey 是
+  // 新增态扫码确认后待认领的会话（保存建实例时才 claim，凭据不经前端）
+  const [loginMethod, setLoginMethod] = useState<"qr" | "cookie">("qr");
+  const [qrSessionKey, setQrSessionKey] = useState<string | null>(null);
+  const methodTouched = useRef(false);
+  const hasCookieCredentials = Boolean(
+    credentialStatus?.session || credentialStatus?.session2 || credentialStatus?.userAgent,
+  );
+  useEffect(() => {
+    if (methodTouched.current) return;
+    setLoginMethod(tokenConfigured ? "qr" : hasCookieCredentials ? "cookie" : "qr");
+  }, [tokenConfigured, hasCookieCredentials]);
+  const qrMethod = kind === "workbuddy" && loginMethod === "qr";
   const schema = useMemo(
-    () => buildInstanceSchema(kind, credentialsLoaded),
-    [kind, credentialsLoaded],
+    () => buildInstanceSchema(kind, credentialsLoaded, qrMethod),
+    [kind, credentialsLoaded, qrMethod],
   );
 
   const {
@@ -212,6 +237,9 @@ export function InstanceDialog({
     if (!open) return;
     reset(defaultsFor(instance, kind));
     seeded.current = false;
+    methodTouched.current = false;
+    setLoginMethod("qr");
+    setQrSessionKey(null);
     setMessage(null);
   }, [open, instance, kind, reset]);
 
@@ -243,8 +271,25 @@ export function InstanceDialog({
     setValue(`credentials.${slot}`, "", { shouldValidate: true });
   }
 
+  /** 切换登录方式（ADR-0035 互斥）：切换即作废待认领的扫码会话；实际清另一边的槽
+   *  发生在保存（Cookie 方式写三格时清 token 五槽）或扫码认领（claim 时清三格），
+   *  中途取消零副作用 */
+  function changeLoginMethod(next: "qr" | "cookie") {
+    if (next === loginMethod) return;
+    methodTouched.current = true;
+    setLoginMethod(next);
+    setQrSessionKey(null);
+  }
+
   const submit = handleSubmit(async (values) => {
     setMessage(null);
+    // 登录方式未就绪拦截（ADR-0035 按净效果判定）：净切到扫码但凭据没到手就保存，
+    // 编辑态会把生效中的 Cookie 凭据静默拆掉、新增态建出壳实例——都拦在顶部横幅。
+    // 扫码实例（tokenConfigured）与两边都空的未配置实例不在此列，备注照常可改
+    if (qrMethod && !tokenConfigured && !qrSessionKey && (hasCookieCredentials || !editing)) {
+      setMessage({ kind: "error", text: t("请先完成扫码登录，或改用 Cookie 登录。") });
+      return;
+    }
     try {
       // 表单值就是事实源：非空写新值，空写 null（即删掉该槽）。必填格不会以空值走到这里，
       // 所以「删不掉」的老毛病（空格子被 if (raw) 跳过、库里旧值原封不动）在这里断掉。
@@ -269,9 +314,18 @@ export function InstanceDialog({
         // 凭据没读出来时整段跳过：那时格子里的空是「没读到」，写下去等于把凭据删了
         if (credentialsLoaded) {
           const delta: Record<string, string | null> = {};
-          for (const field of spec.fields) {
-            const prev = credentials?.[field.slot] ?? null;
-            if (written[field.slot] !== prev) delta[field.slot] = written[field.slot];
+          if (qrMethod) {
+            // 扫码方式：三格不渲染也不写（历史双份数据不动，ADR-0035 D6）；
+            // 清三格只发生在扫码认领（claim 在 Rust 内清）与退出扫码登录
+          } else {
+            for (const field of spec.fields) {
+              const prev = credentials?.[field.slot] ?? null;
+              if (written[field.slot] !== prev) delta[field.slot] = written[field.slot];
+            }
+            // 净切到 Cookie 登录（token 还在库）：保存时清 token 五槽，互斥不变量在此成立
+            if (kind === "workbuddy" && tokenConfigured) {
+              for (const slot of WORKBUDDY_TOKEN_SLOTS) delta[slot] = null;
+            }
           }
           if (Object.keys(delta).length > 0) await saveInstanceCredentials(instance.id, delta);
         }
@@ -279,6 +333,22 @@ export function InstanceDialog({
         await reload();
         await refreshInstance(instance.id);
       } else {
+        if (qrMethod && qrSessionKey) {
+          // 扫码方式新增（ADR-0035）：空凭据建实例 → claim 认领扫码产物（Rust 暂存的
+          // token 族写入并顺手清三格），凭据全程不过前端
+          const created = await addInstance(kind, values.note.trim(), {}, {
+            autoRefresh: values.autoRefresh,
+            threshold: threshold === "" ? null : Number(threshold),
+            balanceThreshold:
+              spec.balanceThreshold && balanceThreshold !== "" ? Number(balanceThreshold) : null,
+            ...(hasMultipleSites(kind) ? { site: values.site } : {}),
+          });
+          await invoke("workbuddy_qr_claim", { instanceId: created.id, sessionKey: qrSessionKey });
+          await reloadInstances();
+          await refreshInstance(created.id);
+          onOpenChange(false);
+          return;
+        }
         const filled: Record<string, string> = {};
         for (const [slot, value] of Object.entries(written)) {
           if (value !== null) filled[slot] = value;
@@ -380,8 +450,78 @@ export function InstanceDialog({
             </>
           )}
 
+          {kind === "workbuddy" && (
+            <>
+              <Separator />
+              <div className="flex items-center justify-between gap-4">
+                <FieldLabel>{t("登录方式")}</FieldLabel>
+                <Segmented
+                  className="shrink-0"
+                  options={[
+                    { value: "qr", label: t("扫码登录") },
+                    { value: "cookie", label: t("Cookie 登录") },
+                  ]}
+                  value={loginMethod}
+                  onChange={changeLoginMethod}
+                />
+              </div>
+              <p className="text-[13px] leading-relaxed text-fg-muted">
+                {t("两种方式二选一，切换后原方式的凭据将被清除。")}
+              </p>
+              {/* 净切换的后果提示（ADR-0035）：只在真有另一方式的凭据待清时显示 */}
+              {editing && credentialsLoaded && (loginMethod === "cookie" ? tokenConfigured : loginMethod === "qr" && hasCookieCredentials) && (
+                <p className="text-[13px] leading-relaxed text-fg-muted">
+                  {loginMethod === "cookie"
+                    ? t("保存后将改用 Cookie 登录，扫码凭据将被清除。")
+                    : t("扫码成功后改用扫码登录，Cookie 凭据将被清除。")}
+                </p>
+              )}
+              {loginMethod === "qr" && (
+                <div className="space-y-3">
+                  <WorkbuddyQrLogin
+                    site={watchedSite}
+                    instance={editing && instance ? instance : undefined}
+                    tokenConfigured={tokenConfigured}
+                    nickname={credentials?.nickname}
+                    uid={credentials?.uid}
+                    expiresAt={credentials?.expiresAt}
+                    busy={saveDisabled || isSubmitting}
+                    onChanged={async () => {
+                      if (!instance) return;
+                      await reload();
+                      await refreshInstance(instance.id);
+                    }}
+                    onClearCredentials={
+                      instance ? (delta) => saveInstanceCredentials(instance.id, delta) : undefined
+                    }
+                    onPendingClaim={setQrSessionKey}
+                  />
+                  {editing && instance && tokenConfigured && (
+                    <div className="flex items-center justify-between gap-4">
+                      <div>
+                        <FieldLabel>{t("token 自动续期")}</FieldLabel>
+                        <p className="mt-1 text-[13px] text-fg-muted">
+                          {t("每天自动续期一次；同时使用官方客户端若互相掉线，关闭后改为失效时重新扫码。")}
+                        </p>
+                      </div>
+                      <Switch
+                        checked={(liveInstance ?? instance).tokenAutoRenew}
+                        onCheckedChange={(next) =>
+                          void updateInstance(instance.id, { tokenAutoRenew: next })
+                        }
+                        disabled={isSubmitting}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+
           <Separator />
 
+          {/* 登录方式互斥（ADR-0035）：选「扫码登录」时 Cookie 三格整块不渲染 */}
+          {!qrMethod && (
           <div className="space-y-5">
             {(() => {
               /* 站点级长指引的位置：多格种类（WorkBuddy 三格）折进组尾的「如何获取？」，
@@ -411,7 +551,10 @@ export function InstanceDialog({
                     return (
                       <Field key={field.slot} invalid={Boolean(slotError)}>
                         <div className="flex items-center justify-between">
-                          <FieldLabel htmlFor={`slot-${field.slot}`} required={field.required}>
+                          <FieldLabel
+                            htmlFor={`slot-${field.slot}`}
+                            required={field.required}
+                          >
                             {t(field.label)}
                           </FieldLabel>
                           {editing && (
@@ -473,6 +616,7 @@ export function InstanceDialog({
               );
             })()}
           </div>
+          )}
 
           <Separator />
 
