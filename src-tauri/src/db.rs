@@ -82,9 +82,12 @@ pub struct StoredInstance {
     pub threshold: Option<f64>,
     /// 余额告警阈值（元，仅 glm 使用）；None=不告警
     pub balance_threshold: Option<f64>,
-    /// 站点（仅 qoder 使用：china 中国站 qoder.com.cn / international 国际站 qoder.com）；
-    /// 两套登录域 Cookie 不互通（ADR-0030）
+    /// 站点（仅多站种类有意义，单站种类一律忽略并按 china 处理）；两套登录域凭据不互通
+    /// （ADR-0031）
     pub site: String,
+    /// 扫码登录 token 自动续期开关（仅 workbuddy token 通道使用，ADR-0034）：默认开；
+    /// 与官方客户端互踢的观察结论未定，关掉即「token 用到失效为止、出路重扫」
+    pub token_auto_renew: bool,
     pub created_at: i64,
 }
 
@@ -114,6 +117,7 @@ impl Db {
                 threshold         REAL,
                 balance_threshold REAL,
                 site              TEXT NOT NULL DEFAULT 'china',
+                token_auto_renew  INTEGER NOT NULL DEFAULT 1,
                 created_at        INTEGER NOT NULL
             );
 
@@ -166,6 +170,7 @@ impl Db {
         db.rename_legacy_provider_columns()?;
         db.ensure_instance_balance_threshold_column()?;
         db.ensure_instance_site_column()?;
+        db.ensure_instance_token_auto_renew_column()?;
         db.ensure_notification_params_column()?;
         // 索引依赖列名，必须在改名之后建
         db.conn
@@ -259,6 +264,28 @@ impl Db {
 
     /// 通知模板参数列（ADR-0022）晚于建表语句加入：存量库用 ALTER TABLE 补列，
     /// 新库建表已含该列，此函数为幂等空操作。存量通知行 params 为 NULL，前端原样显示。
+    /// token 自动续期开关列（ADR-0034，仅 workbuddy 使用）晚于建表语句加入：存量库用
+    /// ALTER TABLE 补列（缺省开），新库建表已含该列，此函数为幂等空操作
+    fn ensure_instance_token_auto_renew_column(&self) -> Result<(), String> {
+        let mut statement = self
+            .conn
+            .prepare("PRAGMA table_info(provider_instances)")
+            .map_err(|error| error.to_string())?;
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<String>, _>>()
+            .map_err(|error| error.to_string())?;
+        if !columns.iter().any(|column| column == "token_auto_renew") {
+            self.conn
+                .execute_batch(
+                    "ALTER TABLE provider_instances ADD COLUMN token_auto_renew INTEGER NOT NULL DEFAULT 1;",
+                )
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
     fn ensure_notification_params_column(&self) -> Result<(), String> {
         let mut statement = self
             .conn
@@ -338,7 +365,7 @@ impl Db {
             .conn
             .prepare(
                 r#"
-                SELECT id, provider_id, note, sort_order, pinned, auto_refresh, threshold, balance_threshold, site, created_at
+                SELECT id, provider_id, note, sort_order, pinned, auto_refresh, threshold, balance_threshold, site, token_auto_renew, created_at
                 FROM provider_instances
                 ORDER BY pinned DESC, sort_order ASC, created_at ASC
                 "#,
@@ -356,7 +383,8 @@ impl Db {
                     threshold: row.get(6)?,
                     balance_threshold: row.get(7)?,
                     site: row.get(8)?,
-                    created_at: row.get(9)?,
+                    token_auto_renew: row.get::<_, i64>(9)? != 0,
+                    created_at: row.get(10)?,
                 })
             })
             .map_err(|error| error.to_string())?;
@@ -372,7 +400,7 @@ impl Db {
             .conn
             .prepare(
                 r#"
-                SELECT id, provider_id, note, sort_order, pinned, auto_refresh, threshold, balance_threshold, site, created_at
+                SELECT id, provider_id, note, sort_order, pinned, auto_refresh, threshold, balance_threshold, site, token_auto_renew, created_at
                 FROM provider_instances WHERE id = ?1
                 "#,
             )
@@ -389,7 +417,8 @@ impl Db {
                     threshold: row.get(6)?,
                     balance_threshold: row.get(7)?,
                     site: row.get(8)?,
-                    created_at: row.get(9)?,
+                    token_auto_renew: row.get::<_, i64>(9)? != 0,
+                    created_at: row.get(10)?,
                 })
             })
             .map(|instance| Some(instance))
@@ -412,8 +441,8 @@ impl Db {
                 &format!(
                     r#"
                     INSERT {conflict} INTO provider_instances
-                        (id, provider_id, note, sort_order, pinned, auto_refresh, threshold, balance_threshold, site, created_at)
-                    VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                        (id, provider_id, note, sort_order, pinned, auto_refresh, threshold, balance_threshold, site, token_auto_renew, created_at)
+                        VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                     "#
                 ),
                 rusqlite::params![
@@ -426,6 +455,7 @@ impl Db {
                     instance.threshold,
                     instance.balance_threshold,
                     instance.site,
+                    instance.token_auto_renew as i64,
                     instance.created_at,
                 ],
             )
@@ -453,6 +483,7 @@ impl Db {
         threshold: Option<Option<f64>>,
         balance_threshold: Option<Option<f64>>,
         site: Option<&str>,
+        token_auto_renew: Option<bool>,
     ) -> Result<(), String> {
         let current = self
             .get_instance(id)?
@@ -462,7 +493,7 @@ impl Db {
             .execute(
                 r#"
                 UPDATE provider_instances
-                SET note = ?2, auto_refresh = ?3, pinned = ?4, threshold = ?5, balance_threshold = ?6, site = ?7
+                SET note = ?2, auto_refresh = ?3, pinned = ?4, threshold = ?5, balance_threshold = ?6, site = ?7, token_auto_renew = ?8
                 WHERE id = ?1
                 "#,
                 rusqlite::params![
@@ -473,6 +504,7 @@ impl Db {
                     threshold.unwrap_or(current.threshold),
                     balance_threshold.unwrap_or(current.balance_threshold),
                     site.unwrap_or(&current.site),
+                    token_auto_renew.unwrap_or(current.token_auto_renew) as i64,
                 ],
             )
             .map_err(|error| error.to_string())?;

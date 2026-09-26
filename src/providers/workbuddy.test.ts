@@ -46,6 +46,7 @@ const makeInstance = (): ProviderInstance => {
     threshold: null,
     balanceThreshold: null,
     site: "china",
+    tokenAutoRenew: true,
     createdAt: 0,
   };
 };
@@ -105,11 +106,13 @@ const travelStatusPayload = (over: Record<string, unknown> = {}) =>
 const travelOk = httpResult({ code: 0, msg: "OK" });
 
 /** 三槽（session / session2 / userAgent）的配置状态；缺省三格都已填，
- *  传 { session: false } 模拟「没填齐」（needs_config 路径） */
-const credentialStatus = (fields: { session?: boolean } = {}) => ({
+ *  传 { session: false } 模拟「没填齐」。accessToken（token 通道，ADR-0034）只在
+ *  显式传入时出现——与 vault_credential_status 的「仅含非空项」语义一致 */
+const credentialStatus = (fields: { session?: boolean; accessToken?: boolean } = {}) => ({
   session: fields.session ?? true,
   session2: fields.session ?? true,
   userAgent: fields.session ?? true,
+  ...(fields.accessToken === undefined ? {} : { accessToken: fields.accessToken }),
 });
 
 /** 快照轮询的调用次序：凭据 → （每日首次）签到 → 旅行状态机 → 余额套餐 → 连登。
@@ -410,7 +413,7 @@ describe("workbuddyProvider.fetch", () => {
     mockInvoke.mockResolvedValueOnce(credentialStatus({ session: false }));
     const snapshot = await workbuddyProvider.fetch(instance);
     expect(snapshot.status).toBe("needs_config");
-    expect(snapshot.message).toBe("请在设置中填写 WorkBuddy 的 session、session_2 与浏览器 User-Agent 三项凭据");
+    expect(snapshot.message).toBe("请在设置中扫码登录 WorkBuddy，或填写 Cookie 凭据");
     expect(mockInvoke).toHaveBeenCalledTimes(1);
   });
 
@@ -764,5 +767,237 @@ describe("三格输入的合法性判定", () => {
     expect(isValidUserAgentValue("Mozilla/5.0 中文")).toBe(false);
     expect(isValidUserAgentValue("")).toBe(false);
     expect(isValidUserAgentValue("u".repeat(513))).toBe(false);
+  });
+});
+
+describe("token 通道（扫码登录，ADR-0034）", () => {
+  beforeEach(() => {
+    mockInvoke.mockReset();
+  });
+
+  /** token 通道的调用按命令分派（次序由 runResource/签到链决定，sequence 难维护）。
+   *  resource 传数组＝按次序消费（401 重试/404 回落的多段用例）；travelStatus 同为
+   *  队列（状态机出发成功后回查 status 是第二次调用），缺省空 data＝状态机整体跳过 */
+  const mockTokenFetch = (opts: {
+    checkin?: HttpResult;
+    resource: HttpResult[];
+    refreshError?: boolean;
+    travelStatus?: HttpResult[];
+    travelClaim?: HttpResult;
+    travelDepart?: HttpResult;
+    streak?: HttpResult;
+  }) => {
+    // 第二参加宽为 unknown 再收窄：按 { url?: string } 声明会对 InvokeArgs 逆变
+    mockInvoke.mockImplementation(async (cmd: string, payload?: unknown) => {
+      if (cmd === "vault_credential_status") {
+        return credentialStatus({ accessToken: true, session: false });
+      }
+      if (cmd === "workbuddy_token_refresh") {
+        if (opts.refreshError) throw new Error("token 续期失败：模拟");
+        return true;
+      }
+      if (cmd === "provider_request") {
+        const url =
+          typeof payload === "object" && payload !== null
+            ? String((payload as { url?: string }).url ?? "")
+            : "";
+        if (url.endsWith("/daily-checkin")) return opts.checkin ?? httpResult({ code: 0, msg: "OK", data: {} });
+        if (url.endsWith("/travel/status")) {
+          return opts.travelStatus?.shift() ?? httpResult({ code: 0, msg: "OK", data: null });
+        }
+        if (url.endsWith("/travel/claim")) {
+          return opts.travelClaim ?? httpResult({ code: 0, msg: "OK", data: { credit: 5 } });
+        }
+        if (url.endsWith("/travel/depart")) {
+          return opts.travelDepart ?? httpResult({ code: 0, msg: "OK", data: {} });
+        }
+        if (url.endsWith("/activity/growth/streak")) {
+          return opts.streak ?? httpResult({ code: 0, msg: "OK", data: {} });
+        }
+        const next = opts.resource.shift();
+        if (next === undefined) throw new Error(`多余的 resource 请求：${url}`);
+        return next;
+      }
+      throw new Error(`意外的命令：${cmd}`);
+    });
+  };
+
+  it("通道判定：accessToken 非空优先 token，三格齐走 cookie，都缺为 null", async () => {
+    const { resolveWorkbuddyChannel } = await import("./workbuddy");
+    expect(resolveWorkbuddyChannel({ accessToken: true, session: true, session2: true, userAgent: true })).toBe("token");
+    expect(resolveWorkbuddyChannel({ session: true, session2: true, userAgent: true })).toBe("cookie");
+    expect(resolveWorkbuddyChannel({ session: true, session2: true })).toBeNull();
+    expect(resolveWorkbuddyChannel({})).toBeNull();
+  });
+
+  it("token 档案：中国站 billing 走 codebuddy.cn 的 /v2（spike 实证），growth 走 copilot.tencent.com 无前缀，凭据头由 Rust 注", async () => {
+    const { workbuddyTokenApi } = await import("./workbuddy");
+    const api = workbuddyTokenApi("china");
+    expect(api.urls.resource).toBe("https://www.codebuddy.cn/v2/billing/meter/get-user-resource");
+    expect(api.urls.checkin).toBe("https://www.codebuddy.cn/v2/billing/meter/daily-checkin");
+    // usage 路由实测不在 /v2 前缀下（/v2 404 Route Not Found，无前缀 401 待认证）
+    expect(api.urls.usage).toBe("https://www.codebuddy.cn/billing/meter/get-user-request-usage");
+    expect(api.urls.usageAlt).toBe("https://copilot.tencent.com/billing/meter/get-user-request-usage");
+    expect(api.urls.resourceAlt).toBeNull();
+    // growth 族（对表 travel.go/streak.go 常量）：chatBase 域 + 与 Cookie 通道同路径
+    expect(api.urls.travel).toBe("https://copilot.tencent.com/activity/growth/buddy/travel");
+    expect(api.urls.streak).toBe("https://copilot.tencent.com/activity/growth/streak");
+    expect(api.headers.billing["X-CodeBuddy-Request"]).toBe("1");
+    expect(api.headers.billing["X-Domain"]).toBe("www.codebuddy.cn");
+    expect(api.headers.billing["Accept-Language"]).toBe("zh-CN");
+    // growth 头族按参考 BillingHeaders：不带 Origin/Referer
+    expect(api.headers.growth).not.toHaveProperty("Origin");
+    expect(api.headers.growth).not.toHaveProperty("Referer");
+    expect(api.headers.growth["X-CodeBuddy-Request"]).toBe("1");
+    // 凭据衍生头（Authorization/User-Agent/X-User-Id）不在前端头集里
+    expect(
+      Object.keys(api.headers.billing).some((name) => name.toLowerCase() === "authorization"),
+    ).toBe(false);
+  });
+
+  it("token 档案：国际站首选无 /v2 路径、404 回落 /v2（参考实现双试同序）", async () => {
+    const { workbuddyTokenApi } = await import("./workbuddy");
+    const api = workbuddyTokenApi("international");
+    expect(api.urls.resource).toBe("https://www.workbuddy.ai/billing/meter/get-user-resource");
+    expect(api.urls.resourceAlt).toBe("https://www.workbuddy.ai/v2/billing/meter/get-user-resource");
+    expect(api.urls.usage).toBe("https://www.workbuddy.ai/billing/meter/get-user-request-usage");
+    expect(api.urls.usageAlt).toBe("https://www.workbuddy.ai/v2/billing/meter/get-user-request-usage");
+    expect(api.headers.billing["Accept-Language"]).toBe("en-US");
+  });
+
+  it("token 通道取数：续期→签到→旅行状态→余额→连登，全走 Bearer 端点", async () => {
+    const instance = makeInstance();
+    mockTokenFetch({
+      checkin: httpResult({ code: 0, msg: "success", data: { credit: 30 } }),
+      resource: [httpResult(resourcePayload([totalPackage()]))],
+    });
+    const snapshot = await workbuddyProvider.fetch(instance);
+    expect(snapshot.status).toBe("ok");
+    expect(snapshot.checkin).toEqual({ date: cstDateString(), credited: 30 });
+    const commands = mockInvoke.mock.calls.map((call) => call[0]);
+    expect(commands).toEqual([
+      "vault_credential_status",
+      "workbuddy_token_refresh",
+      "provider_request",
+      "provider_request",
+      "provider_request",
+      "provider_request",
+    ]);
+    const growthUrls = mockInvoke.mock.calls
+      .map((call) => (call[1] as { url?: string }).url)
+      .filter((url): url is string => Boolean(url?.startsWith("https://copilot.tencent.com/")));
+    expect(growthUrls).toEqual([
+      "https://copilot.tencent.com/activity/growth/buddy/travel/status",
+      "https://copilot.tencent.com/activity/growth/streak",
+    ]);
+    const resourceCall = mockInvoke.mock.calls.find(
+      (call) => (call[1] as { url?: string }).url === "https://www.codebuddy.cn/v2/billing/meter/get-user-resource",
+    )?.[1] as { auth?: string; bodyText?: string; headers?: Record<string, string> };
+    expect(resourceCall.auth).toBe("workbuddy_token");
+    expect(JSON.parse(resourceCall.bodyText!)).toMatchObject({
+      ProductCode: "p_tcaca",
+      Status: [0, 3],
+      OnlyValidPeriod: true,
+    });
+    expect(snapshot.lines.map((line) => line.label)).toEqual(["积分余量", "月度套餐"]);
+  });
+
+  it("token 通道旅行状态机：到站领奖→出发→回查，与 Cookie 通道共用同一状态机", async () => {
+    const instance = makeInstance();
+    mockTokenFetch({
+      resource: [httpResult(resourcePayload([totalPackage()]))],
+      travelStatus: [
+        httpResult({
+          code: 0,
+          msg: "OK",
+          data: { state: "arrived", record_id: 42, depart_at: 1_758_900_000, reward_credit: 5 },
+        }),
+        httpResult({
+          code: 0,
+          msg: "OK",
+          data: {
+            state: "traveling",
+            arrive_at: 1_758_910_000,
+            location: { name: "喵喵岛" },
+          },
+        }),
+      ],
+      streak: httpResult({ code: 0, msg: "OK", data: { streak: { days: 5 } } }),
+    });
+    const snapshot = await workbuddyProvider.fetch(instance);
+    expect(snapshot.status).toBe("ok");
+    expect(snapshot.travel).toEqual({ tripKey: "1758900000", credited: 5 });
+    expect(snapshot.lines.map((line) => line.label)).toEqual(["积分余量", "月度套餐", "喵喵旅行", "连登"]);
+    const growthCalls = mockInvoke.mock.calls.filter((call) =>
+      String((call[1] as { url?: string })?.url ?? "").includes("/activity/growth/"),
+    ) as Array<[string, { url?: string; auth?: string; headers?: Record<string, string> }]>;
+    expect(growthCalls.map((call) => call[1].url)).toEqual([
+      "https://copilot.tencent.com/activity/growth/buddy/travel/status",
+      "https://copilot.tencent.com/activity/growth/buddy/travel/claim",
+      "https://copilot.tencent.com/activity/growth/buddy/travel/depart",
+      "https://copilot.tencent.com/activity/growth/buddy/travel/status",
+      "https://copilot.tencent.com/activity/growth/streak",
+    ]);
+    for (const call of growthCalls) {
+      expect(call[1].auth).toBe("workbuddy_token");
+      expect(call[1].headers?.["X-CodeBuddy-Request"]).toBe("1");
+    }
+  });
+
+  it("401 即时救：先续期再重发，救活后照常出数", async () => {
+    const instance = makeInstance();
+    mockTokenFetch({
+      resource: [
+        httpResult("no auth", 401),
+        httpResult(resourcePayload([totalPackage()])),
+      ],
+    });
+    const snapshot = await workbuddyProvider.fetch(instance);
+    expect(snapshot.status).toBe("ok");
+    const refreshCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === "workbuddy_token_refresh");
+    expect(refreshCalls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("401 且续期失败：错误快照给扫码失效文案，不静默回落", async () => {
+    const instance = makeInstance();
+    mockTokenFetch({
+      resource: [httpResult("no auth", 401)],
+      refreshError: true,
+    });
+    const snapshot = await workbuddyProvider.fetch(instance);
+    expect(snapshot.status).toBe("error");
+    const { WORKBUDDY_TOKEN_EXPIRED_MESSAGE } = await import("./workbuddy");
+    expect(snapshot.message).toBe(WORKBUDDY_TOKEN_EXPIRED_MESSAGE);
+  });
+
+  it("tokenAutoRenew 关闭：不做每日续期（401 即时救仍会触发一次）", async () => {
+    const instance = { ...makeInstance(), tokenAutoRenew: false };
+    mockTokenFetch({
+      resource: [
+        httpResult("no auth", 401),
+        httpResult(resourcePayload([totalPackage()])),
+      ],
+    });
+    const snapshot = await workbuddyProvider.fetch(instance);
+    expect(snapshot.status).toBe("ok");
+    const refreshCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === "workbuddy_token_refresh");
+    expect(refreshCalls).toHaveLength(1);
+  });
+
+  it("国际站 404 回落：无 /v2 路径 404 后换 /v2 重发", async () => {
+    const instance = { ...makeInstance(), site: "international" as ProviderSite };
+    mockTokenFetch({
+      resource: [
+        httpResult("not found", 404),
+        httpResult(resourcePayload([totalPackage()])),
+      ],
+    });
+    const snapshot = await workbuddyProvider.fetch(instance);
+    expect(snapshot.status).toBe("ok");
+    const urls = mockInvoke.mock.calls
+      .map((call) => (call[1] as { url?: string }).url)
+      .filter((url): url is string => Boolean(url));
+    expect(urls[0]).toBe("https://www.workbuddy.ai/billing/meter/get-user-resource");
+    expect(urls[urls.length - 1]).toBe("https://www.workbuddy.ai/v2/billing/meter/get-user-resource");
   });
 });

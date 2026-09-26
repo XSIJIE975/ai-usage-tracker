@@ -76,8 +76,41 @@ export const en: Record<string, string> = {
   "积分套餐返回数据解析失败：{detail}": "Failed to parse packages response: {detail}",
   "WorkBuddy 登录凭据无效或已过期，请在设置中重新填写三项凭据":
     "WorkBuddy credentials are invalid or expired — refill the three credential fields in Settings",
-  "请在设置中填写 WorkBuddy 的 session、session_2 与浏览器 User-Agent 三项凭据":
-    "Fill in the WorkBuddy session, session_2 and browser User-Agent values in Settings",
+  "WorkBuddy 扫码登录已失效（可能与官方客户端登录互踢），请重新扫码；或在配置中改用 Cookie 登录":
+    "WorkBuddy QR login has expired (possibly revoked by the official client). Scan again, or switch to Cookie sign-in in settings",
+  "请在设置中扫码登录 WorkBuddy，或填写 Cookie 凭据":
+    "Sign in to WorkBuddy in Settings with the QR code, or fill in cookie credentials",
+  "扫码登录": "QR sign-in",
+  "重新扫码": "Scan again",
+  "退出扫码登录": "Sign out of QR login",
+  "发起扫码": "Start QR sign-in",
+  "扫码账号：{name} · 有效期至 {date}": "Signed in as {name} · valid until {date}",
+  "未知账号": "unknown account",
+  "未知": "unknown",
+  "手机扫码完成 WorkBuddy 登录，自动获取凭据并每日续期。":
+    "Scan with your phone to sign in to WorkBuddy — credentials are fetched and renewed daily.",
+  "用手机浏览器或微信扫码，完成登录后此处自动继续。":
+    "Scan with your phone browser or WeChat; this continues automatically once you sign in.",
+  "复制登录链接": "Copy sign-in link",
+  "换一个": "New code",
+  "二维码已过期，请重新发起扫码。": "The QR code has expired — start a new one.",
+  "登录方式": "Sign-in method",
+  "两种方式二选一，切换后原方式的凭据将被清除。":
+    "Pick one of the two; switching clears the credentials of the other method.",
+  "Cookie 登录": "Cookie sign-in",
+  "保存后将改用 Cookie 登录，扫码凭据将被清除。":
+    "On save this switches to Cookie sign-in and clears the QR sign-in credentials.",
+  "扫码成功后改用扫码登录，Cookie 凭据将被清除。":
+    "Once the QR sign-in succeeds it takes over and the cookie credentials are cleared.",
+  "请先完成扫码登录，或改用 Cookie 登录。":
+    "Finish the QR sign-in first, or switch to Cookie sign-in.",
+  "扫码成功：{name}": "QR sign-in succeeded: {name}",
+  "扫码成功": "QR sign-in succeeded",
+  "凭据已就绪，点击「保存」完成添加。": "Credentials are ready — click Save to finish.",
+  "凭据已保存，即时生效。": "Credentials saved — effective immediately.",
+  "token 自动续期": "Auto token renewal",
+  "每天自动续期一次；同时使用官方客户端若互相掉线，关闭后改为失效时重新扫码。":
+    "Renews the token once a day. If you get signed out of the official client, turn this off and re-scan when the token expires.",
   "Qoder 登录凭据无效或已过期，请在设置中重新粘贴 qoder_session_cookie 的值":
     "Qoder credentials are invalid or expired — paste the qoder_session_cookie value again in Settings",
   "请在设置中粘贴 Qoder 会话 Cookie（qoder_session_cookie）的值":

@@ -120,8 +120,10 @@ export interface InstancePatch {
   pinned?: boolean;
   threshold?: number | null;
   balanceThreshold?: number | null;
-  /** 站点（仅 qoder 使用，ADR-0030）；换站后原 Cookie 跨登录域失效，需重贴 */
+  /** 站点（多站种类使用，ADR-0031）；换站后原凭据跨登录域失效，需重贴/重扫 */
   site?: ProviderSite;
+  /** 扫码登录 token 自动续期开关（仅 workbuddy token 通道，ADR-0034）：缺省=不改 */
+  tokenAutoRenew?: boolean;
 }
 
 interface AppStore {

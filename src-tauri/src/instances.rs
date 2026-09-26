@@ -41,6 +41,12 @@ pub fn credential_label(kind: &str, slot: &str) -> Option<&'static str> {
         ("workbuddy", "session") => Some("WorkBuddy session"),
         ("workbuddy", "session2") => Some("WorkBuddy session_2"),
         ("workbuddy", "userAgent") => Some("WorkBuddy 浏览器 User-Agent"),
+        // token 通道五槽（ADR-0034）：不进表单手填，但鉴权分支与续期命令缺槽报错时点名
+        ("workbuddy", "accessToken") => Some("WorkBuddy 扫码登录 accessToken"),
+        ("workbuddy", "refreshToken") => Some("WorkBuddy 扫码登录 refreshToken"),
+        ("workbuddy", "uid") => Some("WorkBuddy 扫码账号 uid"),
+        ("workbuddy", "expiresAt") => Some("WorkBuddy 扫码登录有效期"),
+        ("workbuddy", "nickname") => Some("WorkBuddy 扫码账号昵称"),
         ("qoder", "cookie") => Some("Qoder 会话 Cookie 值"),
         _ => None,
     }
@@ -77,6 +83,63 @@ fn required_workbuddy_slot<'a>(credentials: &'a Value, slot: &str) -> Result<&'a
             "缺少 {}",
             credential_label("workbuddy", slot).unwrap_or(slot)
         )
+    })
+}
+
+/// token 通道的鉴权材料（ADR-0034）：扫码登录写入的 accessToken + uid。
+/// accessToken 是服务端签发的 JWT 形态（[A-Za-z0-9._-]），uid 参考实现的合法域是
+/// [A-Za-z0-9_-] 且 ≤64（panel/login.go validUID）；两者都来自上游响应、不经用户手填，
+/// 校验只挡异常值（空/超长/换行注入），不挡即报错点名
+#[derive(Debug)]
+pub struct WorkbuddyToken {
+    pub access_token: String,
+    pub uid: String,
+    /// 企业账号非空（billing/growth 头族按参考 BillingHeaders 补 X-Enterprise-Id/X-Tenant-Id）；
+    /// 个人账号为空串即带头族里不带这两个头
+    pub enterprise_id: String,
+}
+
+const MAX_TOKEN_LENGTH: usize = 8_192;
+
+pub fn workbuddy_token(credentials: &Value) -> Result<WorkbuddyToken, String> {
+    let access_token = required_workbuddy_slot(credentials, "accessToken")?;
+    if access_token.len() > MAX_TOKEN_LENGTH {
+        return Err("WorkBuddy accessToken 异常（超长），请重新扫码登录".to_string());
+    }
+    if !access_token
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
+    {
+        return Err("WorkBuddy accessToken 包含非法字符，请重新扫码登录".to_string());
+    }
+    let uid = required_workbuddy_slot(credentials, "uid")?;
+    if uid.is_empty()
+        || uid.len() > 64
+        || !uid
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err("WorkBuddy 扫码账号 uid 异常，请重新扫码登录".to_string());
+    }
+    // 可选槽：空＝个人账号照常；非空时过与 uid 同款的字符集校验（要拼进请求头，
+    // CRLF 注入与 uid 同风险面）
+    let enterprise_id = credentials
+        .get("enterpriseId")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if !enterprise_id.is_empty()
+        && !enterprise_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err("WorkBuddy 企业账号 enterpriseId 包含非法字符".to_string());
+    }
+    Ok(WorkbuddyToken {
+        access_token: access_token.to_string(),
+        uid: uid.to_string(),
+        enterprise_id,
     })
 }
 
@@ -151,9 +214,19 @@ const ALLOWED_HOSTS: &[(&str, &[&str])] = &[
     ),
     ("opencode-go", &["opencode.ai"]),
     ("glm", &["open.bigmodel.cn", "www.bigmodel.cn"]),
+    // 前两域是 Cookie 通道（www 站点）；后两域是 token 通道（ADR-0034）：
+    // copilot.tencent.com 承载授权三端点与 growth 族，www.codebuddy.cn 承载
+    // Bearer 调用的 billing 族（与 Cookie 通道同族接口的另一个网关域）。
+    // 注释只能写在元组外面：allowed-hosts 守卫测试按「种类名与域名数组紧邻」
+    // 的形状解析这张表，条目内部夹注释会让该种类整条解析不出来
     (
         "workbuddy",
-        &["www.workbuddy.cn", "www.workbuddy.ai"],
+        &[
+            "www.workbuddy.cn",
+            "www.workbuddy.ai",
+            "copilot.tencent.com",
+            "www.codebuddy.cn",
+        ],
     ),
     ("qoder", &["qoder.com.cn", "qoder.com"]),
 ];
@@ -268,6 +341,7 @@ pub fn migrate_to_instances(vault: &mut Vault, db: &Db) -> Result<(), String> {
                 balance_threshold: None,
                 // 迁移时代 qoder 尚不存在，缺省中国站无副作用（仅 qoder 消费该字段）
                 site: "china".to_string(),
+                token_auto_renew: true,
                 created_at: now,
             },
             true,
@@ -533,6 +607,7 @@ mod tests {
                 threshold: Some(50.0),
                 balance_threshold: Some(5.0),
                 site: "china".into(),
+                token_auto_renew: true,
                 created_at: now,
             },
             false,
@@ -550,6 +625,7 @@ mod tests {
                 threshold: None,
                 balance_threshold: None,
                 site: "china".into(),
+                token_auto_renew: true,
                 created_at: now,
             },
             false,
@@ -570,6 +646,7 @@ mod tests {
             Some(None),
             Some(Some(3.5)),
             None,
+            None,
         )
         .unwrap();
         let updated = db.get_instance("deepseek").unwrap().unwrap();
@@ -579,7 +656,7 @@ mod tests {
         assert_eq!(updated.balance_threshold, Some(3.5));
 
         // balance_threshold 清除（三层语义的 Some(None)）
-        db.update_instance("deepseek", None, None, None, None, Some(None), None)
+        db.update_instance("deepseek", None, None, None, None, Some(None), None, None)
             .unwrap();
         let cleared = db.get_instance("deepseek").unwrap().unwrap();
         assert!(cleared.balance_threshold.is_none());
@@ -591,7 +668,7 @@ mod tests {
         assert_eq!(reordered[0].id, "uuid-2", "pinned 仍优先于 sort_order");
 
         // 不存在的 id
-        assert!(db.update_instance("missing", None, None, None, None, None, None).is_err());
+        assert!(db.update_instance("missing", None, None, None, None, None, None, None).is_err());
         assert!(db.reorder_instances(&["missing".into()]).is_err());
     }
 
@@ -625,7 +702,7 @@ mod tests {
         assert_eq!(instance.threshold, Some(80.0));
         assert!(instance.balance_threshold.is_none());
 
-        db.update_instance("glm", None, None, None, None, Some(Some(5.0)), None)
+        db.update_instance("glm", None, None, None, None, Some(Some(5.0)), None, None)
             .unwrap();
         assert_eq!(
             db.get_instance("glm").unwrap().unwrap().balance_threshold,
@@ -670,6 +747,7 @@ mod tests {
             None,
             None,
             Some("international"),
+            None,
         )
         .unwrap();
         assert_eq!(
@@ -708,6 +786,7 @@ mod tests {
                     threshold: None,
                     balance_threshold: None,
                     site: "china".into(),
+                    token_auto_renew: true,
                     created_at: now,
                 },
                 false,
@@ -874,5 +953,68 @@ mod tests {
         )
         .unwrap_err()
         .contains("非法字符"));
+    }
+
+    #[test]
+    fn workbuddy_token_validates_slots() {
+        let full = json!({
+            "accessToken": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig-_",
+            "uid": "u-123_ABC",
+        });
+        let token = workbuddy_token(&full).unwrap();
+        assert_eq!(token.uid, "u-123_ABC");
+
+        // 缺 accessToken / uid 点名缺哪一槽（扫码槽不进表单，报错即重扫指引）
+        assert!(workbuddy_token(&json!({ "uid": "u-1" })).unwrap_err().contains("accessToken"));
+        assert!(workbuddy_token(&json!({ "accessToken": "a.b.c" })).unwrap_err().contains("uid"));
+        // 带换行/空格的脏值 → 非法字符（防头注入），uid 域外字符同样拒绝
+        assert!(
+            workbuddy_token(&json!({ "accessToken": "a b\tc", "uid": "u-1" }))
+                .unwrap_err()
+                .contains("非法字符")
+        );
+        assert!(
+            workbuddy_token(&json!({ "accessToken": "a.b.c", "uid": "u 1" }))
+                .unwrap_err()
+                .contains("uid 异常")
+        );
+        // uid 超 64 字符拒绝（参考实现 validUID 同界）
+        assert!(
+            workbuddy_token(&json!({ "accessToken": "a.b.c", "uid": &"u".repeat(65) }))
+                .unwrap_err()
+                .contains("uid 异常")
+        );
+        // enterpriseId 可选：缺省/空串＝个人账号；非空要过同款字符集（拼进请求头）
+        assert_eq!(workbuddy_token(&full).unwrap().enterprise_id, "");
+        let enterprise = json!({
+            "accessToken": "a.b.c",
+            "uid": "u-1",
+            "enterpriseId": "ent-42",
+        });
+        assert_eq!(workbuddy_token(&enterprise).unwrap().enterprise_id, "ent-42");
+        assert!(
+            workbuddy_token(&json!({
+                "accessToken": "a.b.c",
+                "uid": "u-1",
+                "enterpriseId": "ent 42\r\nX-Bad: 1",
+            }))
+            .unwrap_err()
+            .contains("enterpriseId")
+        );
+    }
+
+    #[test]
+    fn workbuddy_allowed_hosts_cover_token_channel_domains() {
+        // token 通道（ADR-0034）：授权域 + Bearer billing 域都要在白名单里，
+        // 否则扫码/取数请求会被 validate_request_url 拒掉
+        let hosts = allowed_hosts("workbuddy").expect("workbuddy 必有白名单");
+        for host in [
+            "copilot.tencent.com",
+            "www.codebuddy.cn",
+            "www.workbuddy.cn",
+            "www.workbuddy.ai",
+        ] {
+            assert!(hosts.contains(&host), "workbuddy 白名单缺少 {host}");
+        }
     }
 }

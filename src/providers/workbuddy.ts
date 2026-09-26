@@ -187,6 +187,277 @@ interface WorkbuddyEnvelope<T> {
   data?: T;
 }
 
+// ─── token 通道（扫码登录，ADR-0034）───
+// 端点与静态头族：billing 族的 Bearer / billing UA / X-User-Id 三个凭据衍生头由
+// Rust 端 provider_request 的 workbuddy_token 分支注入（uid 在 vault 里，前端只见
+// 槽位布尔拿不到明文），这里只带静态协议头。头族组合 2026-09-26 spike 真机验证：
+// 中国站 www.codebuddy.cn 走 /v2 前缀放行；国际站 Bearer 通道路径形态未证，按参考
+// 实现「先无 /v2、404 回落 /v2」双试（client.go 双试同序）
+
+interface WorkbuddyTokenSiteConfig {
+  billingOrigin: string;
+  billingPrefix: string;
+  /** growth 族（旅行/连登）所在域：参考项目 growthJSON = chatBase + path，不带 /v2 前缀
+   *  （travel.go/streak.go 实测组合；路径与 Cookie 通道逐字相同，已对表 2026-09-26） */
+  growthOrigin: string;
+  origin: string;
+  xDomain: string;
+  acceptLanguage: string;
+}
+
+const TOKEN_SITES: Record<ProviderSite, WorkbuddyTokenSiteConfig> = {
+  china: {
+    billingOrigin: "https://www.codebuddy.cn",
+    billingPrefix: "/v2",
+    growthOrigin: "https://copilot.tencent.com",
+    origin: "https://www.codebuddy.cn",
+    xDomain: "www.codebuddy.cn",
+    acceptLanguage: "zh-CN",
+  },
+  international: {
+    billingOrigin: "https://www.workbuddy.ai",
+    billingPrefix: "",
+    // 国际站无成长中心（连登/旅行不存在，能力位门控），growth 域不会被请求，仅占位
+    growthOrigin: "https://www.workbuddy.ai",
+    origin: "https://www.workbuddy.ai",
+    xDomain: "www.workbuddy.ai",
+    acceptLanguage: "en-US",
+  },
+};
+
+export interface WorkbuddyTokenApi {
+  urls: {
+    resource: string;
+    /** 国际站 404 回落用的 /v2 备选路径；中国站已证 /v2 无需备选 */
+    resourceAlt: string | null;
+    checkin: string;
+    /** 旅行状态机基址（/status /depart /claim 拼在其后）与连登查询 */
+    travel: string;
+    streak: string;
+    /** 统计明细：路由实测（2026-09-26 无凭据探测）不在 /v2 前缀下——/v2 前缀 404
+     *  Route Not Found，无前缀 /billing/meter/ 在 codebuddy.cn / copilot.tencent.com /
+     *  workbuddy.ai 三域全 401（路由存在待认证）。首选 billing 域无前缀 */
+    usage: string;
+    /** 中国站备选 = growth 域同路径（探测同样 401）；国际站 = /v2 回落 */
+    usageAlt: string | null;
+  };
+  headers: {
+    /** billing 族静态协议头（凭据衍生头由 Rust 注入，见文件头注释） */
+    billing: Record<string, string>;
+    /** growth 族静态头：参考 BillingHeaders 组合不带 Origin/Referer（travel.go growthJSON
+     *  同款）；凭据衍生头（Bearer/UA/X-User-Id/企业头）同样由 Rust 注入 */
+    growth: Record<string, string>;
+  };
+}
+
+export function workbuddyTokenApi(site: ProviderSite): WorkbuddyTokenApi {
+  const config = TOKEN_SITES[site];
+  const billingPath = (prefix: string) => `${config.billingOrigin}${prefix}/billing/meter`;
+  return {
+    urls: {
+      resource: `${billingPath(config.billingPrefix)}/get-user-resource`,
+      resourceAlt:
+        site === "international"
+          ? `${billingPath("/v2")}/get-user-resource`
+          : null,
+      checkin: `${billingPath(config.billingPrefix)}/daily-checkin`,
+      travel: `${config.growthOrigin}/activity/growth/buddy/travel`,
+      streak: `${config.growthOrigin}/activity/growth/streak`,
+      usage: `${config.billingOrigin}/billing/meter/get-user-request-usage`,
+      usageAlt:
+        site === "international"
+          ? `${config.billingOrigin}/v2/billing/meter/get-user-request-usage`
+          : `${config.growthOrigin}/billing/meter/get-user-request-usage`,
+    },
+    headers: {
+      billing: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Origin: config.origin,
+        Referer: `${config.origin}/`,
+        "X-CodeBuddy-Request": "1",
+        "Accept-Language": config.acceptLanguage,
+        "X-Domain": config.xDomain,
+      },
+      growth: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "X-CodeBuddy-Request": "1",
+        "Accept-Language": config.acceptLanguage,
+        "X-Domain": config.xDomain,
+      },
+    },
+  };
+}
+
+/** token 通道的失效文案：重扫或切换登录方式为 Cookie 登录——不静默换通道（ADR-0024） */
+export const WORKBUDDY_TOKEN_EXPIRED_MESSAGE =
+  "WorkBuddy 扫码登录已失效（可能与官方客户端登录互踢），请重新扫码；或在配置中改用 Cookie 登录";
+
+/** 两边都没凭据的指引（卡片与统计页同款）：扫码是主推（免 F12），Cookie 登录是另一极（ADR-0035） */
+export const WORKBUDDY_NEEDS_CONFIG_MESSAGE =
+  "请在设置中扫码登录 WorkBuddy，或填写 Cookie 凭据";
+
+/** 通道判定（ADR-0035 互斥模型下的确定性读出）：accessToken 槽非空即 token 通道；
+ *  三格齐走 Cookie 通道；两者都缺返回 null（needs_config，文案同时给出两种出路） */
+export function resolveWorkbuddyChannel(
+  status: InstanceCredentialStatus,
+): "token" | "cookie" | null {
+  if (status.accessToken) return "token";
+  if (status.session && status.session2 && status.userAgent) return "cookie";
+  return null;
+}
+
+/** 每实例「今日已续期」内存标记：每日一刷挂每天第一次刷新链（签到同位置，ADR-0034）。
+ *  失败不设标记——旧 token 原样保留，下轮再试。续期/扫码授权三端点不在前端拼 URL：
+ *  由 Rust 侧 workbuddy_token_refresh / workbuddy_qr_* 直连授权域
+ *  （国区 https://copilot.tencent.com，国际站 https://www.workbuddy.ai） */
+const tokenRenewedToday = new Map<string, string>();
+
+async function renewTokenOnce(instance: ProviderInstance, today: string): Promise<void> {
+  // 实例级开关默认开；关掉即「token 用到失效为止」，只有 401 即时救仍会尝试
+  if (instance.tokenAutoRenew === false) return;
+  if (tokenRenewedToday.get(instance.id) === today) return;
+  try {
+    await invoke("workbuddy_token_refresh", { instanceId: instance.id });
+    tokenRenewedToday.set(instance.id, today);
+  } catch {
+    // 静默：续期失败不阻断取数（accessToken 仍可能有效），下轮刷新再试
+  }
+}
+
+/** token 通道取数。功能面与 Cookie 通道对齐（ADR-0034 分波二批全量接入）：签到 →
+ *  喵喵旅行 → 余额/套餐 + 连登；growth 族走 copilot.tencent.com（无 /v2 前缀，参考
+ *  growthJSON 实测组合），路径与 Cookie 通道逐字相同。辅助源（旅行/连登）失败静默、
+ *  不触发即时救——token 是否还活着由余额主源判定并救活 */
+async function fetchWorkbuddyTokenSnapshot(
+  instance: ProviderInstance,
+  updatedAt: number,
+): Promise<ProviderSnapshot> {
+  const site = workbuddySiteOf(instance);
+  const tokenApi = workbuddyTokenApi(site);
+  const today = cstDateString(updatedAt);
+  await renewTokenOnce(instance, today);
+
+  // 签到（能力位沿用站点表：国际站无签到）：失败不打断取数，与 Cookie 通道同构
+  let checkin: { date: string; credited: number } | undefined;
+  if (SITES[site].capabilities.checkin && checkedInToday.get(instance.id) !== today) {
+    try {
+      const result = await invoke<HttpResult>("provider_request", {
+        instanceId: instance.id,
+        url: tokenApi.urls.checkin,
+        method: "POST",
+        auth: "workbuddy_token",
+        headers: tokenApi.headers.billing,
+        bodyText: "{}",
+      });
+      const outcome = parseCheckinResult(result);
+      if (outcome.kind === "done") {
+        checkedInToday.set(instance.id, today);
+        checkin = { date: today, credited: outcome.credit };
+      } else if (outcome.kind === "already") {
+        checkedInToday.set(instance.id, today);
+      }
+    } catch {
+      // 网络/调用层失败：不设标记，下轮刷新重试
+    }
+  }
+
+  // 喵喵旅行：与 Cookie 通道共用同一状态机，仅 auth/头族不同
+  let travel: { tripKey: string; credited: number } | undefined;
+  let travelLine: MetricLine | null = null;
+  if (SITES[site].capabilities.travel) {
+    ({ travel, travelLine } = await runTravelMachine(instance.id, tokenApi.urls.travel, {
+      auth: "workbuddy_token",
+      headers: tokenApi.headers.growth,
+    }));
+  }
+
+  // 余额/套餐：401/403 先即时续期救一次（ADR-0034），救不活按 token 失效报错。
+  //  国际站 404 时按双试序换 /v2 备选路径重发；连登与余额并行取（与 Cookie 通道同构）
+  const requestResource = (url: string) =>
+    invoke<HttpResult>("provider_request", {
+      instanceId: instance.id,
+      url,
+      method: "POST",
+      auth: "workbuddy_token",
+      headers: tokenApi.headers.billing,
+      bodyText: RESOURCE_BODY,
+    });
+  const runResource = async (): Promise<ResourceOutcome> => {
+    let result = await requestResource(tokenApi.urls.resource);
+    if (result.status === 404 && tokenApi.urls.resourceAlt) {
+      result = await requestResource(tokenApi.urls.resourceAlt);
+    }
+    if (result.status !== 401 && result.status !== 403) return processResource(result);
+    try {
+      await invoke("workbuddy_token_refresh", { instanceId: instance.id });
+      const retried = await requestResource(tokenApi.urls.resource);
+      const outcome = processResource(retried);
+      if (!outcome.ok && (retried.status === 401 || retried.status === 403)) {
+        return { ok: false, lines: [], error: WORKBUDDY_TOKEN_EXPIRED_MESSAGE };
+      }
+      return outcome;
+    } catch {
+      return { ok: false, lines: [], error: WORKBUDDY_TOKEN_EXPIRED_MESSAGE };
+    }
+  };
+  const [resourceSettled, streakSettled] = await Promise.allSettled([
+    runResource(),
+    SITES[site].capabilities.streak
+      ? invoke<HttpResult>("provider_request", {
+          instanceId: instance.id,
+          url: tokenApi.urls.streak,
+          method: "GET",
+          auth: "workbuddy_token",
+          headers: tokenApi.headers.growth,
+        })
+      : Promise.resolve(null),
+  ]);
+  const resourceOutcome =
+    resourceSettled.status === "fulfilled"
+      ? resourceSettled.value
+      : {
+          ok: false as const,
+          lines: [],
+          error: "积分套餐查询失败：{detail}",
+          errorParams: { detail: toErrorText(resourceSettled.reason) },
+        };
+  const streakLine = parseStreakResult(
+    streakSettled.status === "fulfilled" ? streakSettled.value : null,
+  );
+
+  if (!resourceOutcome.ok) {
+    return {
+      instanceId: instance.id,
+      providerId: "workbuddy",
+      providerName: PROVIDER_NAME,
+      status: "error",
+      updatedAt,
+      message: resourceOutcome.error,
+      messageParams: resourceOutcome.errorParams,
+      lines: [],
+      // 错误快照也携带签到/领奖字段：签到、领奖与取数是不同源，取数失败不吞掉已发生的事件
+      ...(checkin ? { checkin } : {}),
+      ...(travel ? { travel } : {}),
+    };
+  }
+  return {
+    instanceId: instance.id,
+    providerId: "workbuddy",
+    providerName: PROVIDER_NAME,
+    status: "ok",
+    updatedAt,
+    lines: [
+      ...resourceOutcome.lines,
+      ...(travelLine ? [travelLine] : []),
+      ...(streakLine ? [streakLine] : []),
+    ],
+    ...(checkin ? { checkin } : {}),
+    ...(travel ? { travel } : {}),
+  };
+}
+
 /** get-user-resource 的单份套餐（字段名为服务端 PascalCase 原样；Precise 系为高精度数值，
  *  整数返回 number、小数可能返回字符串）。周期制套餐（Cycle 系）优先于总量制（Capacity 系） */
 export interface WorkbuddyPackage {
@@ -570,14 +841,17 @@ const buddyClaimedKeys = new Map<string, string>();
 
 /** 派出喵喵（location_id 1~4 收益/时长区间相同，workbuddy2api 实测，固定 1）；
  *  结果静默——失败不重试不标记，服务端 daily_limit 与行程状态天然节流 */
-async function departTravel(instanceId: string, api: WorkbuddyApi): Promise<boolean> {
+async function departTravel(
+  instanceId: string,
+  travelUrl: string,
+  requestInit: { auth: "session_cookie" | "workbuddy_token"; headers: Record<string, string> },
+): Promise<boolean> {
   try {
     const result = await invoke<HttpResult>("provider_request", {
       instanceId,
-      url: `${api.urls.travel}/depart`,
+      url: `${travelUrl}/depart`,
       method: "POST",
-      auth: "session_cookie",
-      headers: api.headers.travel,
+      ...requestInit,
       bodyText: JSON.stringify({ location_id: 1 }),
     });
     return result.status === 200 && isEnvelopeOk(JSON.parse(result.bodyText) as WorkbuddyEnvelope<unknown>);
@@ -586,21 +860,102 @@ async function departTravel(instanceId: string, api: WorkbuddyApi): Promise<bool
   }
 }
 
+/** 喵喵旅行状态机（领奖 → 出发 → 回查，ADR-0029 修订；ADR-0034 起两通道共用）：
+ *  通道差异只在 requestInit（auth 与头族），路径两通道逐字相同。辅助源语义不变：
+ *  任何失败静默跳过不影响快照状态，只有「本轮真实领到」才返回 travel 喂通知检测器 */
+async function runTravelMachine(
+  instanceId: string,
+  travelUrl: string,
+  requestInit: { auth: "session_cookie" | "workbuddy_token"; headers: Record<string, string> },
+): Promise<{ travel?: { tripKey: string; credited: number }; travelLine: MetricLine | null }> {
+  let travel: { tripKey: string; credited: number } | undefined;
+  let travelLine: MetricLine | null = null;
+  try {
+    const travelStatus = parseTravelStatus(
+      await invoke<HttpResult>("provider_request", {
+        instanceId,
+        ...requestInit,
+        url: `${travelUrl}/status`,
+        method: "GET",
+      }),
+    );
+    if (travelStatus?.state === "traveling") {
+      travelLine = parseTravelLine(travelStatus);
+    } else if (travelStatus?.state === "arrived" || travelStatus?.state === "idle") {
+      // 领奖只对到站记录发起（idle 无 record_id，跳过）；同一行程只尝试一次
+      if (travelStatus.record_id != null) {
+        const tripKey = String(travelStatus.depart_at ?? travelStatus.record_id);
+        if (buddyClaimedKeys.get(instanceId) !== tripKey) {
+          const claim = await invoke<HttpResult>("provider_request", {
+            instanceId,
+            ...requestInit,
+            url: `${travelUrl}/claim`,
+            method: "POST",
+            bodyText: JSON.stringify({ record_id: travelStatus.record_id }),
+          });
+          const outcome = parseClaimResult(claim);
+          if (outcome.kind !== "fail") {
+            buddyClaimedKeys.set(instanceId, tripKey);
+            if (outcome.kind === "claimed") {
+              travel = { tripKey, credited: outcome.credit };
+            }
+          }
+        }
+      }
+      // 出发：名额已用尽（daily_limit_reached）或刚出发失败时不动；出发响应不含行程
+      // 信息，回查 status 换旅行中行
+      if (travelStatus.daily_limit_reached !== true && (await departTravel(instanceId, travelUrl, requestInit))) {
+        travelLine = parseTravelLine(
+          parseTravelStatus(
+            await invoke<HttpResult>("provider_request", {
+              instanceId,
+              ...requestInit,
+              url: `${travelUrl}/status`,
+              method: "GET",
+            }),
+          ),
+        );
+      }
+    }
+  } catch {
+    // 静默：旅行是辅助源，下轮刷新重走状态机
+  }
+  return { ...(travel ? { travel } : {}), travelLine };
+}
+
+/** 连登响应 → 卡片行；任何失败返回 null（辅助源，两通道共用）。取不到（无签到体系/
+ *  接口失败）返回 null，该行直接不渲染 */
+function parseStreakResult(result: HttpResult | null): MetricLine | null {
+  if (!result || result.status !== 200) return null;
+  try {
+    const json = JSON.parse(result.bodyText) as WorkbuddyEnvelope<WorkbuddyStreakData>;
+    return isEnvelopeOk(json) ? parseStreakLine(json.data) : null;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchWorkbuddySnapshot(instance: ProviderInstance): Promise<ProviderSnapshot> {
   const status = await invoke<InstanceCredentialStatus>("vault_credential_status", {
     instanceId: instance.id,
   });
   const updatedAt = Date.now();
-  if (!status.session || !status.session2 || !status.userAgent) {
+  // 双凭据通道（ADR-0034）：token 非空优先走 token 通道；三格齐走 Cookie；都缺才
+  // needs_config——文案同时给出两种出路，扫码是首选（免 F12）
+  const channel = resolveWorkbuddyChannel(status);
+  if (!channel) {
     return {
       instanceId: instance.id,
       providerId: "workbuddy",
       providerName: PROVIDER_NAME,
       status: "needs_config",
       updatedAt,
-      message: "请在设置中填写 WorkBuddy 的 session、session_2 与浏览器 User-Agent 三项凭据",
+      message: WORKBUDDY_NEEDS_CONFIG_MESSAGE,
       lines: [],
     };
+  }
+  if (channel === "token") {
+    return fetchWorkbuddyTokenSnapshot(instance, updatedAt);
   }
 
   const site = workbuddySiteOf(instance);
@@ -640,58 +995,10 @@ async function fetchWorkbuddySnapshot(instance: ProviderInstance): Promise<Provi
   let travel: { tripKey: string; credited: number } | undefined;
   let travelLine: MetricLine | null = null;
   if (capabilities.travel) {
-    try {
-      const requestInit = {
-        instanceId: instance.id,
-        auth: "session_cookie" as const,
-        headers: api.headers.travel,
-      };
-      const travelStatus = parseTravelStatus(
-        await invoke<HttpResult>("provider_request", {
-          ...requestInit,
-          url: `${api.urls.travel}/status`,
-          method: "GET",
-        }),
-      );
-      if (travelStatus?.state === "traveling") {
-        travelLine = parseTravelLine(travelStatus);
-      } else if (travelStatus?.state === "arrived" || travelStatus?.state === "idle") {
-        // 领奖只对到站记录发起（idle 无 record_id，跳过）；同一行程只尝试一次
-        if (travelStatus.record_id != null) {
-          const tripKey = String(travelStatus.depart_at ?? travelStatus.record_id);
-          if (buddyClaimedKeys.get(instance.id) !== tripKey) {
-            const claim = await invoke<HttpResult>("provider_request", {
-              ...requestInit,
-              url: `${api.urls.travel}/claim`,
-              method: "POST",
-              bodyText: JSON.stringify({ record_id: travelStatus.record_id }),
-            });
-            const outcome = parseClaimResult(claim);
-            if (outcome.kind !== "fail") {
-              buddyClaimedKeys.set(instance.id, tripKey);
-              if (outcome.kind === "claimed") {
-                travel = { tripKey, credited: outcome.credit };
-              }
-            }
-          }
-        }
-        // 出发：名额已用尽（daily_limit_reached）或刚出发失败时不动；出发响应不含行程
-        // 信息，回查 status 换旅行中行
-        if (travelStatus.daily_limit_reached !== true && (await departTravel(instance.id, api))) {
-          travelLine = parseTravelLine(
-            parseTravelStatus(
-              await invoke<HttpResult>("provider_request", {
-                ...requestInit,
-                url: `${api.urls.travel}/status`,
-                method: "GET",
-              }),
-            ),
-          );
-        }
-      }
-    } catch {
-      // 静默：旅行是辅助源，下轮刷新重走状态机
-    }
+    ({ travel, travelLine } = await runTravelMachine(instance.id, api.urls.travel, {
+      auth: "session_cookie",
+      headers: api.headers.travel,
+    }));
   }
 
   // 连登按能力位取数：本站没有就把这一路置为 null，下游 value?.status 的判断自然出局
@@ -744,15 +1051,9 @@ async function fetchWorkbuddySnapshot(instance: ProviderInstance): Promise<Provi
   }
 
   // 连登是辅助展示源：失败静默（无行、无 message），不拖累快照
-  let streakLine: MetricLine | null = null;
-  if (streakSettled.status === "fulfilled" && streakSettled.value?.status === 200) {
-    try {
-      const json = JSON.parse(streakSettled.value.bodyText) as WorkbuddyEnvelope<WorkbuddyStreakData>;
-      if (isEnvelopeOk(json)) streakLine = parseStreakLine(json.data);
-    } catch {
-      // 静默
-    }
-  }
+  const streakLine = parseStreakResult(
+    streakSettled.status === "fulfilled" ? streakSettled.value : null,
+  );
 
   return {
     instanceId: instance.id,

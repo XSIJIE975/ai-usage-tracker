@@ -12,6 +12,7 @@ const instance = (note: string): ProviderInstance => ({
   threshold: null,
   balanceThreshold: null,
   site: "china",
+  tokenAutoRenew: true,
   createdAt: 0,
 });
 

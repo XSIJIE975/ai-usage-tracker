@@ -12,6 +12,7 @@ const makeInstance = (id = "wb-1"): ProviderInstance => ({
   threshold: null,
   balanceThreshold: null,
   site: "china",
+  tokenAutoRenew: true,
   createdAt: 0,
 });
 

@@ -99,6 +99,7 @@ describe("refreshAll（ADR-0023）", () => {
     threshold: null,
     balanceThreshold: null,
     site: "china",
+    tokenAutoRenew: true,
     createdAt: 0,
     ...overrides,
   });

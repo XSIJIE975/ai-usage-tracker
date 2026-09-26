@@ -18,6 +18,7 @@ const instance = (overrides: Partial<ProviderInstance> = {}): ProviderInstance =
   threshold: 50,
   balanceThreshold: null,
   site: "china",
+  tokenAutoRenew: true,
   createdAt: 0,
   ...overrides,
 });

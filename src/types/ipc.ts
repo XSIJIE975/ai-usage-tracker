@@ -17,6 +17,9 @@ export interface ProviderInstance {
   balanceThreshold: number | null;
   /** 站点（仅多站种类有意义，单站种类一律忽略并按 china 处理） */
   site: ProviderSite;
+  /** 扫码登录 token 自动续期（仅 workbuddy token 通道，ADR-0034）：默认开；关掉即
+   *  token 用到失效为止、出路重扫 */
+  tokenAutoRenew: boolean;
   createdAt: number;
 }
 
@@ -43,10 +46,27 @@ export interface ProviderRequestOptions {
   headers?: Record<string, string>;
   bodyText?: string;
   /** "session_cookie"：从 vault 槽位读 session 的 Value，校验后拼作 Cookie: session=<值>（workbuddy）
+   *  "workbuddy_token"：从 vault 槽位读扫码所得 accessToken/uid，注入 Bearer + billing UA + X-User-Id（ADR-0034）
    *  "qoder_cookie"：从 vault 槽位读 qoder_session_cookie 的 Value，校验后拼作 Cookie: qoder_session_cookie=<值>（qoder，ADR-0030） */
-  auth?: "bearer" | "cookie" | "none" | "session_cookie" | "qoder_cookie";
+  auth?: "bearer" | "cookie" | "none" | "session_cookie" | "workbuddy_token" | "qoder_cookie";
   /** bearer/session_cookie/qoder_cookie 时的凭据槽；bearer 缺省用该种类的主鉴权键 */
   credentialSlot?: string;
+}
+
+/** workbuddy_qr_start 的返回（ADR-0034；无实例会话形态见 ADR-0035） */
+export interface WorkbuddyQrStartResult {
+  /** 浏览器授权链接（authUrl）：整段编码为二维码或复制打开，截断即「登录链接不完整」 */
+  authUrl: string;
+  /** 会话键（上游 state 本身）：后续 poll 与 claim 都用它，已在二维码里曝光非新增敏感面 */
+  sessionKey: string;
+}
+
+/** workbuddy_qr_poll 的返回 */
+export interface WorkbuddyQrPollResult {
+  status: "pending" | "confirmed" | "expired";
+  nickname?: string | null;
+  /** token 有效期（epoch 毫秒）；confirmed 时非空 */
+  expiresAtMs?: number | null;
 }
 
 export interface MetricLine {

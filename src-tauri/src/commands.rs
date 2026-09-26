@@ -369,6 +369,7 @@ pub fn create_instance(
             threshold,
             balance_threshold,
             site: site.unwrap_or_else(|| "china".to_string()),
+            token_auto_renew: true,
             created_at: chrono_utc_now(),
         }
     };
@@ -395,8 +396,10 @@ pub struct InstancePatch {
     pub threshold: Option<Option<f64>>,
     #[serde(deserialize_with = "deserialize_double_option")]
     pub balance_threshold: Option<Option<f64>>,
-    /// 站点（仅 qoder 使用，ADR-0030）：缺省=不改；换站后原 Cookie 跨登录域失效，需重贴
+    /// 站点（仅多站种类使用，ADR-0031）：缺省=不改；换站后原凭据跨登录域失效，需重贴/重扫
     pub site: Option<String>,
+    /// token 自动续期开关（仅 workbuddy token 通道，ADR-0034）：缺省=不改
+    pub token_auto_renew: Option<bool>,
 }
 
 /// serde 对 Option<Option<T>> 的 null 缺省行为是外层 None；
@@ -429,6 +432,7 @@ pub fn update_instance(
             patch.threshold,
             patch.balance_threshold,
             patch.site.as_deref(),
+            patch.token_auto_renew,
         )?;
     }
     let _ = app.emit("instances-changed", ());
@@ -1008,7 +1012,28 @@ pub async fn provider_request(
             headers.insert("Cookie".to_string(), session.cookie_header);
             headers.insert("User-Agent".to_string(), session.user_agent);
         }
+        Some("workbuddy_token") if kind == "workbuddy" => {
+            // token 通道（ADR-0034）：Bearer + 官方桌面端 billing UA + X-User-Id（企业号
+            // 再加 X-Enterprise-Id/X-Tenant-Id，参考 BillingHeaders 同款「非空才带」）
+            // 这些凭据衍生头只由这里注入——uid 在 vault 里，前端只见槽位布尔拿不到明文。
+            // 其余静态协议头（X-CodeBuddy-Request / X-Domain / Origin 等）由前端按
+            // 站点档案随请求传入，与 Cookie 通道的 x-client-platform 同先例
+            let token = instances::workbuddy_token(&instance_credentials)?;
+            headers.insert(
+                "Authorization".to_string(),
+                format!("Bearer {}", token.access_token),
+            );
+            headers.insert("User-Agent".to_string(), WORKBUDDY_BILLING_UA.to_string());
+            headers.insert("X-User-Id".to_string(), token.uid);
+            if !token.enterprise_id.is_empty() {
+                headers.insert("X-Enterprise-Id".to_string(), token.enterprise_id.clone());
+                headers.insert("X-Tenant-Id".to_string(), token.enterprise_id);
+            }
+        }
         Some("session_cookie") => return Err("不支持的 provider session_cookie auth".to_string()),
+        Some("workbuddy_token") => {
+            return Err("不支持的 provider workbuddy_token auth".to_string())
+        }
         Some("qoder_cookie") => {
             // vault 槽位存用户粘贴的 qoder_session_cookie 的**值**本体（Qoder 网页登录态，
             // ADR-0030 §2 二次修订）：键名由这里拼进 Cookie 头，输入本身不加工。UA 缺省用
@@ -1061,6 +1086,473 @@ pub async fn provider_request(
         headers: response_headers,
         body_text,
     })
+}
+
+// ─── WorkBuddy 扫码登录与 token 通道（ADR-0034）───
+
+/// 授权三端点的官方 CLI 指纹（参考实现 cmd/login 同款，2026-09-26 spike 真机验证）
+pub const WORKBUDDY_AUTH_UA: &str = "CLI/2.63.2 CodeBuddy/2.63.2";
+/// billing 族（签到/余额）的官方桌面端单段 UA（参考实现 headers.go billingUA 同款）
+pub const WORKBUDDY_BILLING_UA: &str = "WorkBuddy/5.5.4";
+
+/// 站点取值（与实例 site 同一取值域）→ 授权端点 base：中国站在腾讯 copilot 域，
+/// 国际站在 workbuddy.ai（参考实现 upstreamBaseCN/Global，登录端点两站均有证据）
+fn workbuddy_auth_base(site: &str) -> &'static str {
+    if site == "international" {
+        "https://www.workbuddy.ai"
+    } else {
+        "https://copilot.tencent.com"
+    }
+}
+
+/// 账号域 Origin/Referer（授权与 billing 头族用它，与请求所在的网关域不必相同——
+/// 中国站请求打 copilot.tencent.com 而 Origin 报 www.codebuddy.cn，spike 实证放行）
+fn workbuddy_account_origin(site: &str) -> &'static str {
+    if site == "international" {
+        "https://www.workbuddy.ai"
+    } else {
+        "https://www.codebuddy.cn"
+    }
+}
+
+/// Accept-Language 按站取（参考实现 D5：官方客户端按账号域发对应语言标识）
+fn workbuddy_accept_language(site: &str) -> &'static str {
+    if site == "international" {
+        "en-US"
+    } else {
+        "zh-CN"
+    }
+}
+
+/// 刷新端点的三段式 UA（参考实现 userAgent(a)：官方桌面端 RestOperations 形态）。
+/// global 的第二段平台名是 `WorkBuddy AI`——送 CN 形态可能触发上游 403 code 11140
+/// 风控（headers.go 逆向注释），版本段以参考实现内置默认为准
+fn workbuddy_refresh_ua(site: &str) -> String {
+    let platform = if site == "international" {
+        "WorkBuddy AI"
+    } else {
+        "WorkBuddy"
+    };
+    format!("WorkBuddy/5.5.4 {platform}/5.5.4 CLI/2.137.1")
+}
+
+/// 账号级稳定设备指纹（参考实现 deriveAccountStableID 同式）：sha256("wb2a:"+purpose+":"+uid)
+/// 截前 36 hex。跨重启稳定、账号间互异，只用于刷新头族的 X-Machine-ID / X-Session-ID
+fn workbuddy_account_stable_id(uid: &str, purpose: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(format!("wb2a:{purpose}:{uid}").as_bytes());
+    digest[..18].iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// 业务信封统一处理：返回 (业务是否成功, data)。授权族信封 pending 时 HTTP 200 但
+/// code≠0（spike 实测 msg "login ing"），所以成败只看业务码不看状态码
+fn workbuddy_envelope(body: &str) -> Result<(bool, String, Value), String> {
+    let json: Value =
+        serde_json::from_str(body).map_err(|error| format!("响应不是 JSON：{error}"))?;
+    let msg = json["msg"].as_str().unwrap_or_default().to_string();
+    let code = &json["code"];
+    let ok = code.is_null()
+        || matches!(code.as_i64(), Some(0) | Some(200))
+        || matches!(code.as_str(), Some("0") | Some("200"));
+    let data = json.get("data").cloned().unwrap_or(Value::Null);
+    Ok((ok, msg, data))
+}
+
+/// 校验实例是 workbuddy 并返回其站点；扫码三命令的公共前置
+fn workbuddy_instance_site(state: &State<'_, AppState>, instance_id: &str) -> Result<String, String> {
+    let db = state.db.lock().expect("db lock poisoned");
+    let instance = db
+        .get_instance(instance_id)?
+        .ok_or_else(|| "供应商实例不存在，请刷新后重试".to_string())?;
+    if instance.provider_id != "workbuddy" {
+        return Err("扫码登录仅支持 WorkBuddy 实例".to_string());
+    }
+    Ok(instance.site)
+}
+
+/// 进行中的扫码会话（进程内存态）：上游 state 15 分钟有效，过期即作废重扫。
+/// 以 state 本身为键（ADR-0035 无实例会话）——发起扫码不需要实例先存在，
+/// poll 确认后凭据暂存于此、等 qr_claim 写入实例 vault，全程不过前端
+#[derive(Clone)]
+pub struct WorkbuddyLoginSession {
+    pub site: String,
+    pub created_at: i64,
+    /// poll 确认后暂存的凭据（token 族槽位 json）；None = 尚未确认
+    pub credentials: Option<Value>,
+}
+
+const WORKBUDDY_LOGIN_TTL_MS: i64 = 15 * 60 * 1000;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkbuddyQrStartResponse {
+    /// 授权链接（authUrl）：整段编码为二维码或复制到浏览器打开。spike 实证该链接
+    /// 必须一字不差——尾部参数被截断时上游报「登录链接不完整」
+    pub auth_url: String,
+    /// 会话键（即上游 state）：后续 poll 与 claim 都用它；已在二维码里曝光，非新增敏感面
+    pub session_key: String,
+}
+
+/// 发起扫码登录：向授权端点签发 state，返回浏览器授权链接与会话键。链接由本函数按
+/// 站点常量拼出 URL（不经调用方输入，天然落在白名单域），前端只负责把它变成二维码
+#[tauri::command]
+pub async fn workbuddy_qr_start(
+    state: State<'_, AppState>,
+    site: String,
+) -> Result<WorkbuddyQrStartResponse, String> {
+    let origin = workbuddy_account_origin(&site);
+    let url = format!("{}/v2/plugin/auth/state?platform=CLI", workbuddy_auth_base(&site));
+    let response = http_client()
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/plain, */*")
+        .header("X-Requested-With", "XMLHttpRequest")
+        .header("Origin", origin)
+        .header("Referer", format!("{origin}/"))
+        .header("User-Agent", WORKBUDDY_AUTH_UA)
+        .body("{}")
+        .send()
+        .await
+        .map_err(|error| network_error_text(&error))?;
+    let body = response
+        .text()
+        .await
+        .map_err(|error| network_error_text(&error))?;
+    let (ok, msg, data) = workbuddy_envelope(&body)?;
+    if !ok {
+        return Err(format!("发起扫码登录失败：{}", if msg.is_empty() { "服务端未说明原因" } else { &msg }));
+    }
+    let login_state = data["state"]
+        .as_str()
+        .ok_or_else(|| "发起扫码登录失败：响应缺少 state".to_string())?
+        .to_string();
+    let auth_url = data["authUrl"]
+        .as_str()
+        .ok_or_else(|| "发起扫码登录失败：响应缺少授权链接".to_string())?
+        .to_string();
+    state
+        .workbuddy_logins
+        .lock()
+        .expect("workbuddy login lock poisoned")
+        .insert(
+            login_state.clone(),
+            WorkbuddyLoginSession {
+                site,
+                created_at: db::chrono_utc_now(),
+                credentials: None,
+            },
+        );
+    Ok(WorkbuddyQrStartResponse {
+        auth_url,
+        session_key: login_state,
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkbuddyQrPollResponse {
+    /// pending=等待手机侧完成登录；confirmed=换到 token 并已写入凭据库；
+    /// expired=会话不存在或超 15 分钟，需重新发起
+    pub status: String,
+    pub nickname: Option<String>,
+    pub expires_at_ms: Option<i64>,
+}
+
+/// 查询扫码登录进度（前端每 3 秒轮询）：确认完成后换 token、取账号摘要并把凭据
+/// **暂存进会话**（ADR-0035）——不写库，qr_claim 时才落实例 vault；编辑态由前端在
+/// confirmed 后自动 claim（保留「写库即生效」），新增态等保存流程 claim
+#[tauri::command]
+pub async fn workbuddy_qr_poll(
+    state: State<'_, AppState>,
+    session_key: String,
+) -> Result<WorkbuddyQrPollResponse, String> {
+    let now = db::chrono_utc_now();
+    let session = {
+        let mut logins = state
+            .workbuddy_logins
+            .lock()
+            .expect("workbuddy login lock poisoned");
+        match logins.get(&session_key) {
+            Some(session) if now - session.created_at <= WORKBUDDY_LOGIN_TTL_MS => {
+                Some(session.clone())
+            }
+            Some(_) => {
+                logins.remove(&session_key);
+                None
+            }
+            None => None,
+        }
+    };
+    let Some(session) = session else {
+        return Ok(WorkbuddyQrPollResponse {
+            status: "expired".to_string(),
+            nickname: None,
+            expires_at_ms: None,
+        });
+    };
+    // 已确认过的会话：上游 state 换 token 是一次性的，重复轮询直接回放确认结果，
+    // 不再打上游（前端 confirmed 后停表，这条是防御路径）
+    if let Some(credentials) = &session.credentials {
+        let nickname = instances::instance_credential(credentials, "nickname")
+            .map(|value| value.to_string());
+        let expires_at_ms = instances::instance_credential(credentials, "expiresAt")
+            .and_then(|raw| raw.parse::<i64>().ok());
+        return Ok(WorkbuddyQrPollResponse {
+            status: "confirmed".to_string(),
+            nickname,
+            expires_at_ms,
+        });
+    }
+    let origin = workbuddy_account_origin(&session.site);
+    let token_url = format!(
+        "{}/v2/plugin/auth/token?state={}",
+        workbuddy_auth_base(&session.site),
+        session_key
+    );
+    let response = http_client()
+        .get(&token_url)
+        .header("Accept", "application/json, text/plain, */*")
+        .header("X-Requested-With", "XMLHttpRequest")
+        .header("Origin", origin)
+        .header("Referer", format!("{origin}/"))
+        .header("User-Agent", WORKBUDDY_AUTH_UA)
+        .send()
+        .await
+        .map_err(|error| network_error_text(&error))?;
+    let body = response
+        .text()
+        .await
+        .map_err(|error| network_error_text(&error))?;
+    let (ok, _msg, data) = workbuddy_envelope(&body)?;
+    if !ok {
+        return Ok(WorkbuddyQrPollResponse {
+            status: "pending".to_string(),
+            nickname: None,
+            expires_at_ms: None,
+        });
+    }
+    let access_token = data["accessToken"].as_str().ok_or_else(|| {
+        "扫码登录完成但响应缺少 accessToken，请重新扫码".to_string()
+    })?;
+    let refresh_token = data["refreshToken"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    // expiresIn 缺失按 0 处理：expiresAt 记为当前时刻，续期链下一轮会先行刷新
+    let expires_in_ms = data["expiresIn"].as_i64().unwrap_or(0) * 1000;
+
+    let account_url = format!(
+        "{}/v2/plugin/login/account?state={}",
+        workbuddy_auth_base(&session.site),
+        session_key
+    );
+    let account_response = http_client()
+        .get(&account_url)
+        .header("Authorization", format!("Bearer {access_token}"))
+        .header("Accept", "application/json, text/plain, */*")
+        .header("X-Requested-With", "XMLHttpRequest")
+        .header("Origin", origin)
+        .header("Referer", format!("{origin}/"))
+        .header("User-Agent", WORKBUDDY_AUTH_UA)
+        .send()
+        .await
+        .map_err(|error| network_error_text(&error))?;
+    let account_body = account_response
+        .text()
+        .await
+        .map_err(|error| network_error_text(&error))?;
+    let (_account_ok, _account_msg, account) = workbuddy_envelope(&account_body)?;
+    let uid = account["uid"].as_str().unwrap_or_default().trim().to_string();
+    if uid.is_empty()
+        || uid.len() > 64
+        || !uid
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err("扫码账号信息异常（uid 非法），请重新扫码".to_string());
+    }
+    let nickname = account["nickname"].as_str().unwrap_or_default().to_string();
+    let enterprise_id = account["enterpriseId"].as_str().unwrap_or_default().to_string();
+
+    let mut credentials = serde_json::json!({
+        "accessToken": access_token,
+        "expiresAt": (now + expires_in_ms).to_string(),
+        "uid": uid,
+    });
+    // refreshToken / nickname / enterpriseId 可能为空：save_instance_credentials 跳过空串，
+    // 槽位不写——展示与续期各自对缺槽容错（摘要显示 uid、续期报错重扫）
+    let slots = [
+        ("refreshToken", refresh_token),
+        ("nickname", nickname.clone()),
+        ("enterpriseId", enterprise_id),
+    ];
+    if let Some(object) = credentials.as_object_mut() {
+        for (slot, value) in slots {
+            if !value.is_empty() {
+                object.insert(slot.to_string(), Value::String(value));
+            }
+        }
+    }
+    // 暂存回会话并重置 TTL：claim 窗口自确认时刻重新计 15 分钟（用户扫码后
+    // 填备注/阈值再点保存，不该被发起时刻的窗口挤掉）
+    state
+        .workbuddy_logins
+        .lock()
+        .expect("workbuddy login lock poisoned")
+        .insert(
+            session_key.clone(),
+            WorkbuddyLoginSession {
+                site: session.site.clone(),
+                created_at: db::chrono_utc_now(),
+                credentials: Some(credentials),
+            },
+        );
+    Ok(WorkbuddyQrPollResponse {
+        status: "confirmed".to_string(),
+        nickname: if nickname.is_empty() { None } else { Some(nickname) },
+        expires_at_ms: Some(now + expires_in_ms),
+    })
+}
+
+/// 认领扫码产物（ADR-0035）：把会话暂存的凭据写入指定实例的 vault，并清空三格
+/// Cookie 槽保互斥（登录方式选「扫码登录」即只留 token 族）。新增态由保存流程
+/// 调用（先建实例后认领），编辑态由前端在扫码确认后自动调用（写库即生效）
+#[tauri::command]
+pub async fn workbuddy_qr_claim(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    instance_id: String,
+    session_key: String,
+) -> Result<(), String> {
+    workbuddy_instance_site(&state, &instance_id)?;
+    let mut credentials = {
+        let logins = state
+            .workbuddy_logins
+            .lock()
+            .expect("workbuddy login lock poisoned");
+        match logins.get(&session_key) {
+            Some(session) if session.credentials.is_some() => session
+                .credentials
+                .clone()
+                .expect("presence checked above"),
+            Some(_) => {
+                return Err("扫码会话尚未确认，请等待手机完成登录".to_string());
+            }
+            None => {
+                return Err("扫码会话不存在或已过期，请重新发起扫码".to_string());
+            }
+        }
+    };
+    // 互斥（ADR-0035）：token 族写入的同时清三格 Cookie 槽
+    if let Some(object) = credentials.as_object_mut() {
+        for slot in ["session", "session2", "userAgent"] {
+            object.insert(slot.to_string(), Value::Null);
+        }
+    }
+    save_instance_credentials(state.clone(), &instance_id, &credentials)?;
+    state
+        .workbuddy_logins
+        .lock()
+        .expect("workbuddy login lock poisoned")
+        .remove(&session_key);
+    let _ = app.emit("credentials-changed", ());
+    Ok(())
+}
+
+/// 手动/自动续期（ADR-0034：每日一刷与 401 即时救共用）：双 token 一起轮换写回 vault。
+/// 失败返回 Err 携带原因——旧 token 原样保留，下轮再试（参考实现同款取舍）
+#[tauri::command]
+pub async fn workbuddy_token_refresh(
+    state: State<'_, AppState>,
+    instance_id: String,
+) -> Result<bool, String> {
+    let site = workbuddy_instance_site(&state, &instance_id)?;
+    let instance_credentials = {
+        let vault = state.vault.lock().expect("vault lock poisoned");
+        vault
+            .credentials()?
+            .get(&instance_id)
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    let refresh_token = instances::instance_credential(&instance_credentials, "refreshToken")
+        .ok_or_else(|| {
+            format!(
+                "缺少 {}，请重新扫码登录",
+                instances::credential_label("workbuddy", "refreshToken").unwrap_or("refreshToken")
+            )
+        })?
+        .to_string();
+    let uid = instances::instance_credential(&instance_credentials, "uid")
+        .map(|value| value.to_string())
+        .unwrap_or_default();
+    let enterprise_id = instances::instance_credential(&instance_credentials, "enterpriseId")
+        .map(|value| value.to_string())
+        .unwrap_or_default();
+
+    let origin = workbuddy_account_origin(&site);
+    let url = format!("{}/v2/plugin/auth/token/refresh", workbuddy_auth_base(&site));
+    let mut request = http_client()
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json")
+        .header("X-Requested-With", "XMLHttpRequest")
+        .header("Origin", origin)
+        .header("Referer", format!("{origin}/"))
+        .header("User-Agent", workbuddy_refresh_ua(&site))
+        .header("X-CodeBuddy-Request", "1")
+        .header("Accept-Language", workbuddy_accept_language(&site))
+        .header("X-Refresh-Token", refresh_token)
+        .header("X-Auth-Refresh-Source", "plugin")
+        .body("{}");
+    // 头族按参考实现 RefreshHeaders 全量（调研 risks 点名实现前读原文，2026-09-26 已核）
+    if !uid.is_empty() {
+        request = request
+            .header("X-Machine-ID", workbuddy_account_stable_id(&uid, "machine"))
+            .header("X-Session-ID", workbuddy_account_stable_id(&uid, "session"))
+            .header("X-User-Id", uid.clone());
+    }
+    if !enterprise_id.is_empty() {
+        request = request.header("X-Enterprise-Id", enterprise_id);
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|error| network_error_text(&error))?;
+    let body = response
+        .text()
+        .await
+        .map_err(|error| network_error_text(&error))?;
+    let (ok, msg, data) = workbuddy_envelope(&body)?;
+    if !ok {
+        return Err(format!(
+            "token 续期失败：{}",
+            if msg.is_empty() { "服务端未说明原因" } else { &msg }
+        ));
+    }
+    let access_token = data["accessToken"]
+        .as_str()
+        .ok_or_else(|| "token 续期响应缺少 accessToken，旧 token 已保留".to_string())?
+        .to_string();
+    let new_refresh_token = data["refreshToken"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    let expires_in_ms = data["expiresIn"].as_i64().unwrap_or(0) * 1000;
+    let mut credentials = serde_json::json!({
+        "accessToken": access_token,
+        "expiresAt": (db::chrono_utc_now() + expires_in_ms).to_string(),
+    });
+    if !new_refresh_token.is_empty() {
+        if let Some(object) = credentials.as_object_mut() {
+            object.insert(
+                "refreshToken".to_string(),
+                Value::String(new_refresh_token),
+            );
+        }
+    }
+    save_instance_credentials(state, &instance_id, &credentials)?;
+    Ok(true)
 }
 
 #[tauri::command]
