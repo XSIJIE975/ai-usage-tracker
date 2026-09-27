@@ -427,7 +427,7 @@ describe("WorkBuddy 积分阈值规则", () => {
   const wbSnapshot = (percent: number | null, remainText?: string): ProviderSnapshot => ({
     instanceId: "wb-1",
     providerId: "workbuddy",
-    providerName: "腾讯 WorkBuddy / CodeBuddy",
+    providerName: "腾讯 WorkBuddy",
     status: "ok",
     updatedAt: 0,
     lines: [

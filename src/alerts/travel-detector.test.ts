@@ -19,7 +19,7 @@ const makeInstance = (id = "wb-1"): ProviderInstance => ({
 const makeSnapshot = (travel?: { tripKey: string; credited: number }): ProviderSnapshot => ({
   instanceId: "wb-1",
   providerId: "workbuddy",
-  providerName: "腾讯 WorkBuddy / CodeBuddy",
+  providerName: "腾讯 WorkBuddy",
   status: "ok",
   updatedAt: 0,
   lines: [],

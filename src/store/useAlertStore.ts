@@ -5,11 +5,13 @@ import { isPermissionGranted, requestPermission, sendNotification } from "@tauri
 import { AlertCoordinator, type AlertCoordinatorDeps } from "../alerts/coordinator";
 import type { AlertFire } from "../alerts/evaluate";
 import { CheckinDetector, type CheckinArrival, type CheckinDetectorDeps } from "../alerts/checkin-detector";
+import { GrowthNoticeDetector, type GrowthNoticeArrival, type GrowthNoticeDetectorDeps } from "../alerts/growth-notice-detector";
+import { TrialDetector, type TrialArrival, type TrialDetectorDeps } from "../alerts/trial-detector";
 import { ResetCardDetector, type ResetCardArrival, type ResetCardDetectorDeps } from "../alerts/reset-card-detector";
 import { TravelDetector, type TravelArrival, type TravelDetectorDeps } from "../alerts/travel-detector";
 import { renderTemplate } from "../i18n/apply-params";
 import { resolveLanguage, translateText } from "../i18n/translate";
-import type { AppSettings, ProviderInstance, ProviderSnapshot, StoredAlertState, StoredNotification, StoredSeenResetCards, StoredWorkbuddyCheckin, StoredWorkbuddyTravelClaim } from "../types/ipc";
+import type { AppSettings, ProviderInstance, ProviderSnapshot, StoredAlertState, StoredNotification, StoredSeenResetCards, StoredWorkbuddyCheckin, StoredWorkbuddyGrowthNotice, StoredWorkbuddyTravelClaim, StoredWorkbuddyTrial } from "../types/ipc";
 import { currentWindowLabel, useAppStore } from "./useAppStore";
 import { useNotificationStore } from "./useNotificationStore";
 
@@ -189,10 +191,75 @@ function createTravelDetector(): TravelDetector {
   return new TravelDetector(deps);
 }
 
+function createGrowthNoticeDetector(): GrowthNoticeDetector {
+  const deps: GrowthNoticeDetectorDeps = {
+    notify: (arrival: GrowthNoticeArrival) => {
+      // ruleKey 传 null：管家通知不走告警冷却判重（ADR-0025）；判重权威是
+      // workbuddy_growth_notices 的按日记录（同一天的快照重放不再到达这里）
+      void invoke<StoredNotification | null>("add_notification", {
+        instanceId: arrival.instanceId,
+        ruleKey: null,
+        title: arrival.title,
+        body: arrival.body,
+        params: arrival.params,
+      })
+        .then((stored) => {
+          if (!stored) return;
+          useNotificationStore.getState().onAdded(stored);
+          void sendSystemNotification(arrival);
+        })
+        .catch(() => {
+          void sendSystemNotification(arrival);
+        });
+    },
+    onStateChange: (record: StoredWorkbuddyGrowthNotice) => {
+      // 判重日期回写后端事实源；失败只留痕——重启后最坏重报一次管家通知
+      // （投递韧性优先于判重，与签到判重同口径）
+      void invoke("save_workbuddy_growth_notice", { notice: record }).catch((error) => {
+        console.warn("管家通知判重回写失败", error);
+      });
+    },
+  };
+  return new GrowthNoticeDetector(deps);
+}
+
+function createTrialDetector(): TrialDetector {
+  const deps: TrialDetectorDeps = {
+    notify: (arrival: TrialArrival) => {
+      // ruleKey 传 null：一次性到账通知不走告警冷却判重（ADR-0025）；判重权威是
+      // workbuddy_trials 的实例级记录（领取成功只发生一次）
+      void invoke<StoredNotification | null>("add_notification", {
+        instanceId: arrival.instanceId,
+        ruleKey: null,
+        title: arrival.title,
+        body: arrival.body,
+        params: arrival.params,
+      })
+        .then((stored) => {
+          if (!stored) return;
+          useNotificationStore.getState().onAdded(stored);
+          void sendSystemNotification(arrival);
+        })
+        .catch(() => {
+          void sendSystemNotification(arrival);
+        });
+    },
+    onStateChange: (record: StoredWorkbuddyTrial) => {
+      // 判重标记回写后端事实源；失败只留痕——重启后最坏重报一次领取通知
+      void invoke("save_workbuddy_trial", { trial: record }).catch((error) => {
+        console.warn("试用加油包判重回写失败", error);
+      });
+    },
+  };
+  return new TrialDetector(deps);
+}
+
 const coordinator = createCoordinator();
 const resetCardDetector = createResetCardDetector();
 const checkinDetector = createCheckinDetector();
 const travelDetector = createTravelDetector();
+const growthNoticeDetector = createGrowthNoticeDetector();
+const trialDetector = createTrialDetector();
 
 export const useAlertStore = create<AlertStore>(() => ({
   active: {},
@@ -207,6 +274,9 @@ export const useAlertStore = create<AlertStore>(() => ({
     checkinDetector.observe(instance, snapshot);
     // 旅行领奖检测同口径：错误快照也参与，检测器内部按 travel 字段有无判定
     travelDetector.observe(instance, snapshot);
+    // 管家/试用检测同口径：错误快照也参与，检测器内部按 growthNotice/trial 字段有无判定
+    growthNoticeDetector.observe(instance, snapshot);
+    trialDetector.observe(instance, snapshot);
   },
   reevaluate: () => {
     if (currentWindowLabel() !== "main") return;
@@ -218,6 +288,8 @@ export const useAlertStore = create<AlertStore>(() => ({
       if (snapshot) resetCardDetector.observe(instance, snapshot);
       if (snapshot) checkinDetector.observe(instance, snapshot);
       if (snapshot) travelDetector.observe(instance, snapshot);
+      if (snapshot) growthNoticeDetector.observe(instance, snapshot);
+      if (snapshot) trialDetector.observe(instance, snapshot);
     }
   },
   hydrate: async () => {
@@ -265,11 +337,32 @@ export const useAlertStore = create<AlertStore>(() => ({
         .map((result) => (result.status === "fulfilled" ? result.value : null))
         .filter((item): item is StoredWorkbuddyTravelClaim => item !== null),
     );
+    // 管家通知判重按实例逐个水合（单行按日设计）；失败不阻断——最坏同一天的旧快照
+    // 重放重报一次
+    const growthNoticeResults = await Promise.allSettled(
+      workbuddyIds.map((instanceId) => invoke<StoredWorkbuddyGrowthNotice | null>("get_workbuddy_growth_notice", { instanceId })),
+    );
+    growthNoticeDetector.hydrate(
+      growthNoticeResults
+        .map((result) => (result.status === "fulfilled" ? result.value : null))
+        .filter((item): item is StoredWorkbuddyGrowthNotice => item !== null),
+    );
+    // 试用加油包判重按实例逐个水合（实例级单行）；失败不阻断——最坏重报一次领取通知
+    const trialResults = await Promise.allSettled(
+      workbuddyIds.map((instanceId) => invoke<StoredWorkbuddyTrial | null>("get_workbuddy_trial", { instanceId })),
+    );
+    trialDetector.hydrate(
+      trialResults
+        .map((result) => (result.status === "fulfilled" ? result.value : null))
+        .filter((item): item is StoredWorkbuddyTrial => item !== null),
+    );
   },
   prune: (instanceId) => {
     coordinator.prune(instanceId);
     resetCardDetector.prune(instanceId);
     checkinDetector.prune(instanceId);
     travelDetector.prune(instanceId);
+    growthNoticeDetector.prune(instanceId);
+    trialDetector.prune(instanceId);
   },
 }));
