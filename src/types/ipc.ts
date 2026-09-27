@@ -123,6 +123,37 @@ export interface ProviderSnapshot {
     /** 到账积分（接口未返回时为 0） */
     credited: number;
   };
+  /** 本轮连登管家闭环发生的事件汇总（仅 WorkBuddy fetch 本轮真的跑了管家且发生事件时
+   *  填充；ADR-0037）。落库属瞬时冗余、会随快照重放，通知判重权威在 Rust 端
+   *  workbuddy_growth_notices 行（按 date 每日一条汇总通知）；错误快照也携带——
+   *  管家与取数是不同源，取数失败不吞掉已发生的管家事件 */
+  growthNotice?: {
+    /** 闭环当日（CST，YYYY-MM-DD），检测器据此判重 */
+    date: string;
+    /** 本轮用补签卡补签的张数（0/1，只补昨日） */
+    makeupUsed: number;
+    /** 新手礼包到账积分（无则 0） */
+    giftCredit: number;
+    /** 活动补偿到账积分（无则 0） */
+    compensationCredit: number;
+    /** 本轮兑换的档位与奖励明细 */
+    redeemed: {
+      tier: string;
+      credit: number;
+      energy: number;
+      cards: number;
+      chances: number;
+    }[];
+    /** 抽奖奖品可读名（形状由活动期决定，提取失败为截断 JSON） */
+    draws: string[];
+  };
+  /** 本轮真实领取的国际站试用加油包（仅 WorkBuddy fetch 国际站实例本轮领取成功时
+   *  填充；ADR-0037）。一次性事件：领取成功只可能发生一次，重启后重试只会拿到
+   *  幂等静默（14051），判重权威是 Rust 端 workbuddy_trials 行（实例级一行） */
+  trial?: {
+    /** 到账积分（端点未返回时为 0；加油包本体随余额套餐行出现） */
+    credit: number;
+  };
 }
 
 export interface StoredSnapshot {
@@ -151,6 +182,21 @@ export interface StoredWorkbuddyCheckin {
 export interface StoredWorkbuddyTravelClaim {
   instance_id: string;
   claimed_key: string;
+}
+
+/** WorkBuddy 管家通知判重行（Rust 端 workbuddy_growth_notices 表）；notified_date 是
+ *  最近一次发出「成长中心管家」汇总通知的日期（CST YYYY-MM-DD）——管家一轮可能产生
+ *  补签/礼包/兑换/抽奖多个事件，通知按日汇总为一条 */
+export interface StoredWorkbuddyGrowthNotice {
+  instance_id: string;
+  notified_date: string;
+}
+
+/** WorkBuddy 试用加油包通知判重行（Rust 端 workbuddy_trials 表）——一次性事件，
+ *  实例级一行即够（重启后快照重放同一次领取不再重复通知） */
+export interface StoredWorkbuddyTrial {
+  instance_id: string;
+  claimed: boolean;
 }
 
 export interface AppSettings {

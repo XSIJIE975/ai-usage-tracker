@@ -890,6 +890,46 @@ pub fn save_workbuddy_travel_claim(
     db.save_workbuddy_travel_claim(&claim)
 }
 
+/// WorkBuddy 管家通知判重水合：None = 该实例从未通知过管家闭环事件
+#[tauri::command]
+pub fn get_workbuddy_growth_notice(
+    state: State<'_, AppState>,
+    instance_id: String,
+) -> Result<Option<db::StoredWorkbuddyGrowthNotice>, String> {
+    let db = state.db.lock().expect("db lock poisoned");
+    db.get_workbuddy_growth_notice(&instance_id)
+}
+
+/// WorkBuddy 管家通知判重回写：按日判重（一轮多事件汇总一条），重启/F5 后当日不重报
+#[tauri::command]
+pub fn save_workbuddy_growth_notice(
+    state: State<'_, AppState>,
+    notice: db::StoredWorkbuddyGrowthNotice,
+) -> Result<(), String> {
+    let db = state.db.lock().expect("db lock poisoned");
+    db.save_workbuddy_growth_notice(&notice)
+}
+
+/// WorkBuddy 试用加油包通知判重水合：None = 该实例从未通知过领取
+#[tauri::command]
+pub fn get_workbuddy_trial(
+    state: State<'_, AppState>,
+    instance_id: String,
+) -> Result<Option<db::StoredWorkbuddyTrial>, String> {
+    let db = state.db.lock().expect("db lock poisoned");
+    db.get_workbuddy_trial(&instance_id)
+}
+
+/// WorkBuddy 试用加油包通知判重回写：一次性事件实例级一行，重启/F5 后不重报
+#[tauri::command]
+pub fn save_workbuddy_trial(
+    state: State<'_, AppState>,
+    trial: db::StoredWorkbuddyTrial,
+) -> Result<(), String> {
+    let db = state.db.lock().expect("db lock poisoned");
+    db.save_workbuddy_trial(&trial)
+}
+
 #[tauri::command]
 pub fn list_notifications(
     state: State<'_, AppState>,
@@ -980,6 +1020,8 @@ pub async fn provider_request(
     // 之后 Cookie / Authorization / User-Agent 只可能由下面的鉴权分支写入
     let mut headers = headers.unwrap_or_default();
     headers.retain(|name, _| !is_reserved_credential_header(name));
+    // 任务事件上报分支要在发送前改写事件体（占位符替换），故提前可变持有
+    let mut body_text = body_text;
 
     match auth.as_deref() {
         Some("bearer") => {
@@ -1030,9 +1072,45 @@ pub async fn provider_request(
                 headers.insert("X-Tenant-Id".to_string(), token.enterprise_id);
             }
         }
+        Some("workbuddy_report") if kind == "workbuddy" => {
+            // 任务事件上报（ADR-0036）：头注入同 token 通道，UA 按上报域取形态——
+            // copilot 域（桌面指纹事件）用桌面三段 UA，其余（chat 活跃/mp 事件的
+            // codebuddy.cn）用 billing 单段 UA；事件体里的凭据占位符（{{WB_UID}} 等，
+            // 含 uid 派生的设备标识与昵称）在此替换，前端全程不见明文
+            let token = instances::workbuddy_token(&instance_credentials)?;
+            headers.insert(
+                "Authorization".to_string(),
+                format!("Bearer {}", token.access_token),
+            );
+            // 桌面 UA 按 host 精确比较（非字符串前缀——starts_with 是路径语义，白名单
+            // 或调用点将来变动时易漂移）；validate_request_url 已保证 host 在白名单内
+            let desktop_report = reqwest::Url::parse(&url)
+                .ok()
+                .and_then(|parsed| parsed.host_str().map(|host| host == "copilot.tencent.com"))
+                .unwrap_or(false);
+            headers.insert(
+                "User-Agent".to_string(),
+                if desktop_report {
+                    WORKBUDDY_DESKTOP_UA.to_string()
+                } else {
+                    WORKBUDDY_BILLING_UA.to_string()
+                },
+            );
+            headers.insert("X-User-Id".to_string(), token.uid.clone());
+            if !token.enterprise_id.is_empty() {
+                headers.insert("X-Enterprise-Id".to_string(), token.enterprise_id.clone());
+                headers.insert("X-Tenant-Id".to_string(), token.enterprise_id);
+            }
+            if let Some(body) = body_text.as_mut() {
+                *body = workbuddy_fill_report_placeholders(body, &token.uid, &token.nickname);
+            }
+        }
         Some("session_cookie") => return Err("不支持的 provider session_cookie auth".to_string()),
         Some("workbuddy_token") => {
             return Err("不支持的 provider workbuddy_token auth".to_string())
+        }
+        Some("workbuddy_report") => {
+            return Err("不支持的 provider workbuddy_report auth".to_string())
         }
         Some("qoder_cookie") => {
             // vault 槽位存用户粘贴的 qoder_session_cookie 的**值**本体（Qoder 网页登录态，
@@ -1094,6 +1172,46 @@ pub async fn provider_request(
 pub const WORKBUDDY_AUTH_UA: &str = "CLI/2.63.2 CodeBuddy/2.63.2";
 /// billing 族（签到/余额）的官方桌面端单段 UA（参考实现 headers.go billingUA 同款）
 pub const WORKBUDDY_BILLING_UA: &str = "WorkBuddy/5.5.4";
+/// 任务事件上报的桌面端三段 UA（参考实现 desktop.go desktopUA 同款；copilot 域
+/// 桌面指纹事件用它，计分判据在事件体的指纹字段，UA 是网关层辅助形态）
+pub const WORKBUDDY_DESKTOP_UA: &str = "WorkBuddy/5.5.6 WorkBuddy/5.5.6 CLI/2.137.1";
+
+/// 由 uid 稳定派生 36 位 hex 设备标识（machineId/sessionId/web machineId 复用同一
+/// 实现，参考实现 desktop.go deriveID 同款：sha256(salt + ":" + uid) 前 18 字节，
+/// 同一账号恒定同一标识，模拟固定设备）
+fn workbuddy_task_device_id(uid: &str, salt: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(format!("{salt}:{uid}").as_bytes());
+    digest[..18].iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// 任务事件体的凭据占位符替换（ADR-0036）：uid 与其派生设备标识、扫码昵称都只在
+/// vault/后端存在，前端构造事件体时以占位符书写，发送前在此替换。占位符出现在
+/// JSON 字符串值的位置，替换值需过 JSON 转义（昵称可含任意 Unicode）。包裹引号
+/// 用 strip_prefix/suffix 各剥**一层**——trim_matches 会把结尾转义序列 `\"` 的引号
+/// 一起剥掉，剩余裸反斜杠会把事件体 JSON 扭弯（安全审查 2026-09-26）
+fn workbuddy_fill_report_placeholders(body: &str, uid: &str, nickname: &str) -> String {
+    let escaped_nickname = serde_json::to_string(nickname)
+        .unwrap_or_default()
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .unwrap_or_default()
+        .to_string();
+    body.replace("{{WB_UID}}", uid)
+        .replace("{{WB_NICKNAME}}", &escaped_nickname)
+        .replace(
+            "{{WB_MACHINE_ID}}",
+            &workbuddy_task_device_id(uid, "machine"),
+        )
+        .replace(
+            "{{WB_SESSION_ID}}",
+            &workbuddy_task_device_id(uid, "session"),
+        )
+        .replace(
+            "{{WB_WEB_MACHINE_ID}}",
+            &workbuddy_task_device_id(uid, "webmachine"),
+        )
+}
 
 /// 站点取值（与实例 site 同一取值域）→ 授权端点 base：中国站在腾讯 copilot 域，
 /// 国际站在 workbuddy.ai（参考实现 upstreamBaseCN/Global，登录端点两站均有证据）
@@ -1612,6 +1730,46 @@ pub fn quit_app(app: AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn report_placeholders_survive_quote_ending_nickname() {
+        // 尾引号昵称：strip_prefix/suffix 各剥一层，`\"` 转义序列保持完整，
+        // 事件体 JSON 不被裸反斜杠扭弯（安全审查：trim_matches 会剥掉它）
+        let filled = workbuddy_fill_report_placeholders(
+            r#"{"userNickname":"{{WB_NICKNAME}}","userId":"{{WB_UID}}"}"#,
+            "uid-1",
+            r#"abc""#,
+        );
+        assert_eq!(filled, r#"{"userNickname":"abc\"","userId":"uid-1"}"#);
+        // 解析回验证 JSON 完整性
+        let parsed: serde_json::Value = serde_json::from_str(&filled).expect("filled body must be valid JSON");
+        assert_eq!(parsed["userNickname"], r#"abc""#);
+        assert_eq!(parsed["userId"], "uid-1");
+    }
+
+    #[test]
+    fn report_placeholders_fill_device_ids_deterministically() {
+        let filled = workbuddy_fill_report_placeholders(
+            r#"{"m":"{{WB_MACHINE_ID}}","s":"{{WB_SESSION_ID}}","w":"{{WB_WEB_MACHINE_ID}}"}"#,
+            "uid-1",
+            "",
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&filled).expect("valid JSON");
+        for key in ["m", "s", "w"] {
+            let id = parsed[key].as_str().expect("device id is a string");
+            assert_eq!(id.len(), 36, "36 hex chars");
+            assert!(id.chars().all(|c| c.is_ascii_hexdigit()), "hex only: {id}");
+        }
+        // 同一 uid 恒定同一标识（machine 与 session salt 不同所以值不同）
+        assert_ne!(parsed["m"], parsed["s"]);
+        let again = workbuddy_fill_report_placeholders(
+            r#"{"m":"{{WB_MACHINE_ID}}"}"#,
+            "uid-1",
+            "",
+        );
+        let parsed_again: serde_json::Value = serde_json::from_str(&again).expect("valid JSON");
+        assert_eq!(parsed["m"], parsed_again["m"]);
+    }
 
     #[test]
     fn provider_response_uses_camel_case_field_names() {

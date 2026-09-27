@@ -94,6 +94,9 @@ fn required_workbuddy_slot<'a>(credentials: &'a Value, slot: &str) -> Result<&'a
 pub struct WorkbuddyToken {
     pub access_token: String,
     pub uid: String,
+    /// 扫码时上游返回的昵称（可选槽，空＝未取到）：任务事件体的 userNickname 等
+    /// 指纹字段用它占位替换（ADR-0036），不出现在错误文案
+    pub nickname: String,
     /// 企业账号非空（billing/growth 头族按参考 BillingHeaders 补 X-Enterprise-Id/X-Tenant-Id）；
     /// 个人账号为空串即带头族里不带这两个头
     pub enterprise_id: String,
@@ -136,9 +139,21 @@ pub fn workbuddy_token(credentials: &Value) -> Result<WorkbuddyToken, String> {
     {
         return Err("WorkBuddy 企业账号 enterpriseId 包含非法字符".to_string());
     }
+    // 可选槽：扫码时上游返回的昵称原文，只做长度上限（要拼进事件体 JSON，占位符
+    // 替换走 serde 转义，无头注入风险面）
+    let nickname = credentials
+        .get("nickname")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if nickname.len() > 256 {
+        return Err("WorkBuddy 扫码昵称异常（超长），请重新扫码登录".to_string());
+    }
     Ok(WorkbuddyToken {
         access_token: access_token.to_string(),
         uid: uid.to_string(),
+        nickname,
         enterprise_id,
     })
 }

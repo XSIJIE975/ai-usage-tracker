@@ -70,6 +70,23 @@ pub struct StoredWorkbuddyTravelClaim {
     pub claimed_key: String,
 }
 
+/// 管家通知判重行：notified_date 是最近一次发出「成长中心管家」汇总通知的日期。
+/// 管家一轮可能产生补签/礼包/兑换/抽奖多个事件，通知按日汇总为一条，按日判重；
+/// 语义同 StoredWorkbuddyCheckin
+#[derive(Serialize, Deserialize)]
+pub struct StoredWorkbuddyGrowthNotice {
+    pub instance_id: String,
+    pub notified_date: String,
+}
+
+/// 试用加油包通知判重行：一次性事件，实例级一行即够（claimed 恒 true 的存在性标记）；
+/// 重启后快照重放同一次领取不再重复通知
+#[derive(Serialize, Deserialize)]
+pub struct StoredWorkbuddyTrial {
+    pub instance_id: String,
+    pub claimed: bool,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StoredInstance {
@@ -161,6 +178,18 @@ impl Db {
             CREATE TABLE IF NOT EXISTS workbuddy_travel_claims (
                 instance_id TEXT PRIMARY KEY,
                 claimed_key TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS workbuddy_growth_notices (
+                instance_id TEXT PRIMARY KEY,
+                notified_date TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS workbuddy_trials (
+                instance_id TEXT PRIMARY KEY,
+                claimed INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
             );
             "#,
@@ -554,6 +583,10 @@ impl Db {
             .map_err(|error| error.to_string())?;
         tx.execute("DELETE FROM workbuddy_travel_claims WHERE instance_id = ?1", [id])
             .map_err(|error| error.to_string())?;
+        tx.execute("DELETE FROM workbuddy_growth_notices WHERE instance_id = ?1", [id])
+            .map_err(|error| error.to_string())?;
+        tx.execute("DELETE FROM workbuddy_trials WHERE instance_id = ?1", [id])
+            .map_err(|error| error.to_string())?;
         tx.commit().map_err(|error| error.to_string())?;
         Ok(())
     }
@@ -884,6 +917,82 @@ impl Db {
         Ok(())
     }
 
+    /// 读某实例的管家通知判重日期；None = 从未通知过
+    pub fn get_workbuddy_growth_notice(
+        &self,
+        instance_id: &str,
+    ) -> Result<Option<StoredWorkbuddyGrowthNotice>, String> {
+        let row = self.conn.query_row(
+            "SELECT notified_date FROM workbuddy_growth_notices WHERE instance_id = ?1",
+            [instance_id],
+            |row| row.get::<_, String>(0),
+        );
+        match row {
+            Ok(notified_date) => Ok(Some(StoredWorkbuddyGrowthNotice {
+                instance_id: instance_id.to_string(),
+                notified_date,
+            })),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    /// 回写某实例的管家通知判重日期（UPSERT 幂等），语义同 save_workbuddy_checkin：
+    /// 落库快照随重启重放 growthNotice 字段，靠这里判重不重复通知
+    pub fn save_workbuddy_growth_notice(
+        &self,
+        notice: &StoredWorkbuddyGrowthNotice,
+    ) -> Result<(), String> {
+        self.conn
+            .execute(
+                r#"
+                INSERT INTO workbuddy_growth_notices(instance_id, notified_date, updated_at)
+                VALUES(?1, ?2, ?3)
+                ON CONFLICT(instance_id) DO UPDATE SET
+                    notified_date = excluded.notified_date,
+                    updated_at = excluded.updated_at
+                "#,
+                rusqlite::params![notice.instance_id, notice.notified_date, chrono_utc_now()],
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    /// 读某实例的试用加油包领取标记；None = 从未通知过
+    pub fn get_workbuddy_trial(&self, instance_id: &str) -> Result<Option<StoredWorkbuddyTrial>, String> {
+        let row = self.conn.query_row(
+            "SELECT claimed FROM workbuddy_trials WHERE instance_id = ?1",
+            [instance_id],
+            |row| row.get::<_, bool>(0),
+        );
+        match row {
+            Ok(claimed) => Ok(Some(StoredWorkbuddyTrial {
+                instance_id: instance_id.to_string(),
+                claimed,
+            })),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    /// 回写某实例的试用加油包领取标记（UPSERT 幂等）：一次性事件，重启后快照重放
+    /// trial 字段，靠这里判重不重复通知
+    pub fn save_workbuddy_trial(&self, trial: &StoredWorkbuddyTrial) -> Result<(), String> {
+        self.conn
+            .execute(
+                r#"
+                INSERT INTO workbuddy_trials(instance_id, claimed, updated_at)
+                VALUES(?1, ?2, ?3)
+                ON CONFLICT(instance_id) DO UPDATE SET
+                    claimed = excluded.claimed,
+                    updated_at = excluded.updated_at
+                "#,
+                rusqlite::params![trial.instance_id, trial.claimed, chrono_utc_now()],
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
     pub fn list_notifications(&self, limit: i64) -> Result<Vec<StoredNotification>, String> {
         let mut statement = self
             .conn
@@ -1101,6 +1210,59 @@ mod tests {
             db.get_seen_reset_cards("inst-2").unwrap().unwrap().record_ids,
             vec![9]
         );
+    }
+
+    #[test]
+    fn workbuddy_growth_notice_upsert_and_cascade() {
+        let db = temp_db();
+        assert!(db.get_workbuddy_growth_notice("inst-1").unwrap().is_none());
+        db.save_workbuddy_growth_notice(&super::StoredWorkbuddyGrowthNotice {
+            instance_id: "inst-1".into(),
+            notified_date: "2026-09-27".into(),
+        })
+        .unwrap();
+        db.save_workbuddy_growth_notice(&super::StoredWorkbuddyGrowthNotice {
+            instance_id: "inst-1".into(),
+            notified_date: "2026-09-28".into(),
+        })
+        .unwrap();
+        let notice = db.get_workbuddy_growth_notice("inst-1").unwrap().unwrap();
+        assert_eq!(notice.notified_date, "2026-09-28");
+        db.save_workbuddy_growth_notice(&super::StoredWorkbuddyGrowthNotice {
+            instance_id: "inst-2".into(),
+            notified_date: "2026-09-27".into(),
+        })
+        .unwrap();
+        db.delete_instance("inst-1").unwrap();
+        assert!(db.get_workbuddy_growth_notice("inst-1").unwrap().is_none());
+        assert_eq!(
+            db.get_workbuddy_growth_notice("inst-2")
+                .unwrap()
+                .unwrap()
+                .notified_date,
+            "2026-09-27"
+        );
+    }
+
+    #[test]
+    fn workbuddy_trial_upsert_and_cascade() {
+        let db = temp_db();
+        assert!(db.get_workbuddy_trial("inst-1").unwrap().is_none());
+        db.save_workbuddy_trial(&super::StoredWorkbuddyTrial {
+            instance_id: "inst-1".into(),
+            claimed: true,
+        })
+        .unwrap();
+        // 一次性事件：重复回写（快照重放触发）幂等
+        db.save_workbuddy_trial(&super::StoredWorkbuddyTrial {
+            instance_id: "inst-1".into(),
+            claimed: true,
+        })
+        .unwrap();
+        let trial = db.get_workbuddy_trial("inst-1").unwrap().unwrap();
+        assert!(trial.claimed);
+        db.delete_instance("inst-1").unwrap();
+        assert!(db.get_workbuddy_trial("inst-1").unwrap().is_none());
     }
 
     #[test]
