@@ -1,7 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { HttpResult, InstanceCredentialStatus, ProviderInstance } from "../types/ipc";
 import type { StatsResult } from "./stats-result";
-import { workbuddyApi, workbuddySiteOf } from "./workbuddy";
+import {
+  resolveWorkbuddyChannel,
+  workbuddyApi,
+  workbuddySiteOf,
+  workbuddyTokenApi,
+  WORKBUDDY_NEEDS_CONFIG_MESSAGE,
+  WORKBUDDY_TOKEN_EXPIRED_MESSAGE,
+} from "./workbuddy";
 
 // 接口与响应结构依据 2026-09-21 官网控制台实测（workbuddy.cn 登录会话页内直连验证）：
 // - 消耗明细：POST /billing/meter/get-user-request-usage
@@ -110,8 +117,9 @@ const usageError = (
   params?: Record<string, string | number>,
 ): StatsResult<WorkbuddyUsageBundle> => ({ status: "error", message, ...(params ? { params } : {}) });
 
-/** 拉取时间范围内的全部消耗明细（分页拉全，供前端聚合）。
- *  401/403 或返回登录页 HTML → 与卡片同款「登录已过期」指引（重贴 Cookie 即恢复） */
+/** 拉取时间范围内的全部消耗明细（分页拉全，供前端聚合），按凭据通道分流（ADR-0034）：
+ *  token 通道走 billing 同族路径 + Bearer；Cookie 通道走 www 域 + 三元组。
+ *  两通道都缺配置 → needs_config；401/403 或返回登录页 HTML → 各通道的「已失效」指引 */
 export const fetchWorkbuddyUsage = async (
   instance: ProviderInstance,
   startMs: number,
@@ -121,49 +129,118 @@ export const fetchWorkbuddyUsage = async (
     const credentialStatus = await invoke<InstanceCredentialStatus>("vault_credential_status", {
       instanceId: instance.id,
     });
-    if (!credentialStatus.session || !credentialStatus.session2 || !credentialStatus.userAgent) {
-      return { status: "needs_config", message: "请在设置中填写 WorkBuddy 的 session、session_2 与浏览器 User-Agent 三项凭据" };
+    const channel = resolveWorkbuddyChannel(credentialStatus);
+    if (!channel) {
+      return { status: "needs_config", message: WORKBUDDY_NEEDS_CONFIG_MESSAGE };
     }
+    return channel === "token"
+      ? await fetchTokenUsage(instance, startMs, endMs)
+      : await fetchCookieUsage(instance, startMs, endMs);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return usageError("积分明细查询失败：{detail}", { detail });
+  }
+};
 
-    const api = workbuddyApi(workbuddySiteOf(instance));
-    const body = {
-      startTime: formatUsageTime(startMs),
-      endTime: formatUsageTime(endMs, true),
-      pageSize: PAGE_SIZE,
-    };
-    const rows: WorkbuddyUsageRow[] = [];
-    let total = 0;
-    for (let pageNum = 1; pageNum <= MAX_PAGES; pageNum += 1) {
-      const result = await invoke<HttpResult>("provider_request", {
+/** 单页取数函数的统一形态：返回 HttpResult 或「已判定失效」（token 通道救过仍 401/403） */
+type UsagePage = HttpResult | "expired";
+
+/** 分页拉全循环（两通道共用）：expired 映射为各通道的失效文案，其余错误逐类透出 */
+const collectUsagePages = async (
+  fetchPage: (pageNum: number) => Promise<UsagePage>,
+  expiredMessage: string,
+): Promise<StatsResult<WorkbuddyUsageBundle>> => {
+  const rows: WorkbuddyUsageRow[] = [];
+  let total = 0;
+  for (let pageNum = 1; pageNum <= MAX_PAGES; pageNum += 1) {
+    const fetched = await fetchPage(pageNum);
+    if (fetched === "expired") return usageError(expiredMessage);
+    const parsed = parseUsageEnvelope(fetched);
+    if (parsed.kind === "expired") {
+      return usageError(expiredMessage);
+    }
+    if (parsed.kind === "http") {
+      return usageError("积分明细接口返回 HTTP {status}", { status: parsed.status });
+    }
+    if (parsed.kind === "biz") {
+      return usageError("积分明细查询失败：{detail}", { detail: parsed.detail });
+    }
+    if (parsed.kind === "parse") {
+      return usageError("积分明细返回数据解析失败：{detail}", { detail: parsed.detail });
+    }
+    rows.push(...parsed.rows);
+    total = parsed.total;
+    if (rows.length >= total || parsed.rows.length === 0) break;
+  }
+  return { status: "ok", data: { rows, total: total || rows.length } };
+};
+
+/** Cookie 通道取数（三元组在 fetchWorkbuddyUsage 已判齐） */
+const fetchCookieUsage = async (
+  instance: ProviderInstance,
+  startMs: number,
+  endMs: number,
+): Promise<StatsResult<WorkbuddyUsageBundle>> => {
+  const api = workbuddyApi(workbuddySiteOf(instance));
+  return collectUsagePages(
+    (pageNum) =>
+      invoke<HttpResult>("provider_request", {
         instanceId: instance.id,
         url: api.urls.usage,
         method: "POST",
         auth: "session_cookie",
         headers: api.headers.billing,
-        bodyText: JSON.stringify({ ...body, pageNum }),
-      });
-      const parsed = parseUsageEnvelope(result);
-      if (parsed.kind === "expired") {
-        return usageError("WorkBuddy 登录凭据无效或已过期，请在设置中重新填写三项凭据");
-      }
-      if (parsed.kind === "http") {
-        return usageError("积分明细接口返回 HTTP {status}", { status: parsed.status });
-      }
-      if (parsed.kind === "biz") {
-        return usageError("积分明细查询失败：{detail}", { detail: parsed.detail });
-      }
-      if (parsed.kind === "parse") {
-        return usageError("积分明细返回数据解析失败：{detail}", { detail: parsed.detail });
-      }
-      rows.push(...parsed.rows);
-      total = parsed.total;
-      if (rows.length >= total || parsed.rows.length === 0) break;
+        bodyText: JSON.stringify({
+          startTime: formatUsageTime(startMs),
+          endTime: formatUsageTime(endMs, true),
+          pageSize: PAGE_SIZE,
+          pageNum,
+        }),
+      }),
+    "WorkBuddy 登录凭据无效或已过期，请在设置中重新填写三项凭据",
+  );
+};
+
+/** token 通道取数（ADR-0034 第三波）：usage 与 billing 同族路径（codebuddy.cn /v2 前缀，
+ *  国际站无前缀双试）。401/403 先即时续期救一次（与卡片取数同款），救不活按扫码失效报错 */
+const fetchTokenUsage = async (
+  instance: ProviderInstance,
+  startMs: number,
+  endMs: number,
+): Promise<StatsResult<WorkbuddyUsageBundle>> => {
+  const tokenApi = workbuddyTokenApi(workbuddySiteOf(instance));
+  const send = (url: string, pageNum: number) =>
+    invoke<HttpResult>("provider_request", {
+      instanceId: instance.id,
+      url,
+      method: "POST",
+      auth: "workbuddy_token",
+      headers: tokenApi.headers.billing,
+      bodyText: JSON.stringify({
+        startTime: formatUsageTime(startMs),
+        endTime: formatUsageTime(endMs, true),
+        pageSize: PAGE_SIZE,
+        pageNum,
+      }),
+    });
+  const fetchPage = async (pageNum: number): Promise<UsagePage> => {
+    let result = await send(tokenApi.urls.usage, pageNum);
+    if (result.status === 404 && tokenApi.urls.usageAlt) {
+      result = await send(tokenApi.urls.usageAlt, pageNum);
     }
-    return { status: "ok", data: { rows, total: total || rows.length } };
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    return usageError("积分明细查询失败：{detail}", { detail });
-  }
+    if (result.status !== 401 && result.status !== 403) return result;
+    try {
+      await invoke("workbuddy_token_refresh", { instanceId: instance.id });
+    } catch {
+      return "expired";
+    }
+    result = await send(tokenApi.urls.usage, pageNum);
+    if (result.status === 404 && tokenApi.urls.usageAlt) {
+      result = await send(tokenApi.urls.usageAlt, pageNum);
+    }
+    return result.status === 401 || result.status === 403 ? "expired" : result;
+  };
+  return collectUsagePages(fetchPage, WORKBUDDY_TOKEN_EXPIRED_MESSAGE);
 };
 
 // ─── 聚合（纯函数） ───

@@ -46,6 +46,7 @@ const makeInstance = (): ProviderInstance => {
     threshold: null,
     balanceThreshold: null,
     site: "china",
+    tokenAutoRenew: true,
     createdAt: 0,
   };
 };
@@ -105,34 +106,85 @@ const travelStatusPayload = (over: Record<string, unknown> = {}) =>
 const travelOk = httpResult({ code: 0, msg: "OK" });
 
 /** 三槽（session / session2 / userAgent）的配置状态；缺省三格都已填，
- *  传 { session: false } 模拟「没填齐」（needs_config 路径） */
-const credentialStatus = (fields: { session?: boolean } = {}) => ({
+ *  传 { session: false } 模拟「没填齐」。accessToken（token 通道，ADR-0034）只在
+ *  显式传入时出现——与 vault_credential_status 的「仅含非空项」语义一致 */
+const credentialStatus = (fields: { session?: boolean; accessToken?: boolean } = {}) => ({
   session: fields.session ?? true,
   session2: fields.session ?? true,
   userAgent: fields.session ?? true,
+  ...(fields.accessToken === undefined ? {} : { accessToken: fields.accessToken }),
 });
 
-/** 快照轮询的调用次序：凭据 → （每日首次）签到 → 旅行状态机 → 余额套餐 → 连登。
- *  travelStatus 缺省给空 data（state 缺失 → 状态机整体跳过）；要驱动领奖/出发的用例
- *  显式传 travelStatus/travelClaim/travelDepart/travelRecheck */
+/** 快照取数的按 URL 分发 mock（ADR-0037 起取数链为「余额主源 ‖ 成长例程」并行，
+ *  序列 mock 会随事件循环顺序抖动）。每个 URL 一个固定响应；缺省段给安全空值：
+ *  签到已签（10001）、旅行空闲（状态机整体跳过）、连登零天（无行）、管家无事件
+ *  （昨日不漏签 / 无礼包 / 无补偿 / lottery 关闭——发请求但不发奖）。要驱动领奖/
+ *  出发的用例显式传 travelStatus（队列，状态机出发成功后的回查消费第二个）/travelClaim/
+ *  travelDepart */
 const mockFetchSequence = (opts: {
-  /// 三槽状态由 credentialStatus() 统一给出
+  credentialStatus?: unknown;
   checkin?: HttpResult;
-  travelStatus?: HttpResult;
+  travelStatus?: HttpResult[];
   travelClaim?: HttpResult;
   travelDepart?: HttpResult;
-  travelRecheck?: HttpResult;
   resource: HttpResult;
   streak?: HttpResult;
+  heatmap?: HttpResult;
+  gift?: HttpResult;
+  compensation?: HttpResult;
+  lotterySummary?: HttpResult;
+  redeem?: HttpResult;
 }) => {
-  mockInvoke.mockResolvedValueOnce(credentialStatus());
-  if (opts.checkin) mockInvoke.mockResolvedValueOnce(opts.checkin);
-  mockInvoke.mockResolvedValueOnce(opts.travelStatus ?? httpResult({ code: 0, msg: "OK", data: {} }));
-  if (opts.travelClaim) mockInvoke.mockResolvedValueOnce(opts.travelClaim);
-  if (opts.travelDepart) mockInvoke.mockResolvedValueOnce(opts.travelDepart);
-  if (opts.travelRecheck) mockInvoke.mockResolvedValueOnce(opts.travelRecheck);
-  mockInvoke.mockResolvedValueOnce(opts.resource);
-  if (opts.streak) mockInvoke.mockResolvedValueOnce(opts.streak);
+  const travelStatusQueue = opts.travelStatus ?? [httpResult({ code: 0, msg: "OK", data: {} })];
+  mockInvoke.mockImplementation(async (cmd: string, payload?: unknown) => {
+    if (cmd === "vault_credential_status") return opts.credentialStatus ?? credentialStatus();
+    if (cmd !== "provider_request") throw new Error(`意外的命令：${cmd}`);
+    const url =
+      typeof payload === "object" && payload !== null
+        ? String((payload as { url?: string }).url ?? "")
+        : "";
+    if (url.endsWith("/billing/meter/daily-checkin")) {
+      return opts.checkin ?? httpResult({ code: 10001, msg: "已签到" });
+    }
+    if (url.endsWith("/travel/status")) {
+      return travelStatusQueue.shift() ?? httpResult({ code: 0, msg: "OK", data: {} });
+    }
+    if (url.endsWith("/travel/claim")) {
+      if (!opts.travelClaim) throw new Error(`意外的 claim 请求（用例未声明）：${url}`);
+      return opts.travelClaim;
+    }
+    if (url.endsWith("/travel/depart")) {
+      if (!opts.travelDepart) throw new Error(`意外的 depart 请求（用例未声明）：${url}`);
+      return opts.travelDepart;
+    }
+    if (url.endsWith("/activity/growth/streak")) {
+      return opts.streak ?? httpResult({ code: 0, msg: "OK", data: {} });
+    }
+    if (url.endsWith("/activity/growth/heatmap")) {
+      return opts.heatmap ?? httpResult({ code: 0, msg: "OK", data: { cells: [] } });
+    }
+    if (url.endsWith("/makeup-cards/use")) {
+      throw new Error(`意外的补签请求（用例未声明）：${url}`);
+    }
+    if (url.endsWith("/claim-gift")) {
+      return opts.gift ?? httpResult({ code: 9001, msg: "no gift" });
+    }
+    if (url.endsWith("/claim-compensation")) {
+      return opts.compensation ?? httpResult({ code: 9002, msg: "no compensation" });
+    }
+    if (url.endsWith("/lottery/summary")) {
+      return opts.lotterySummary ?? httpResult({ code: 0, msg: "OK", data: { chances: 0, module: { enabled: false } } });
+    }
+    if (url.endsWith("/lottery/draw")) {
+      throw new Error(`意外的抽奖请求（用例未声明）：${url}`);
+    }
+    if (url.endsWith("/activity/growth/redeem")) {
+      if (!opts.redeem) throw new Error(`意外的兑换请求（用例未声明）：${url}`);
+      return opts.redeem;
+    }
+    if (url.endsWith("/billing/meter/get-user-resource")) return opts.resource;
+    throw new Error(`意外的 provider_request：${url}`);
+  });
 };
 
 describe("parseResourceLines", () => {
@@ -298,12 +350,25 @@ describe("parseResourceLines", () => {
 });
 
 describe("parseStreakLine", () => {
-  it("连登行：days≤0 或缺失不渲染", () => {
-    expect(parseStreakLine({ streak: { days: 3 } })).toEqual({
+  it("连登行：距档天数本地推算（档位门槛 7/14/28），不消费语义未实证的 next_tier_remaining", () => {
+    // days=1 → 距 7 天档差 6 天；days=8 → 距 14 天档差 6 天；days≥28 无下一档
+    expect(parseStreakLine({ streak: { days: 1 } })).toEqual({
+      type: "text",
+      label: "连登",
+      value: "{days} 天 · 距 {tier} 天档还差 {gap} 天",
+      valueParams: { days: 1, tier: 7, gap: 6 },
+    });
+    expect(parseStreakLine({ streak: { days: 8 } })).toEqual({
+      type: "text",
+      label: "连登",
+      value: "{days} 天 · 距 {tier} 天档还差 {gap} 天",
+      valueParams: { days: 8, tier: 14, gap: 6 },
+    });
+    expect(parseStreakLine({ streak: { days: 30 } })).toEqual({
       type: "text",
       label: "连登",
       value: "{days} 天",
-      valueParams: { days: 3 },
+      valueParams: { days: 30 },
     });
     expect(parseStreakLine({ streak: { days: 0 } })).toBeNull();
     expect(parseStreakLine(undefined)).toBeNull();
@@ -410,7 +475,7 @@ describe("workbuddyProvider.fetch", () => {
     mockInvoke.mockResolvedValueOnce(credentialStatus({ session: false }));
     const snapshot = await workbuddyProvider.fetch(instance);
     expect(snapshot.status).toBe("needs_config");
-    expect(snapshot.message).toBe("请在设置中填写 WorkBuddy 的 session、session_2 与浏览器 User-Agent 三项凭据");
+    expect(snapshot.message).toBe("请在设置中扫码登录 WorkBuddy，或填写 Cookie 凭据");
     expect(mockInvoke).toHaveBeenCalledTimes(1);
   });
 
@@ -424,15 +489,19 @@ describe("workbuddyProvider.fetch", () => {
     const snapshot = await workbuddyProvider.fetch(instance);
     expect(snapshot.status).toBe("ok");
     expect(snapshot.checkin).toEqual({ date: cstDateString(), credited: 30 });
-    // 调用次序：凭据 → 签到 → 旅行状态 → 余额 → 连登
-    const urls = mockInvoke.mock.calls.map((call) => (call[1] as { url?: string }).url);
-    expect(urls).toEqual([
-      undefined, // vault_credential_status 无 url 参数
-      "https://www.workbuddy.cn/billing/meter/daily-checkin",
-      "https://www.workbuddy.cn/activity/growth/buddy/travel/status",
-      "https://www.workbuddy.cn/billing/meter/get-user-resource",
-      "https://www.workbuddy.cn/activity/growth/streak",
-    ]);
+    // 余额 ‖ 成长例程并行（ADR-0037），签到在例程链第一步：签到/旅行/连登/管家探测
+    // 各调用一次，余额主源不缺
+    const urls = mockInvoke.mock.calls
+      .map((call) => (call[1] as { url?: string }).url)
+      .filter((url): url is string => Boolean(url));
+    expect(urls).toContain("https://www.workbuddy.cn/billing/meter/daily-checkin");
+    expect(urls).toContain("https://www.workbuddy.cn/activity/growth/buddy/travel/status");
+    expect(urls).toContain("https://www.workbuddy.cn/billing/meter/get-user-resource");
+    expect(urls).toContain("https://www.workbuddy.cn/activity/growth/streak");
+    expect(urls).toContain("https://www.workbuddy.cn/activity/growth/heatmap");
+    expect(urls).toContain("https://www.workbuddy.cn/billing/meter/claim-gift");
+    expect(urls).toContain("https://www.workbuddy.cn/billing/meter/claim-compensation");
+    expect(urls).toContain("https://www.workbuddy.cn/activity/growth/lottery/summary");
     // 请求体/头与参考实现对齐（审查修正）：通用端点 + Status [0,3] + 服务端滤过期 +
     // 显式 Content-Type（Rust body() 不自动补）；目录码与 NeedInUsage 已确认不参与结果，
     // 完整形态由「两站请求体同款骨架」那条用例用 toEqual 钉住
@@ -469,16 +538,16 @@ describe("workbuddyProvider.fetch", () => {
     expect(first.checkin).toBeUndefined();
 
     // 同一实例第二次刷新：内存标记生效，不再调用签到接口
-    mockInvoke
-      .mockResolvedValueOnce(credentialStatus())
-      .mockResolvedValueOnce(httpResult({ code: 0, msg: "OK", data: {} }))
-      .mockResolvedValueOnce(httpResult(resourcePayload([totalPackage()])))
-      .mockResolvedValueOnce(httpResult(streakPayload(2)));
+    mockInvoke.mockReset();
+    mockFetchSequence({
+      resource: httpResult(resourcePayload([totalPackage()])),
+      streak: httpResult(streakPayload(2)),
+    });
     await workbuddyProvider.fetch(instance);
     const checkinCalls = mockInvoke.mock.calls.filter(
       (call) => (call[1] as { url?: string }).url === "https://www.workbuddy.cn/billing/meter/daily-checkin",
     );
-    expect(checkinCalls).toHaveLength(1);
+    expect(checkinCalls).toHaveLength(0);
   });
 
   it("签到失败不拖垮快照：不设标记，余额照常出 ok", async () => {
@@ -542,10 +611,9 @@ describe("workbuddyProvider.fetch 喵喵旅行", () => {
     const instance = makeInstance();
     mockFetchSequence({
       checkin: httpResult({ code: 10001, msg: "今天已签到" }),
-      travelStatus: travelStatusPayload(),
+      travelStatus: [travelStatusPayload(), travelStatusPayload({ state: "traveling" })],
       travelClaim: httpResult({ code: 0, msg: "OK", data: { credit: 9 } }),
       travelDepart: travelOk,
-      travelRecheck: travelStatusPayload({ state: "traveling" }),
       resource: httpResult(resourcePayload([totalPackage()])),
       streak: httpResult(streakPayload(1)),
     });
@@ -570,35 +638,34 @@ describe("workbuddyProvider.fetch 喵喵旅行", () => {
     const instance = makeInstance();
     const firstMocks = {
       checkin: httpResult({ code: 10001, msg: "已签到" }),
-      travelStatus: travelStatusPayload(),
+      travelStatus: [travelStatusPayload(), travelStatusPayload({ state: "traveling" })],
       travelClaim: httpResult({ code: 0, msg: "OK", data: { credit: 9 } }),
       travelDepart: travelOk,
-      travelRecheck: travelStatusPayload({ state: "traveling" }),
       resource: httpResult(resourcePayload([totalPackage()])),
       streak: httpResult(streakPayload(1)),
     };
     mockFetchSequence(firstMocks);
     await workbuddyProvider.fetch(instance);
     // 第二轮：同样的到站状态（同 depart_at）——claim 不再发起；出发照常（服务端节流兜底）
-    mockInvoke
-      .mockResolvedValueOnce(credentialStatus())
-      .mockResolvedValueOnce(travelStatusPayload())
-      .mockResolvedValueOnce(travelOk)
-      .mockResolvedValueOnce(travelStatusPayload({ state: "traveling" }))
-      .mockResolvedValueOnce(httpResult(resourcePayload([totalPackage()])))
-      .mockResolvedValueOnce(httpResult(streakPayload(1)));
+    mockInvoke.mockReset();
+    mockFetchSequence({
+      travelStatus: [travelStatusPayload(), travelStatusPayload({ state: "traveling" })],
+      travelDepart: travelOk,
+      resource: httpResult(resourcePayload([totalPackage()])),
+      streak: httpResult(streakPayload(1)),
+    });
     await workbuddyProvider.fetch(instance);
     const claimCalls = mockInvoke.mock.calls.filter(
       (call) => (call[1] as { url?: string }).url?.endsWith("/travel/claim"),
     );
-    expect(claimCalls).toHaveLength(1);
+    expect(claimCalls).toHaveLength(0);
   });
 
   it("名额已用尽（daily_limit_reached）不出发，领奖照常", async () => {
     const instance = makeInstance();
     mockFetchSequence({
       checkin: httpResult({ code: 10001, msg: "已签到" }),
-      travelStatus: travelStatusPayload({ daily_limit_reached: true }),
+      travelStatus: [travelStatusPayload({ daily_limit_reached: true })],
       travelClaim: httpResult({ code: 0, msg: "OK", data: { reward_credit: 9 } }),
       resource: httpResult(resourcePayload([totalPackage()])),
       streak: httpResult(streakPayload(1)),
@@ -615,10 +682,9 @@ describe("workbuddyProvider.fetch 喵喵旅行", () => {
     const instance = makeInstance();
     mockFetchSequence({
       checkin: httpResult({ code: 10001, msg: "已签到" }),
-      travelStatus: travelStatusPayload(),
+      travelStatus: [travelStatusPayload(), travelStatusPayload({ state: "traveling" })],
       travelClaim: httpResult({ code: 500, msg: "内部错误" }),
       travelDepart: travelOk,
-      travelRecheck: travelStatusPayload({ state: "traveling" }),
       resource: httpResult(resourcePayload([totalPackage()])),
       streak: httpResult(streakPayload(1)),
     });
@@ -631,7 +697,7 @@ describe("workbuddyProvider.fetch 喵喵旅行", () => {
     const instance = makeInstance();
     mockFetchSequence({
       checkin: httpResult({ code: 10001, msg: "已签到" }),
-      travelStatus: httpResult("unauthorized", 401),
+      travelStatus: [httpResult("unauthorized", 401)],
       resource: httpResult(resourcePayload([totalPackage()])),
       streak: httpResult(streakPayload(1)),
     });
@@ -647,7 +713,7 @@ describe("workbuddyProvider.fetch 喵喵旅行", () => {
     const instance = makeInstance();
     mockFetchSequence({
       checkin: httpResult({ code: 10001, msg: "已签到" }),
-      travelStatus: travelStatusPayload({ daily_limit_reached: true }),
+      travelStatus: [travelStatusPayload({ daily_limit_reached: true })],
       travelClaim: httpResult({ code: 0, msg: "OK", data: { credit: 9 } }),
       resource: httpResult("unauthorized", 401),
     });
@@ -663,21 +729,37 @@ describe("站点端点与能力表（ADR-0031）", () => {
     mockInvoke.mockReset();
   });
 
-  it("中国站：端点与 referer 指向 www.workbuddy.cn，四件套能力全开", () => {
+  it("中国站：端点与 referer 指向 www.workbuddy.cn，成长体系能力全开", () => {
     const api = workbuddyApi("china");
     expect(api.urls.resource).toBe("https://www.workbuddy.cn/billing/meter/get-user-resource");
     expect(api.urls.usage).toBe("https://www.workbuddy.cn/billing/meter/get-user-request-usage");
     expect(api.headers.billing.Referer).toBe("https://www.workbuddy.cn/profile/plans-usage");
     expect(api.headers.activity.Referer).toBe("https://www.workbuddy.cn/profile/growth-center");
-    expect(api.capabilities).toEqual({ checkin: true, streak: true, travel: true, stats: true });
+    expect(api.capabilities).toEqual({
+      checkin: true,
+      streak: true,
+      travel: true,
+      stats: true,
+      tasks: true,
+      butler: true,
+      trial: false,
+    });
   });
 
-  it("国际站：Origin/Referer 随域切换，成长运营关掉、消耗明细保留", () => {
+  it("国际站：Origin/Referer 随域切换，成长运营关掉、消耗明细与 trial 保留", () => {
     const api = workbuddyApi("international");
     expect(api.urls.resource).toBe("https://www.workbuddy.ai/billing/meter/get-user-resource");
     expect(api.headers.billing.Origin).toBe("https://www.workbuddy.ai");
     expect(api.headers.travel.Referer).toBe("https://www.workbuddy.ai/profile/growth-center");
-    expect(api.capabilities).toEqual({ checkin: false, streak: false, travel: false, stats: true });
+    expect(api.capabilities).toEqual({
+      checkin: false,
+      streak: false,
+      travel: false,
+      stats: true,
+      tasks: false,
+      butler: false,
+      trial: true,
+    });
   });
 
   it("site 缺失或未知值回退中国站", () => {
@@ -699,10 +781,18 @@ describe("站点端点与能力表（ADR-0031）", () => {
     }
   });
 
-  it("国际站刷新只打取数接口：签到、连登、旅行一个都不发", async () => {
-    mockInvoke.mockImplementation(async (command: string) => {
+  it("国际站刷新只打取数与 trial 接口：签到、连登、旅行一个都不发", async () => {
+    mockInvoke.mockImplementation(async (command: string, payload?: unknown) => {
       if (command === "vault_credential_status")
             return { session: true, session2: true, userAgent: true };
+      const url =
+        typeof payload === "object" && payload !== null
+          ? String((payload as { url?: string }).url ?? "")
+          : "";
+      if (url.endsWith("/billing/ide/trial")) {
+        // 404：端点未上线（真机验证项）——4xx 归入「已处理」，不再重试
+        return httpResult("not found", 404);
+      }
       return httpResult(
         resourcePayload([
           {
@@ -725,7 +815,12 @@ describe("站点端点与能力表（ADR-0031）", () => {
       .map((call) => (call[1] as { url: string }).url);
 
     expect(snapshot.status).toBe("ok");
-    expect(urls).toEqual(["https://www.workbuddy.ai/billing/meter/get-user-resource"]);
+    // trial（国际站专属，ADR-0037）随取数尝试一次；console/account 是 Cookie 通道
+    // 上下文构造的账号摘要探测（取数不需要 uid，失败静默）；成长运营四件套照旧整段跳过
+    expect(urls).toHaveLength(3);
+    expect(urls).toContain("https://www.workbuddy.ai/billing/meter/get-user-resource");
+    expect(urls).toContain("https://www.workbuddy.ai/billing/ide/trial");
+    expect(urls).toContain("https://www.workbuddy.ai/console/account");
     // 周期制套餐按 CycleCapacitySize 口径出进度行
     expect(snapshot.lines[0].limit).toBe(250);
   });
@@ -764,5 +859,255 @@ describe("三格输入的合法性判定", () => {
     expect(isValidUserAgentValue("Mozilla/5.0 中文")).toBe(false);
     expect(isValidUserAgentValue("")).toBe(false);
     expect(isValidUserAgentValue("u".repeat(513))).toBe(false);
+  });
+});
+
+describe("token 通道（扫码登录，ADR-0034）", () => {
+  beforeEach(() => {
+    mockInvoke.mockReset();
+  });
+
+  /** token 通道的调用按命令分派（次序由 runResource/签到链决定，sequence 难维护）。
+   *  resource 传数组＝按次序消费（401 重试/404 回落的多段用例）；travelStatus 同为
+   *  队列（状态机出发成功后回查 status 是第二次调用），缺省空 data＝状态机整体跳过 */
+  const mockTokenFetch = (opts: {
+    checkin?: HttpResult;
+    resource: HttpResult[];
+    refreshError?: boolean;
+    travelStatus?: HttpResult[];
+    travelClaim?: HttpResult;
+    travelDepart?: HttpResult;
+    streak?: HttpResult;
+  }) => {
+    // 第二参加宽为 unknown 再收窄：按 { url?: string } 声明会对 InvokeArgs 逆变
+    mockInvoke.mockImplementation(async (cmd: string, payload?: unknown) => {
+      if (cmd === "vault_credential_status") {
+        return credentialStatus({ accessToken: true, session: false });
+      }
+      if (cmd === "workbuddy_token_refresh") {
+        if (opts.refreshError) throw new Error("token 续期失败：模拟");
+        return true;
+      }
+      if (cmd === "provider_request") {
+        const url =
+          typeof payload === "object" && payload !== null
+            ? String((payload as { url?: string }).url ?? "")
+            : "";
+        if (url.endsWith("/daily-checkin")) return opts.checkin ?? httpResult({ code: 0, msg: "OK", data: {} });
+        if (url.endsWith("/travel/status")) {
+          return opts.travelStatus?.shift() ?? httpResult({ code: 0, msg: "OK", data: null });
+        }
+        if (url.endsWith("/travel/claim")) {
+          return opts.travelClaim ?? httpResult({ code: 0, msg: "OK", data: { credit: 5 } });
+        }
+        if (url.endsWith("/travel/depart")) {
+          return opts.travelDepart ?? httpResult({ code: 0, msg: "OK", data: {} });
+        }
+        if (url.endsWith("/activity/growth/streak")) {
+          return opts.streak ?? httpResult({ code: 0, msg: "OK", data: {} });
+        }
+        // 管家探测（ADR-0037）：缺省给「无事件」安全响应——昨日不漏签、无礼包/补偿、
+        // lottery 关闭（token 国区 meterBase 在 codebuddy.cn/v2）
+        if (url.endsWith("/activity/growth/heatmap")) {
+          return httpResult({ code: 0, msg: "OK", data: { cells: [] } });
+        }
+        if (url.endsWith("/claim-gift") || url.endsWith("/claim-compensation")) {
+          return httpResult({ code: 9001, msg: "no gift" });
+        }
+        if (url.endsWith("/lottery/summary")) {
+          return httpResult({ code: 0, msg: "OK", data: { chances: 0, module: { enabled: false } } });
+        }
+        const next = opts.resource.shift();
+        if (next === undefined) throw new Error(`多余的 resource 请求：${url}`);
+        return next;
+      }
+      throw new Error(`意外的命令：${cmd}`);
+    });
+  };
+
+  it("通道判定：accessToken 非空优先 token，三格齐走 cookie，都缺为 null", async () => {
+    const { resolveWorkbuddyChannel } = await import("./workbuddy");
+    expect(resolveWorkbuddyChannel({ accessToken: true, session: true, session2: true, userAgent: true })).toBe("token");
+    expect(resolveWorkbuddyChannel({ session: true, session2: true, userAgent: true })).toBe("cookie");
+    expect(resolveWorkbuddyChannel({ session: true, session2: true })).toBeNull();
+    expect(resolveWorkbuddyChannel({})).toBeNull();
+  });
+
+  it("token 档案：中国站 billing 走 codebuddy.cn 的 /v2（spike 实证），growth 走 copilot.tencent.com 无前缀，凭据头由 Rust 注", async () => {
+    const { workbuddyTokenApi } = await import("./workbuddy");
+    const api = workbuddyTokenApi("china");
+    expect(api.urls.resource).toBe("https://www.codebuddy.cn/v2/billing/meter/get-user-resource");
+    expect(api.urls.checkin).toBe("https://www.codebuddy.cn/v2/billing/meter/daily-checkin");
+    // usage 路由实测不在 /v2 前缀下（/v2 404 Route Not Found，无前缀 401 待认证）
+    expect(api.urls.usage).toBe("https://www.codebuddy.cn/billing/meter/get-user-request-usage");
+    expect(api.urls.usageAlt).toBe("https://copilot.tencent.com/billing/meter/get-user-request-usage");
+    expect(api.urls.resourceAlt).toBeNull();
+    // growth 族（对表 travel.go/streak.go 常量）：chatBase 域 + 与 Cookie 通道同路径
+    expect(api.urls.travel).toBe("https://copilot.tencent.com/activity/growth/buddy/travel");
+    expect(api.urls.streak).toBe("https://copilot.tencent.com/activity/growth/streak");
+    expect(api.headers.billing["X-CodeBuddy-Request"]).toBe("1");
+    expect(api.headers.billing["X-Domain"]).toBe("www.codebuddy.cn");
+    expect(api.headers.billing["Accept-Language"]).toBe("zh-CN");
+    // growth 头族按参考 BillingHeaders：不带 Origin/Referer
+    expect(api.headers.growth).not.toHaveProperty("Origin");
+    expect(api.headers.growth).not.toHaveProperty("Referer");
+    expect(api.headers.growth["X-CodeBuddy-Request"]).toBe("1");
+    // 凭据衍生头（Authorization/User-Agent/X-User-Id）不在前端头集里
+    expect(
+      Object.keys(api.headers.billing).some((name) => name.toLowerCase() === "authorization"),
+    ).toBe(false);
+  });
+
+  it("token 档案：国际站首选无 /v2 路径、404 回落 /v2（参考实现双试同序）", async () => {
+    const { workbuddyTokenApi } = await import("./workbuddy");
+    const api = workbuddyTokenApi("international");
+    expect(api.urls.resource).toBe("https://www.workbuddy.ai/billing/meter/get-user-resource");
+    expect(api.urls.resourceAlt).toBe("https://www.workbuddy.ai/v2/billing/meter/get-user-resource");
+    expect(api.urls.usage).toBe("https://www.workbuddy.ai/billing/meter/get-user-request-usage");
+    expect(api.urls.usageAlt).toBe("https://www.workbuddy.ai/v2/billing/meter/get-user-request-usage");
+    expect(api.headers.billing["Accept-Language"]).toBe("en-US");
+  });
+
+  it("token 通道取数：续期→签到→旅行状态→余额→连登，全走 Bearer 端点", async () => {
+    const instance = makeInstance();
+    mockTokenFetch({
+      checkin: httpResult({ code: 0, msg: "success", data: { credit: 30 } }),
+      resource: [httpResult(resourcePayload([totalPackage()]))],
+    });
+    const snapshot = await workbuddyProvider.fetch(instance);
+    expect(snapshot.status).toBe("ok");
+    expect(snapshot.checkin).toEqual({ date: cstDateString(), credited: 30 });
+    // 余额 ‖ 成长例程并行（ADR-0037）：例程链串行（签到→旅行→连登→管家探测→trial 跳过）
+    const growthUrls = mockInvoke.mock.calls
+      .map((call) => (call[1] as { url?: string }).url)
+      .filter((url): url is string => Boolean(url?.startsWith("https://copilot.tencent.com/")));
+    expect(growthUrls).toEqual([
+      "https://copilot.tencent.com/activity/growth/buddy/travel/status",
+      "https://copilot.tencent.com/activity/growth/streak",
+      "https://copilot.tencent.com/activity/growth/heatmap",
+      "https://copilot.tencent.com/activity/growth/streak",
+      "https://copilot.tencent.com/activity/growth/lottery/summary",
+      "https://copilot.tencent.com/activity/growth/streak",
+    ]);
+    // 管家的礼包/补偿走 token 国区 billing 域（codebuddy.cn/v2，与签到同族）
+    const billingUrls = mockInvoke.mock.calls
+      .map((call) => (call[1] as { url?: string }).url)
+      .filter((url): url is string => Boolean(url?.includes("codebuddy.cn")));
+    expect(billingUrls).toContain("https://www.codebuddy.cn/v2/billing/meter/claim-gift");
+    expect(billingUrls).toContain("https://www.codebuddy.cn/v2/billing/meter/claim-compensation");
+    const resourceCall = mockInvoke.mock.calls.find(
+      (call) => (call[1] as { url?: string }).url === "https://www.codebuddy.cn/v2/billing/meter/get-user-resource",
+    )?.[1] as { auth?: string; bodyText?: string; headers?: Record<string, string> };
+    expect(resourceCall.auth).toBe("workbuddy_token");
+    expect(JSON.parse(resourceCall.bodyText!)).toMatchObject({
+      ProductCode: "p_tcaca",
+      Status: [0, 3],
+      OnlyValidPeriod: true,
+    });
+    expect(snapshot.lines.map((line) => line.label)).toEqual(["积分余量", "月度套餐"]);
+  });
+
+  it("token 通道旅行状态机：到站领奖→出发→回查，与 Cookie 通道共用同一状态机", async () => {
+    const instance = makeInstance();
+    mockTokenFetch({
+      resource: [httpResult(resourcePayload([totalPackage()]))],
+      travelStatus: [
+        httpResult({
+          code: 0,
+          msg: "OK",
+          data: { state: "arrived", record_id: 42, depart_at: 1_758_900_000, reward_credit: 5 },
+        }),
+        httpResult({
+          code: 0,
+          msg: "OK",
+          data: {
+            state: "traveling",
+            arrive_at: 1_758_910_000,
+            location: { name: "喵喵岛" },
+          },
+        }),
+      ],
+      streak: httpResult({ code: 0, msg: "OK", data: { streak: { days: 5 } } }),
+    });
+    const snapshot = await workbuddyProvider.fetch(instance);
+    expect(snapshot.status).toBe("ok");
+    expect(snapshot.travel).toEqual({ tripKey: "1758900000", credited: 5 });
+    expect(snapshot.lines.map((line) => line.label)).toEqual(["积分余量", "月度套餐", "喵喵旅行", "连登"]);
+    const growthCalls = mockInvoke.mock.calls.filter((call) =>
+      String((call[1] as { url?: string })?.url ?? "").includes("/activity/growth/"),
+    ) as Array<[string, { url?: string; auth?: string; headers?: Record<string, string> }]>;
+    // 例程链串行：旅行状态机 → 连登（管家前）→ 管家（heatmap→兑换前回读→lottery）→ 回读
+    expect(growthCalls.map((call) => call[1].url)).toEqual([
+      "https://copilot.tencent.com/activity/growth/buddy/travel/status",
+      "https://copilot.tencent.com/activity/growth/buddy/travel/claim",
+      "https://copilot.tencent.com/activity/growth/buddy/travel/depart",
+      "https://copilot.tencent.com/activity/growth/buddy/travel/status",
+      "https://copilot.tencent.com/activity/growth/streak",
+      "https://copilot.tencent.com/activity/growth/heatmap",
+      "https://copilot.tencent.com/activity/growth/streak",
+      "https://copilot.tencent.com/activity/growth/lottery/summary",
+      "https://copilot.tencent.com/activity/growth/streak",
+    ]);
+    for (const call of growthCalls) {
+      expect(call[1].auth).toBe("workbuddy_token");
+      expect(call[1].headers?.["X-CodeBuddy-Request"]).toBe("1");
+    }
+  });
+
+  it("401 即时救：先续期再重发，救活后照常出数", async () => {
+    const instance = makeInstance();
+    mockTokenFetch({
+      resource: [
+        httpResult("no auth", 401),
+        httpResult(resourcePayload([totalPackage()])),
+      ],
+    });
+    const snapshot = await workbuddyProvider.fetch(instance);
+    expect(snapshot.status).toBe("ok");
+    const refreshCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === "workbuddy_token_refresh");
+    expect(refreshCalls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("401 且续期失败：错误快照给扫码失效文案，不静默回落", async () => {
+    const instance = makeInstance();
+    mockTokenFetch({
+      resource: [httpResult("no auth", 401)],
+      refreshError: true,
+    });
+    const snapshot = await workbuddyProvider.fetch(instance);
+    expect(snapshot.status).toBe("error");
+    const { WORKBUDDY_TOKEN_EXPIRED_MESSAGE } = await import("./workbuddy");
+    expect(snapshot.message).toBe(WORKBUDDY_TOKEN_EXPIRED_MESSAGE);
+  });
+
+  it("tokenAutoRenew 关闭：不做每日续期（401 即时救仍会触发一次）", async () => {
+    const instance = { ...makeInstance(), tokenAutoRenew: false };
+    mockTokenFetch({
+      resource: [
+        httpResult("no auth", 401),
+        httpResult(resourcePayload([totalPackage()])),
+      ],
+    });
+    const snapshot = await workbuddyProvider.fetch(instance);
+    expect(snapshot.status).toBe("ok");
+    const refreshCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === "workbuddy_token_refresh");
+    expect(refreshCalls).toHaveLength(1);
+  });
+
+  it("国际站 404 回落：无 /v2 路径 404 后换 /v2 重发", async () => {
+    const instance = { ...makeInstance(), site: "international" as ProviderSite };
+    mockTokenFetch({
+      resource: [
+        httpResult("not found", 404),
+        httpResult(resourcePayload([totalPackage()])),
+      ],
+    });
+    const snapshot = await workbuddyProvider.fetch(instance);
+    expect(snapshot.status).toBe("ok");
+    const urls = mockInvoke.mock.calls
+      .map((call) => (call[1] as { url?: string }).url)
+      .filter((url): url is string => Boolean(url?.endsWith("/billing/meter/get-user-resource")));
+    expect(urls[0]).toBe("https://www.workbuddy.ai/billing/meter/get-user-resource");
+    expect(urls[urls.length - 1]).toBe("https://www.workbuddy.ai/v2/billing/meter/get-user-resource");
   });
 });

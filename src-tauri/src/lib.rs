@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Instant;
 
@@ -13,6 +14,7 @@ mod instances;
 mod tray_scheme;
 mod vault;
 
+use commands::WorkbuddyLoginSession;
 use db::Db;
 use vault::{KeyringKeyStore, Vault};
 
@@ -21,6 +23,9 @@ pub struct AppState {
     pub db: Mutex<Db>,
     /// 当前注册的快速面板全局快捷键（规范格式，如 "Alt+KeyU"）
     pub quick_shortcut: Mutex<Option<String>>,
+    /// WorkBuddy 扫码登录进行中的会话（instance_id → 会话，ADR-0034）：进程内存态，
+    /// 上游 state 15 分钟有效；重启丢会话只是要求重扫，无持久化价值
+    pub workbuddy_logins: Mutex<HashMap<String, WorkbuddyLoginSession>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -58,6 +63,7 @@ pub fn run() {
                 vault: Mutex::new(vault),
                 db: Mutex::new(db),
                 quick_shortcut: Mutex::new(None),
+                workbuddy_logins: Mutex::new(HashMap::new()),
             });
             // 托盘呈现状态（图标方案/计量快照/语言）独立于 AppState，由 tray_scheme 模块消费
             app.manage(tray_scheme::TrayState::default());
@@ -187,12 +193,20 @@ pub fn run() {
             commands::save_workbuddy_checkin,
             commands::get_workbuddy_travel_claim,
             commands::save_workbuddy_travel_claim,
+            commands::get_workbuddy_growth_notice,
+            commands::save_workbuddy_growth_notice,
+            commands::get_workbuddy_trial,
+            commands::save_workbuddy_trial,
             commands::list_notifications,
             commands::unread_notification_count,
             commands::mark_all_notifications_read,
             commands::delete_notification,
             commands::clear_notifications,
             commands::provider_request,
+            commands::workbuddy_qr_start,
+            commands::workbuddy_qr_poll,
+            commands::workbuddy_qr_claim,
+            commands::workbuddy_token_refresh,
             commands::open_main_window,
             commands::hide_quick_window,
             commands::toggle_quick_window,

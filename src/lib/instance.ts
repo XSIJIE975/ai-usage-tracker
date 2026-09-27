@@ -20,10 +20,12 @@ export function hasMultipleSites(kind: ProviderKind): boolean {
   return providerSites(kind).length > 1;
 }
 
-/** 站点的界面短名（徽标与下拉共用；带域名的长标签在各供应商模块里） */
+/** 站点短码（徽标与站点下拉共用）：语言中性 CN/Intl——域名级标识用通用缩写，
+ *  中英文同文免翻译维护。下拉选项另拼域名（CN（workbuddy.cn）形态），i18n 键
+ *  随这里的字面同步 */
 export const SITE_LABELS: Record<ProviderSite, string> = {
-  china: "中国站",
-  international: "国际站",
+  china: "CN",
+  international: "Intl",
 };
 
 /** 卡片主标题与告警标题共用的显示名：备注优先，留空回退供应商名 */

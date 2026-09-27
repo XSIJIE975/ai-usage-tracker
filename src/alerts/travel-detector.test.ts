@@ -12,13 +12,14 @@ const makeInstance = (id = "wb-1"): ProviderInstance => ({
   threshold: null,
   balanceThreshold: null,
   site: "china",
+  tokenAutoRenew: true,
   createdAt: 0,
 });
 
 const makeSnapshot = (travel?: { tripKey: string; credited: number }): ProviderSnapshot => ({
   instanceId: "wb-1",
   providerId: "workbuddy",
-  providerName: "腾讯 WorkBuddy / CodeBuddy",
+  providerName: "腾讯 WorkBuddy",
   status: "ok",
   updatedAt: 0,
   lines: [],

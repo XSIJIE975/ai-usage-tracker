@@ -10,6 +10,7 @@ import {
   Pin,
   RefreshCw,
   Settings2,
+  Sparkles,
   Trash2,
 } from "lucide-react";
 import type { MetricLine, ProviderInstance, ProviderSnapshot } from "../types/ipc";
@@ -245,11 +246,30 @@ interface CardBodyProps {
   onEdit?: () => void;
   onDelete?: () => void;
   onOpenStats?: () => void;
+  /** 成长任务入口（仅 workbuddy 国区实例传入，ADR-0036）；不传不渲染按钮 */
+  onOpenTasks?: () => void;
+  /** 任务待办数徽标（面板打开过才有缓存值；0 或缺省不显示） */
+  tasksBadge?: number;
   handleProps?: ComponentPropsWithoutRef<"button">;
   /** 翻面容器的 face 类（flip-face-front / flip-face-back）；非翻卡卡片为空 */
   faceClassName?: string;
   /** 该面是否当前朝向用户（隐藏面移出可访问树） */
   faceVisible: boolean;
+}
+
+/** 成长任务「已打开」的本地记忆：键与写入方（任务抽屉）、广播事件名配对 */
+export const TASKS_OPENED_EVENT = "wb-tasks-opened-changed";
+
+export function tasksOpenedKey(instanceId: string): string {
+  return `wb-tasks-opened:${instanceId}`;
+}
+
+function readTasksNeverOpened(instanceId: string): boolean {
+  try {
+    return !localStorage.getItem(tasksOpenedKey(instanceId));
+  } catch {
+    return false;
+  }
 }
 
 function CardBody({
@@ -266,6 +286,8 @@ function CardBody({
   onEdit,
   onDelete,
   onOpenStats,
+  onOpenTasks,
+  tasksBadge,
   handleProps,
   faceClassName,
   faceVisible,
@@ -277,6 +299,15 @@ function CardBody({
   const hasNote = instance.note.trim().length > 0;
   const needsConfig = snapshot?.status === "needs_config";
   const statsDisabled = snapshot?.status !== "ok";
+  // 「新」圆点：该实例从没打开过成长任务面板（localStorage 本地记忆；打开动作由
+  // 任务抽屉侧标记并广播事件——挂载时读一次 + 监听事件即时消失，复审 A）。读取
+  // 失败（隐私模式等）按已打开处理，宁可不提示
+  const [tasksNeverOpened, setTasksNeverOpened] = useState(() => readTasksNeverOpened(instance.id));
+  useEffect(() => {
+    const refresh = () => setTasksNeverOpened(readTasksNeverOpened(instance.id));
+    window.addEventListener(TASKS_OPENED_EVENT, refresh);
+    return () => window.removeEventListener(TASKS_OPENED_EVENT, refresh);
+  }, [instance.id]);
 
   return (
     <div
@@ -425,18 +456,45 @@ function CardBody({
         {(!snapshot || snapshot.lines.length === 0) && !snapshot?.message ? (
           <p className="py-2 text-xs text-fg-muted">{t("暂无数据")}</p>
         ) : null}
-        {!compact && onOpenStats && (
-          <div className="mt-3 border-t border-line pt-3">
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full"
-              disabled={statsDisabled}
-              onClick={onOpenStats}
-              title={statsDisabled ? t("获取数据后可查看统计") : t("查看统计")}
-            >
-              <PieChart className="h-3.5 w-3.5" /> {t("查看统计")}
-            </Button>
+        {!compact && (onOpenStats || onOpenTasks) && (
+          <div className="mt-3 flex gap-2 border-t border-line pt-3">
+            {onOpenTasks && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="flex-1"
+                onClick={onOpenTasks}
+                title={t("成长中心")}
+              >
+                <Sparkles className="h-3.5 w-3.5" /> {t("成长中心")}
+                {tasksBadge !== undefined && tasksBadge > 0 ? (
+                  <span className="ml-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-brand-soft px-1 text-[10px] font-semibold tabular-nums text-brand">
+                    {tasksBadge}
+                  </span>
+                ) : tasksNeverOpened ? (
+                  // 零成本的首次提示：该实例从没打开过任务面板时显示「新」圆点
+                  // （本地记忆，不发任何请求、不碰刷新链——ADR-0036 手动触发约束内）
+                  <span
+                    className="ml-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-brand-soft px-1 text-[10px] font-semibold text-brand"
+                    aria-label={t("新")}
+                  >
+                    {t("新")}
+                  </span>
+                ) : null}
+              </Button>
+            )}
+            {onOpenStats && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="flex-1"
+                disabled={statsDisabled}
+                onClick={onOpenStats}
+                title={statsDisabled ? t("获取数据后可查看统计") : t("查看统计")}
+              >
+                <PieChart className="h-3.5 w-3.5" /> {t("查看统计")}
+              </Button>
+            )}
           </div>
         )}
       </CardContent>
@@ -511,6 +569,10 @@ export interface ProviderCardProps {
   onEdit?: () => void;
   onDelete?: () => void;
   onOpenStats?: () => void;
+  /** 成长任务入口（仅 workbuddy 国区实例传入，ADR-0036）；不传不渲染按钮 */
+  onOpenTasks?: () => void;
+  /** 任务待办数徽标（面板打开过才有缓存值） */
+  tasksBadge?: number;
   /** dnd 手柄的 listeners/attributes（由外层 Sortable 传入，仅主窗口网格） */
   handleProps?: ComponentPropsWithoutRef<"button">;
   dragging?: boolean;
@@ -530,6 +592,8 @@ export function ProviderCard({
   onEdit,
   onDelete,
   onOpenStats,
+  onOpenTasks,
+  tasksBadge,
   handleProps,
   dragging = false,
   flipped: flippedProp,
@@ -568,6 +632,8 @@ export function ProviderCard({
     onEdit,
     onDelete,
     onOpenStats,
+    onOpenTasks,
+    tasksBadge,
     handleProps,
   };
 

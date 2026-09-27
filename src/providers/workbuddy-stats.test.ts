@@ -7,6 +7,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 import { invoke } from "@tauri-apps/api/core";
 import type { HttpResult, ProviderInstance } from "../types/ipc";
 import { aggregateWorkbuddyUsage, fetchWorkbuddyUsage, type WorkbuddyUsageRow } from "./workbuddy-stats";
+import { WORKBUDDY_NEEDS_CONFIG_MESSAGE, WORKBUDDY_TOKEN_EXPIRED_MESSAGE } from "./workbuddy";
 
 const mockInvoke = vi.mocked(invoke);
 
@@ -40,6 +41,7 @@ const makeInstance = (): ProviderInstance => ({
   threshold: null,
   balanceThreshold: null,
   site: "china",
+  tokenAutoRenew: true,
   createdAt: 0,
 });
 
@@ -133,12 +135,12 @@ describe("fetchWorkbuddyUsage", () => {
     mockInvoke.mockReset();
   });
 
-  it("三值未填齐 → needs_config，不发请求", async () => {
+  it("双通道都缺配置 → needs_config，不发请求", async () => {
     mockInvoke.mockResolvedValueOnce({ session: false });
     const result = await fetchWorkbuddyUsage(makeInstance(), range().startMs, range().endMs);
     expect(result.status).toBe("needs_config");
     if (result.status !== "needs_config") return;
-    expect(result.message).toBe("请在设置中填写 WorkBuddy 的 session、session_2 与浏览器 User-Agent 三项凭据");
+    expect(result.message).toBe(WORKBUDDY_NEEDS_CONFIG_MESSAGE);
     expect(mockInvoke).toHaveBeenCalledTimes(1);
   });
 
@@ -251,5 +253,72 @@ describe("fetchWorkbuddyUsage", () => {
     if (http.status !== "error") return;
     expect(http.message).toBe("积分明细接口返回 HTTP {status}");
     expect(http.params).toMatchObject({ status: 502 });
+  });
+});
+
+describe("fetchWorkbuddyUsage · token 通道（扫码登录，ADR-0034 第三波）", () => {
+  beforeEach(() => {
+    mockInvoke.mockReset();
+  });
+
+  it("accessToken 非空优先：走 billing 同族端点与 Bearer 通道头", async () => {
+    mockInvoke
+      .mockResolvedValueOnce({ session: true, session2: true, userAgent: true, accessToken: true })
+      .mockResolvedValueOnce(usagePayload([usageRow()]));
+    const result = await fetchWorkbuddyUsage(makeInstance(), range().startMs, range().endMs);
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") return;
+    expect(result.data.rows).toHaveLength(1);
+    const request = mockInvoke.mock.calls[1]?.[1] as {
+      url: string;
+      auth: string;
+      headers: Record<string, string>;
+    };
+    expect(request.url).toBe("https://www.codebuddy.cn/billing/meter/get-user-request-usage");
+    expect(request.auth).toBe("workbuddy_token");
+    expect(request.headers["X-CodeBuddy-Request"]).toBe("1");
+    expect(request.headers["X-Domain"]).toBe("www.codebuddy.cn");
+    // web 客户端特征头是 Cookie 通道专属
+    expect(request.headers).not.toHaveProperty("x-client-platform");
+  });
+
+  it("401 即时救：先续期再重发，救活照常出数", async () => {
+    mockInvoke
+      .mockResolvedValueOnce({ session: false, accessToken: true })
+      .mockResolvedValueOnce(httpResult("no auth", 401))
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(usagePayload([usageRow()]));
+    const result = await fetchWorkbuddyUsage(makeInstance(), range().startMs, range().endMs);
+    expect(result.status).toBe("ok");
+    expect(mockInvoke.mock.calls[2]?.[0]).toBe("workbuddy_token_refresh");
+  });
+
+  it("401 且续期失败：扫码失效文案，不静默回落（ADR-0024）", async () => {
+    mockInvoke
+      .mockResolvedValueOnce({ accessToken: true })
+      .mockResolvedValueOnce(httpResult("no auth", 401))
+      .mockRejectedValueOnce(new Error("token 续期失败：模拟"));
+    const result = await fetchWorkbuddyUsage(makeInstance(), range().startMs, range().endMs);
+    expect(result.status).toBe("error");
+    if (result.status !== "error") return;
+    expect(result.message).toBe(WORKBUDDY_TOKEN_EXPIRED_MESSAGE);
+  });
+
+  it("国际站 404 双试：无前缀 404 后换 /v2 路径重发", async () => {
+    mockInvoke
+      .mockResolvedValueOnce({ session: false, session2: false, userAgent: false, accessToken: true })
+      .mockResolvedValueOnce(httpResult("not found", 404))
+      .mockResolvedValueOnce(usagePayload([usageRow()]));
+    const result = await fetchWorkbuddyUsage(
+      { ...makeInstance(), site: "international" },
+      range().startMs,
+      range().endMs,
+    );
+    expect(result.status).toBe("ok");
+    const urls = mockInvoke.mock.calls
+      .map((call) => (call[1] as { url?: string }).url)
+      .filter((url): url is string => Boolean(url));
+    expect(urls[0]).toBe("https://www.workbuddy.ai/billing/meter/get-user-request-usage");
+    expect(urls[1]).toBe("https://www.workbuddy.ai/v2/billing/meter/get-user-request-usage");
   });
 });

@@ -52,6 +52,7 @@ const glmInstance: ProviderInstance = {
   threshold: 80,
   balanceThreshold: null,
   site: "china",
+  tokenAutoRenew: true,
   createdAt: 0,
 };
 

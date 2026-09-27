@@ -117,7 +117,9 @@ export const providerFormSpecs: Record<ProviderKind, ProviderFormSpec> = {
         label: "WorkBuddy session",
         placeholder: "只粘贴值，不带键名",
         help: "Cookie 行里 session= 后面的那段值",
-        required: true, // workbuddy.ts:593 三格缺一即 needs_config（ADR-0029 网关要求成对）
+        // 必填=Cookie 通道的出数前提（ADR-0029 网关要求成对）；扫码登录（token 通道，
+        // ADR-0034）生效时三格豁免必填——instance-schema 的 tokenConfigured 分支
+        required: true,
         validate: (value) => (isValidCookiePartValue(value) ? null : "workbuddy_cookie_value"),
       },
       {

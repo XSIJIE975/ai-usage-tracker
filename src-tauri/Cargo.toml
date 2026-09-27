@@ -35,6 +35,7 @@ tokio = { version = "1", features = ["full"] }
 argon2 = "0.5"
 aes-gcm = "0.10"
 rand = "0.8"
+sha2 = "0.10"
 base64 = "0.22"
 zeroize = "1"
 uuid = { version = "1", features = ["v4"] }

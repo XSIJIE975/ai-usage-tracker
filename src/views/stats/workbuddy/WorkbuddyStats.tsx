@@ -49,6 +49,7 @@ function RefreshOverlay() {
 }
 
 export function WorkbuddyStats({ instance }: { instance: ProviderInstance }) {
+  const t = useT();
   const policy = statsRangePolicy(instance.providerId);
   const [range, setRange] = useState<TimeRange>(policy.defaultRange);
   const [metric, setMetric] = useState<WorkbuddyMetric>("credits");
@@ -62,7 +63,6 @@ export function WorkbuddyStats({ instance }: { instance: ProviderInstance }) {
   );
   const customError =
     range === "custom" ? customRangeError(instance.providerId, customFrom, customTo) : null;
-  const t = useT();
   const language = useLanguage();
   // cache key 前缀 instanceId：同种类两个实例的统计互不串数据
   const cacheKey =

@@ -70,6 +70,26 @@ pub struct StoredWorkbuddyTravelClaim {
     pub claimed_key: String,
 }
 
+/// 管家通知判重行：notified_date 是最近一次发出「成长中心管家」汇总通知的日期。
+/// 管家一轮可能产生补签/礼包/兑换/抽奖多个事件，通知按日汇总为一条，按日判重；
+/// 语义同 StoredWorkbuddyCheckin。detail_json 是那一轮的到账明细 JSON（抽屉「最近一次
+/// 自动领取」的留档），存量库缺列为 NULL——旧库升级后由下一次自动领取补上
+#[derive(Serialize, Deserialize)]
+pub struct StoredWorkbuddyGrowthNotice {
+    pub instance_id: String,
+    pub notified_date: String,
+    #[serde(default)]
+    pub detail_json: Option<String>,
+}
+
+/// 试用加油包通知判重行：一次性事件，实例级一行即够（claimed 恒 true 的存在性标记）；
+/// 重启后快照重放同一次领取不再重复通知
+#[derive(Serialize, Deserialize)]
+pub struct StoredWorkbuddyTrial {
+    pub instance_id: String,
+    pub claimed: bool,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StoredInstance {
@@ -82,9 +102,12 @@ pub struct StoredInstance {
     pub threshold: Option<f64>,
     /// 余额告警阈值（元，仅 glm 使用）；None=不告警
     pub balance_threshold: Option<f64>,
-    /// 站点（仅 qoder 使用：china 中国站 qoder.com.cn / international 国际站 qoder.com）；
-    /// 两套登录域 Cookie 不互通（ADR-0030）
+    /// 站点（仅多站种类有意义，单站种类一律忽略并按 china 处理）；两套登录域凭据不互通
+    /// （ADR-0031）
     pub site: String,
+    /// 扫码登录 token 自动续期开关（仅 workbuddy token 通道使用，ADR-0034）：默认开；
+    /// 与官方客户端互踢的观察结论未定，关掉即「token 用到失效为止、出路重扫」
+    pub token_auto_renew: bool,
     pub created_at: i64,
 }
 
@@ -114,6 +137,7 @@ impl Db {
                 threshold         REAL,
                 balance_threshold REAL,
                 site              TEXT NOT NULL DEFAULT 'china',
+                token_auto_renew  INTEGER NOT NULL DEFAULT 1,
                 created_at        INTEGER NOT NULL
             );
 
@@ -159,6 +183,19 @@ impl Db {
                 claimed_key TEXT NOT NULL,
                 updated_at INTEGER NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS workbuddy_growth_notices (
+                instance_id TEXT PRIMARY KEY,
+                notified_date TEXT NOT NULL,
+                detail_json TEXT,
+                updated_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS workbuddy_trials (
+                instance_id TEXT PRIMARY KEY,
+                claimed INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
             "#,
         )
         .map_err(|error| error.to_string())?;
@@ -166,7 +203,9 @@ impl Db {
         db.rename_legacy_provider_columns()?;
         db.ensure_instance_balance_threshold_column()?;
         db.ensure_instance_site_column()?;
+        db.ensure_instance_token_auto_renew_column()?;
         db.ensure_notification_params_column()?;
+        db.ensure_growth_notice_detail_column()?;
         // 索引依赖列名，必须在改名之后建
         db.conn
             .execute_batch(
@@ -259,6 +298,48 @@ impl Db {
 
     /// 通知模板参数列（ADR-0022）晚于建表语句加入：存量库用 ALTER TABLE 补列，
     /// 新库建表已含该列，此函数为幂等空操作。存量通知行 params 为 NULL，前端原样显示。
+    /// token 自动续期开关列（ADR-0034，仅 workbuddy 使用）晚于建表语句加入：存量库用
+    /// ALTER TABLE 补列（缺省开），新库建表已含该列，此函数为幂等空操作
+    fn ensure_instance_token_auto_renew_column(&self) -> Result<(), String> {
+        let mut statement = self
+            .conn
+            .prepare("PRAGMA table_info(provider_instances)")
+            .map_err(|error| error.to_string())?;
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<String>, _>>()
+            .map_err(|error| error.to_string())?;
+        if !columns.iter().any(|column| column == "token_auto_renew") {
+            self.conn
+                .execute_batch(
+                    "ALTER TABLE provider_instances ADD COLUMN token_auto_renew INTEGER NOT NULL DEFAULT 1;",
+                )
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// 管家明细列（成长中心抽屉「最近一次自动领取」）晚于建表语句加入：存量库用
+    /// ALTER TABLE 补列（缺省 NULL），新库建表已含该列，此函数为幂等空操作
+    fn ensure_growth_notice_detail_column(&self) -> Result<(), String> {
+        let mut statement = self
+            .conn
+            .prepare("PRAGMA table_info(workbuddy_growth_notices)")
+            .map_err(|error| error.to_string())?;
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<String>, _>>()
+            .map_err(|error| error.to_string())?;
+        if !columns.iter().any(|column| column == "detail_json") {
+            self.conn
+                .execute_batch("ALTER TABLE workbuddy_growth_notices ADD COLUMN detail_json TEXT;")
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
     fn ensure_notification_params_column(&self) -> Result<(), String> {
         let mut statement = self
             .conn
@@ -338,7 +419,7 @@ impl Db {
             .conn
             .prepare(
                 r#"
-                SELECT id, provider_id, note, sort_order, pinned, auto_refresh, threshold, balance_threshold, site, created_at
+                SELECT id, provider_id, note, sort_order, pinned, auto_refresh, threshold, balance_threshold, site, token_auto_renew, created_at
                 FROM provider_instances
                 ORDER BY pinned DESC, sort_order ASC, created_at ASC
                 "#,
@@ -356,7 +437,8 @@ impl Db {
                     threshold: row.get(6)?,
                     balance_threshold: row.get(7)?,
                     site: row.get(8)?,
-                    created_at: row.get(9)?,
+                    token_auto_renew: row.get::<_, i64>(9)? != 0,
+                    created_at: row.get(10)?,
                 })
             })
             .map_err(|error| error.to_string())?;
@@ -372,7 +454,7 @@ impl Db {
             .conn
             .prepare(
                 r#"
-                SELECT id, provider_id, note, sort_order, pinned, auto_refresh, threshold, balance_threshold, site, created_at
+                SELECT id, provider_id, note, sort_order, pinned, auto_refresh, threshold, balance_threshold, site, token_auto_renew, created_at
                 FROM provider_instances WHERE id = ?1
                 "#,
             )
@@ -389,7 +471,8 @@ impl Db {
                     threshold: row.get(6)?,
                     balance_threshold: row.get(7)?,
                     site: row.get(8)?,
-                    created_at: row.get(9)?,
+                    token_auto_renew: row.get::<_, i64>(9)? != 0,
+                    created_at: row.get(10)?,
                 })
             })
             .map(|instance| Some(instance))
@@ -412,8 +495,8 @@ impl Db {
                 &format!(
                     r#"
                     INSERT {conflict} INTO provider_instances
-                        (id, provider_id, note, sort_order, pinned, auto_refresh, threshold, balance_threshold, site, created_at)
-                    VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                        (id, provider_id, note, sort_order, pinned, auto_refresh, threshold, balance_threshold, site, token_auto_renew, created_at)
+                        VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                     "#
                 ),
                 rusqlite::params![
@@ -426,6 +509,7 @@ impl Db {
                     instance.threshold,
                     instance.balance_threshold,
                     instance.site,
+                    instance.token_auto_renew as i64,
                     instance.created_at,
                 ],
             )
@@ -453,6 +537,7 @@ impl Db {
         threshold: Option<Option<f64>>,
         balance_threshold: Option<Option<f64>>,
         site: Option<&str>,
+        token_auto_renew: Option<bool>,
     ) -> Result<(), String> {
         let current = self
             .get_instance(id)?
@@ -462,7 +547,7 @@ impl Db {
             .execute(
                 r#"
                 UPDATE provider_instances
-                SET note = ?2, auto_refresh = ?3, pinned = ?4, threshold = ?5, balance_threshold = ?6, site = ?7
+                SET note = ?2, auto_refresh = ?3, pinned = ?4, threshold = ?5, balance_threshold = ?6, site = ?7, token_auto_renew = ?8
                 WHERE id = ?1
                 "#,
                 rusqlite::params![
@@ -473,6 +558,7 @@ impl Db {
                     threshold.unwrap_or(current.threshold),
                     balance_threshold.unwrap_or(current.balance_threshold),
                     site.unwrap_or(&current.site),
+                    token_auto_renew.unwrap_or(current.token_auto_renew) as i64,
                 ],
             )
             .map_err(|error| error.to_string())?;
@@ -521,6 +607,10 @@ impl Db {
         tx.execute("DELETE FROM workbuddy_checkins WHERE instance_id = ?1", [id])
             .map_err(|error| error.to_string())?;
         tx.execute("DELETE FROM workbuddy_travel_claims WHERE instance_id = ?1", [id])
+            .map_err(|error| error.to_string())?;
+        tx.execute("DELETE FROM workbuddy_growth_notices WHERE instance_id = ?1", [id])
+            .map_err(|error| error.to_string())?;
+        tx.execute("DELETE FROM workbuddy_trials WHERE instance_id = ?1", [id])
             .map_err(|error| error.to_string())?;
         tx.commit().map_err(|error| error.to_string())?;
         Ok(())
@@ -852,6 +942,94 @@ impl Db {
         Ok(())
     }
 
+    /// 读某实例的管家通知判重日期与最近一轮到账明细；None = 从未通知过
+    pub fn get_workbuddy_growth_notice(
+        &self,
+        instance_id: &str,
+    ) -> Result<Option<StoredWorkbuddyGrowthNotice>, String> {
+        let row = self.conn.query_row(
+            "SELECT notified_date, detail_json FROM workbuddy_growth_notices WHERE instance_id = ?1",
+            [instance_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                ))
+            },
+        );
+        match row {
+            Ok((notified_date, detail_json)) => Ok(Some(StoredWorkbuddyGrowthNotice {
+                instance_id: instance_id.to_string(),
+                notified_date,
+                detail_json,
+            })),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    /// 回写某实例的管家通知判重日期与当轮明细（UPSERT 幂等），语义同 save_workbuddy_checkin：
+    /// 落库快照随重启重放 growthNotice 字段，靠这里判重不重复通知
+    pub fn save_workbuddy_growth_notice(
+        &self,
+        notice: &StoredWorkbuddyGrowthNotice,
+    ) -> Result<(), String> {
+        self.conn
+            .execute(
+                r#"
+                INSERT INTO workbuddy_growth_notices(instance_id, notified_date, detail_json, updated_at)
+                VALUES(?1, ?2, ?3, ?4)
+                ON CONFLICT(instance_id) DO UPDATE SET
+                    notified_date = excluded.notified_date,
+                    detail_json = excluded.detail_json,
+                    updated_at = excluded.updated_at
+                "#,
+                rusqlite::params![
+                    notice.instance_id,
+                    notice.notified_date,
+                    notice.detail_json,
+                    chrono_utc_now()
+                ],
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    /// 读某实例的试用加油包领取标记；None = 从未通知过
+    pub fn get_workbuddy_trial(&self, instance_id: &str) -> Result<Option<StoredWorkbuddyTrial>, String> {
+        let row = self.conn.query_row(
+            "SELECT claimed FROM workbuddy_trials WHERE instance_id = ?1",
+            [instance_id],
+            |row| row.get::<_, bool>(0),
+        );
+        match row {
+            Ok(claimed) => Ok(Some(StoredWorkbuddyTrial {
+                instance_id: instance_id.to_string(),
+                claimed,
+            })),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    /// 回写某实例的试用加油包领取标记（UPSERT 幂等）：一次性事件，重启后快照重放
+    /// trial 字段，靠这里判重不重复通知
+    pub fn save_workbuddy_trial(&self, trial: &StoredWorkbuddyTrial) -> Result<(), String> {
+        self.conn
+            .execute(
+                r#"
+                INSERT INTO workbuddy_trials(instance_id, claimed, updated_at)
+                VALUES(?1, ?2, ?3)
+                ON CONFLICT(instance_id) DO UPDATE SET
+                    claimed = excluded.claimed,
+                    updated_at = excluded.updated_at
+                "#,
+                rusqlite::params![trial.instance_id, trial.claimed, chrono_utc_now()],
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
     pub fn list_notifications(&self, limit: i64) -> Result<Vec<StoredNotification>, String> {
         let mut statement = self
             .conn
@@ -1069,6 +1247,121 @@ mod tests {
             db.get_seen_reset_cards("inst-2").unwrap().unwrap().record_ids,
             vec![9]
         );
+    }
+
+    /// 存量库的 workbuddy_growth_notices 没有明细列：打开时 ALTER 补列，老行读回 None，
+    /// 下一次自动领取照常把明细写进去
+    #[test]
+    fn legacy_growth_notice_table_gains_detail_column() {
+        let dir = std::env::temp_dir().join(format!(
+            "ai-usage-db-legacy-growth-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("legacy.db");
+        {
+            let conn = rusqlite::Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                r#"
+                CREATE TABLE workbuddy_growth_notices (
+                    instance_id   TEXT PRIMARY KEY,
+                    notified_date TEXT NOT NULL,
+                    updated_at    INTEGER NOT NULL
+                );
+                INSERT INTO workbuddy_growth_notices(instance_id, notified_date, updated_at)
+                    VALUES('inst-legacy', '2026-09-26', 0);
+                "#,
+            )
+            .unwrap();
+        }
+        let db = Db::open(&db_path).unwrap();
+        let legacy = db.get_workbuddy_growth_notice("inst-legacy").unwrap().unwrap();
+        assert_eq!(legacy.notified_date, "2026-09-26");
+        assert!(legacy.detail_json.is_none(), "老行没有明细，读回 None");
+        db.save_workbuddy_growth_notice(&super::StoredWorkbuddyGrowthNotice {
+            instance_id: "inst-legacy".into(),
+            notified_date: "2026-09-27".into(),
+            detail_json: Some("{\"date\":\"2026-09-27\"}".into()),
+        })
+        .unwrap();
+        let refreshed = db.get_workbuddy_growth_notice("inst-legacy").unwrap().unwrap();
+        assert_eq!(refreshed.notified_date, "2026-09-27");
+        assert_eq!(
+            refreshed.detail_json.as_deref(),
+            Some(r#"{"date":"2026-09-27"}"#),
+            "补列后照常写读明细"
+        );
+    }
+
+    #[test]
+    fn workbuddy_growth_notice_upsert_and_cascade() {
+        let db = temp_db();
+        assert!(db.get_workbuddy_growth_notice("inst-1").unwrap().is_none());
+        db.save_workbuddy_growth_notice(&super::StoredWorkbuddyGrowthNotice {
+            instance_id: "inst-1".into(),
+            notified_date: "2026-09-27".into(),
+            detail_json: None,
+        })
+        .unwrap();
+        // 升级前写入的行没有明细：读回 None（抽屉那段留空，等下一次自动领取补上）
+        assert!(db
+            .get_workbuddy_growth_notice("inst-1")
+            .unwrap()
+            .unwrap()
+            .detail_json
+            .is_none());
+        db.save_workbuddy_growth_notice(&super::StoredWorkbuddyGrowthNotice {
+            instance_id: "inst-1".into(),
+            notified_date: "2026-09-28".into(),
+            detail_json: Some(r#"{"date":"2026-09-28","draws":["20 积分"]}"#.into()),
+        })
+        .unwrap();
+        let notice = db.get_workbuddy_growth_notice("inst-1").unwrap().unwrap();
+        assert_eq!(notice.notified_date, "2026-09-28");
+        assert_eq!(
+            notice.detail_json.as_deref(),
+            Some(r#"{"date":"2026-09-28","draws":["20 积分"]}"#)
+        );
+        db.save_workbuddy_growth_notice(&super::StoredWorkbuddyGrowthNotice {
+            instance_id: "inst-2".into(),
+            notified_date: "2026-09-27".into(),
+            detail_json: None,
+        })
+        .unwrap();
+        db.delete_instance("inst-1").unwrap();
+        assert!(db.get_workbuddy_growth_notice("inst-1").unwrap().is_none());
+        assert_eq!(
+            db.get_workbuddy_growth_notice("inst-2")
+                .unwrap()
+                .unwrap()
+                .notified_date,
+            "2026-09-27"
+        );
+    }
+
+    #[test]
+    fn workbuddy_trial_upsert_and_cascade() {
+        let db = temp_db();
+        assert!(db.get_workbuddy_trial("inst-1").unwrap().is_none());
+        db.save_workbuddy_trial(&super::StoredWorkbuddyTrial {
+            instance_id: "inst-1".into(),
+            claimed: true,
+        })
+        .unwrap();
+        // 一次性事件：重复回写（快照重放触发）幂等
+        db.save_workbuddy_trial(&super::StoredWorkbuddyTrial {
+            instance_id: "inst-1".into(),
+            claimed: true,
+        })
+        .unwrap();
+        let trial = db.get_workbuddy_trial("inst-1").unwrap().unwrap();
+        assert!(trial.claimed);
+        db.delete_instance("inst-1").unwrap();
+        assert!(db.get_workbuddy_trial("inst-1").unwrap().is_none());
     }
 
     #[test]

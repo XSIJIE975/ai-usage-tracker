@@ -12,6 +12,7 @@ const instance = (overrides: Partial<ProviderInstance> = {}): ProviderInstance =
   threshold: null,
   balanceThreshold: null,
   site: "china",
+  tokenAutoRenew: true,
   createdAt: 0,
   ...overrides,
 });
@@ -19,7 +20,7 @@ const instance = (overrides: Partial<ProviderInstance> = {}): ProviderInstance =
 const snapshot = (checkin?: { date: string; credited: number }): ProviderSnapshot => ({
   instanceId: "wb-1",
   providerId: "workbuddy",
-  providerName: "腾讯 WorkBuddy / CodeBuddy",
+  providerName: "腾讯 WorkBuddy",
   status: "ok",
   updatedAt: 0,
   lines: [],

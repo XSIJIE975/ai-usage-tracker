@@ -17,6 +17,9 @@ export interface ProviderInstance {
   balanceThreshold: number | null;
   /** 站点（仅多站种类有意义，单站种类一律忽略并按 china 处理） */
   site: ProviderSite;
+  /** 扫码登录 token 自动续期（仅 workbuddy token 通道，ADR-0034）：默认开；关掉即
+   *  token 用到失效为止、出路重扫 */
+  tokenAutoRenew: boolean;
   createdAt: number;
 }
 
@@ -43,10 +46,27 @@ export interface ProviderRequestOptions {
   headers?: Record<string, string>;
   bodyText?: string;
   /** "session_cookie"：从 vault 槽位读 session 的 Value，校验后拼作 Cookie: session=<值>（workbuddy）
+   *  "workbuddy_token"：从 vault 槽位读扫码所得 accessToken/uid，注入 Bearer + billing UA + X-User-Id（ADR-0034）
    *  "qoder_cookie"：从 vault 槽位读 qoder_session_cookie 的 Value，校验后拼作 Cookie: qoder_session_cookie=<值>（qoder，ADR-0030） */
-  auth?: "bearer" | "cookie" | "none" | "session_cookie" | "qoder_cookie";
+  auth?: "bearer" | "cookie" | "none" | "session_cookie" | "workbuddy_token" | "qoder_cookie";
   /** bearer/session_cookie/qoder_cookie 时的凭据槽；bearer 缺省用该种类的主鉴权键 */
   credentialSlot?: string;
+}
+
+/** workbuddy_qr_start 的返回（ADR-0034；无实例会话形态见 ADR-0035） */
+export interface WorkbuddyQrStartResult {
+  /** 浏览器授权链接（authUrl）：整段编码为二维码或复制打开，截断即「登录链接不完整」 */
+  authUrl: string;
+  /** 会话键（上游 state 本身）：后续 poll 与 claim 都用它，已在二维码里曝光非新增敏感面 */
+  sessionKey: string;
+}
+
+/** workbuddy_qr_poll 的返回 */
+export interface WorkbuddyQrPollResult {
+  status: "pending" | "confirmed" | "expired";
+  nickname?: string | null;
+  /** token 有效期（epoch 毫秒）；confirmed 时非空 */
+  expiresAtMs?: number | null;
 }
 
 export interface MetricLine {
@@ -103,6 +123,37 @@ export interface ProviderSnapshot {
     /** 到账积分（接口未返回时为 0） */
     credited: number;
   };
+  /** 本轮连登管家闭环发生的事件汇总（仅 WorkBuddy fetch 本轮真的跑了管家且发生事件时
+   *  填充；ADR-0037）。落库属瞬时冗余、会随快照重放，通知判重权威在 Rust 端
+   *  workbuddy_growth_notices 行（按 date 每日一条汇总通知）；错误快照也携带——
+   *  管家与取数是不同源，取数失败不吞掉已发生的管家事件 */
+  growthNotice?: {
+    /** 闭环当日（CST，YYYY-MM-DD），检测器据此判重 */
+    date: string;
+    /** 本轮用补签卡补签的张数（0/1，只补昨日） */
+    makeupUsed: number;
+    /** 新手礼包到账积分（无则 0） */
+    giftCredit: number;
+    /** 活动补偿到账积分（无则 0） */
+    compensationCredit: number;
+    /** 本轮兑换的档位与奖励明细 */
+    redeemed: {
+      tier: string;
+      credit: number;
+      energy: number;
+      cards: number;
+      chances: number;
+    }[];
+    /** 抽奖奖品可读名（形状由活动期决定，提取失败为截断 JSON） */
+    draws: string[];
+  };
+  /** 本轮真实领取的国际站试用加油包（仅 WorkBuddy fetch 国际站实例本轮领取成功时
+   *  填充；ADR-0037）。一次性事件：领取成功只可能发生一次，重启后重试只会拿到
+   *  幂等静默（14051），判重权威是 Rust 端 workbuddy_trials 行（实例级一行） */
+  trial?: {
+    /** 到账积分（端点未返回时为 0；加油包本体随余额套餐行出现） */
+    credit: number;
+  };
 }
 
 export interface StoredSnapshot {
@@ -131,6 +182,25 @@ export interface StoredWorkbuddyCheckin {
 export interface StoredWorkbuddyTravelClaim {
   instance_id: string;
   claimed_key: string;
+}
+
+/** WorkBuddy 管家通知判重行（Rust 端 workbuddy_growth_notices 表）；notified_date 是
+ *  最近一次发出「成长中心管家」汇总通知的日期（CST YYYY-MM-DD）——管家一轮可能产生
+ *  补签/礼包/兑换/抽奖多个事件，通知按日汇总为一条。
+ *  detail_json 是那一轮的到账明细（ButlerRecordDetail 的 JSON，档位/奖品/礼包逐条），
+ *  供成长中心抽屉显示「最近一次领取」——快照上的 growthNotice 会被下轮刷新覆盖，
+ *  判重行才是留档处 */
+export interface StoredWorkbuddyGrowthNotice {
+  instance_id: string;
+  notified_date: string;
+  detail_json?: string | null;
+}
+
+/** WorkBuddy 试用加油包通知判重行（Rust 端 workbuddy_trials 表）——一次性事件，
+ *  实例级一行即够（重启后快照重放同一次领取不再重复通知） */
+export interface StoredWorkbuddyTrial {
+  instance_id: string;
+  claimed: boolean;
 }
 
 export interface AppSettings {

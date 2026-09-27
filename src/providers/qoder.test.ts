@@ -47,6 +47,7 @@ const makeInstance = (overrides: Partial<ProviderInstance> = {}): ProviderInstan
   threshold: null,
   balanceThreshold: null,
   site: "china",
+  tokenAutoRenew: true,
   createdAt: 0,
   ...overrides,
 });

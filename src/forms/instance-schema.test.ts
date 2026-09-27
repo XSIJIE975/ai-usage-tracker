@@ -204,3 +204,40 @@ describe("错误码封闭性", () => {
     }
   });
 });
+
+describe("登录方式为扫码时的三格必填豁免（workbuddy，ADR-0035）", () => {
+  it("选择扫码登录时三格全空通过：三格整块不渲染，不是出数前提", () => {
+    const schema = buildInstanceSchema("workbuddy", true, true);
+    expect(schema.safeParse(valuesFor("workbuddy", {})).success).toBe(true);
+  });
+
+  it("豁免只放必填，不放格式：填了非法值仍然报错", () => {
+    const schema = buildInstanceSchema("workbuddy", true, true);
+    const result = schema.safeParse(valuesFor("workbuddy", { session: "a;b" }));
+    expect(result.success).toBe(false);
+    expect(credentialErrorsAt(result)).toHaveProperty("session");
+  });
+
+  it("选择 Cookie 登录（缺省/显式 false）：三格必填照旧——正是未就绪拦截的 Cookie 侧实现", () => {
+    expect(buildInstanceSchema("workbuddy", true).safeParse(valuesFor("workbuddy", {})).success).toBe(false);
+    expect(buildInstanceSchema("workbuddy", true, false).safeParse(valuesFor("workbuddy", {})).success).toBe(false);
+  });
+
+  it("凭据未读出（锁库）叠加扫码方式：空格子仍放行，两种豁免不冲突", () => {
+    expect(buildInstanceSchema("workbuddy", false, true).safeParse(valuesFor("workbuddy", {})).success).toBe(true);
+  });
+});
+
+/** 从 safeParse 结果里抽出 credentials 各槽的错误码（credentialErrors 的第三参版）；
+ *  入参加宽成 zod 结果的联合形状，调用方不必先收窄 success */
+function credentialErrorsAt(
+  result: { success: true } | { success: false; error: { issues: { path: PropertyKey[]; message: string }[] } },
+) {
+  const errors: Record<string, string> = {};
+  if (result.success) return errors;
+  for (const issue of result.error.issues) {
+    const slot = issue.path[1];
+    if (typeof slot === "string") errors[slot] = issue.message;
+  }
+  return errors;
+}

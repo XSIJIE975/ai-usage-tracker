@@ -18,6 +18,7 @@ const instance = (overrides: Partial<ProviderInstance> = {}): ProviderInstance =
   threshold: 50,
   balanceThreshold: null,
   site: "china",
+  tokenAutoRenew: true,
   createdAt: 0,
   ...overrides,
 });
@@ -426,7 +427,7 @@ describe("WorkBuddy 积分阈值规则", () => {
   const wbSnapshot = (percent: number | null, remainText?: string): ProviderSnapshot => ({
     instanceId: "wb-1",
     providerId: "workbuddy",
-    providerName: "腾讯 WorkBuddy / CodeBuddy",
+    providerName: "腾讯 WorkBuddy",
     status: "ok",
     updatedAt: 0,
     lines: [
