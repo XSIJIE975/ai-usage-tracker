@@ -34,6 +34,8 @@ export function buildButlerNoticeBody(credit: number, energy: number, makeupUsed
  * （growthNotice 字段还在）同一天的重放直接跳过。不进告警冷却体系：管家是
  * 每日至多一轮的事件，没有冷却参数。抽屉里手动「领取全部奖励」不产生快照字段、
  * 不走这里——用户主动触发的结果在行内即时可见，不需要再敲一条系统通知。
+ * 回写时把本轮明细（detail_json）一起存进判重行：那是抽屉「最近一次领取」的唯一
+ * 持久留档——快照上的 growthNotice 会被下一次刷新覆盖，不落库的抽屉就答不出昨天领了什么。
  */
 export class GrowthNoticeDetector {
   /** instanceId → 最近一次发出通知的闭环日期（后端事实源的内存投影） */
@@ -65,7 +67,11 @@ export class GrowthNoticeDetector {
       body: buildButlerNoticeBody(credit, energy, notice.makeupUsed),
       params: { ...params, credit, energy },
     });
-    this.deps.onStateChange({ instance_id: instance.id, notified_date: notice.date });
+    this.deps.onStateChange({
+      instance_id: instance.id,
+      notified_date: notice.date,
+      detail_json: JSON.stringify(notice),
+    });
   }
 
   /** 删除实例后清理其投影；后端事实源由 delete_instance 级联清理 */

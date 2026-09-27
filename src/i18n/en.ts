@@ -193,7 +193,7 @@ export const en: Record<string, string> = {
   "暂无连登数据": "No streak data yet",
   "该档位尚未解锁，连登天数以官网为准": "This tier is not unlocked yet — the streak days on the official site is authoritative",
   "兑换失败，请稍后重试": "Redemption failed; try again later",
-  "最近一次自动领取": "Last auto claim",
+  "最近一次领取 · {date}": "Last claim · {date}",
   "暂无可领的奖励：档位已兑换、无抽奖次数、昨日无漏签": "Nothing to claim right now: tiers redeemed, no lottery chances, no missed day yesterday",
   "已用补签卡补签昨日": "Used a makeup card for yesterday",
   "新手礼包 +{credit} 积分": "Newcomer gift +{credit} credits",

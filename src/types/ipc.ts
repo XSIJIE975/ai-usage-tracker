@@ -186,10 +186,14 @@ export interface StoredWorkbuddyTravelClaim {
 
 /** WorkBuddy 管家通知判重行（Rust 端 workbuddy_growth_notices 表）；notified_date 是
  *  最近一次发出「成长中心管家」汇总通知的日期（CST YYYY-MM-DD）——管家一轮可能产生
- *  补签/礼包/兑换/抽奖多个事件，通知按日汇总为一条 */
+ *  补签/礼包/兑换/抽奖多个事件，通知按日汇总为一条。
+ *  detail_json 是那一轮的到账明细（ButlerRecordDetail 的 JSON，档位/奖品/礼包逐条），
+ *  供成长中心抽屉显示「最近一次领取」——快照上的 growthNotice 会被下轮刷新覆盖，
+ *  判重行才是留档处 */
 export interface StoredWorkbuddyGrowthNotice {
   instance_id: string;
   notified_date: string;
+  detail_json?: string | null;
 }
 
 /** WorkBuddy 试用加油包通知判重行（Rust 端 workbuddy_trials 表）——一次性事件，

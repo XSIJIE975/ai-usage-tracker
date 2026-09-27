@@ -42,10 +42,11 @@ import {
   createGrowthContext,
   fetchLotterySummaryForDisplay,
   fetchStreakFull,
+  loadLastButlerRecord,
   redeemSingleTier,
   runGrowthButler,
   tierStatus,
-  type GrowthButlerOutcome,
+  type ButlerRecordDetail,
   type GrowthContext,
 } from "../../providers/workbuddy-growth";
 import { nextTierGap, type WorkbuddyStreakFullData } from "../../providers/workbuddy-channel";
@@ -104,7 +105,9 @@ export function WorkbuddyTasksSheet({
   const [streakFailed, setStreakFailed] = useState(false);
   const [lotteryChances, setLotteryChances] = useState<number | null>(null);
   const [butlerRunning, setButlerRunning] = useState(false);
-  const [butlerRecord, setButlerRecord] = useState<GrowthButlerOutcome | undefined>(undefined);
+  /** 「最近一次领取」的内容：打开抽屉时取后端留档（当天自动那轮的明细），
+   *  手动点「领取全部奖励」后被当场这一轮的结果覆盖（当场结果不落库） */
+  const [butlerRecord, setButlerRecord] = useState<ButlerRecordDetail | undefined>(undefined);
   const [tierBusy, setTierBusy] = useState<string | null>(null);
   const [tierError, setTierError] = useState<string | undefined>(undefined);
 
@@ -123,6 +126,8 @@ export function WorkbuddyTasksSheet({
 
   useEffect(() => {
     if (open && instance) {
+      // 打开即回填后端留档：当天自动那轮领了什么，不看这一轮的手动点击也能知道
+      void loadLastButlerRecord(instance.id).then((record) => setButlerRecord(record ?? undefined));
       // 连登上下文独立于任务上下文（不需要 uid；console/account 失败不影响连登）
       void createGrowthContext(instance)
         .then((ctx) => {
@@ -141,14 +146,14 @@ export function WorkbuddyTasksSheet({
     }
   }, [open, instance, reloadStreak]);
 
-  /** 立即运行管家（手动补跑，幂等）：结果写行内记录并回读刷新连登区块。
-   *  手动跑不发系统通知——用户主动触发的结果在行内即时可见（ADR-0037） */
+  /** 立即运行管家：force 让这一轮真的跑（当天自动跑过也照跑），结果写行内记录并
+   *  回读刷新连登区块。手动跑不发系统通知——用户主动触发的结果即时可见（ADR-0037） */
   const runButler = async () => {
     if (!growthCtx || butlerRunning) return;
     setButlerRunning(true);
     setTierError(undefined);
     try {
-      const outcome = await runGrowthButler(growthCtx, cstDateString(), streakFull);
+      const outcome = await runGrowthButler(growthCtx, cstDateString(), streakFull, { force: true });
       if (outcome) setButlerRecord(outcome);
       if (outcome?.streakFull) {
         setStreakFull(outcome.streakFull);
@@ -534,7 +539,7 @@ interface ButlerRecordLine {
   params?: Record<string, string | number>;
 }
 
-function butlerRecordLines(outcome: GrowthButlerOutcome): ButlerRecordLine[] {
+function butlerRecordLines(outcome: ButlerRecordDetail): ButlerRecordLine[] {
   const lines: ButlerRecordLine[] = [];
   if (outcome.makeupUsed > 0) lines.push({ template: "已用补签卡补签昨日" });
   if (outcome.giftCredit > 0) {
@@ -585,7 +590,7 @@ function StreakSection({
   streakFailed: boolean;
   streakLoading: boolean;
   lotteryChances: number | null;
-  butlerRecord?: GrowthButlerOutcome;
+  butlerRecord?: ButlerRecordDetail;
   butlerRunning: boolean;
   tierBusy: string | null;
   tierError?: string;
@@ -598,6 +603,7 @@ function StreakSection({
   // 无实证（参考项目声明了字段但从不消费），直译出现过「连登 2 天显示差 1 天」的偏差
   const next = typeof days === "number" && days > 0 ? nextTierGap(days) : null;
   const cards = streakFull?.makeup_cards?.balance;
+  const recordLines = butlerRecord ? butlerRecordLines(butlerRecord) : [];
   const tierMeta = (tier: string) =>
     streakFull?.redemption_status?.tiers?.find((item) => item.tier === tier);
   const status = (tier: string) => (streakFull ? tierStatus(streakFull, tier) : "locked");
@@ -709,15 +715,19 @@ function StreakSection({
         )}
         {butlerRecord && (
           <div className="flex flex-col gap-0.5 border-t border-line pt-2.5">
-            <p className="text-[11px] font-medium text-fg-secondary">{t("最近一次自动领取")}</p>
-            {butlerRecordLines(butlerRecord).length === 0 ? (
+            {recordLines.length === 0 ? (
               <p className="text-[11px] text-fg-muted">{t("暂无可领的奖励：档位已兑换、无抽奖次数、昨日无漏签")}</p>
             ) : (
-              butlerRecordLines(butlerRecord).map((line, index) => (
-                <p key={index} className="text-[11px] leading-relaxed text-fg-muted">
-                  {renderTemplate(line.template, line.params, t)}
+              <>
+                <p className="text-[11px] font-medium text-fg-secondary">
+                  {renderTemplate(t("最近一次领取 · {date}"), { date: butlerRecord.date }, t)}
                 </p>
-              ))
+                {recordLines.map((line, index) => (
+                  <p key={index} className="text-[11px] leading-relaxed text-fg-muted">
+                    {renderTemplate(line.template, line.params, t)}
+                  </p>
+                ))}
+              </>
             )}
           </div>
         )}

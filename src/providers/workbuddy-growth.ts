@@ -5,6 +5,7 @@ import type {
   MetricLine,
   ProviderInstance,
   ProviderSite,
+  StoredWorkbuddyGrowthNotice,
 } from "../types/ipc";
 import {
   cstDateString,
@@ -358,9 +359,9 @@ export interface ButlerRedeem {
   chances: number;
 }
 
-/** 一轮管家闭环的事件汇总：全部字段可空/为零 = 无事件（静默）。
- *  作为快照瞬时字段喂 GrowthNoticeDetector（通知）与抽屉行内记录 */
-export interface GrowthButlerOutcome {
+/** 一轮闭环里值得留档的到账明细：抽屉「最近一次领取」的数据形状，也是 Rust 端
+ *  workbuddy_growth_notices.detail_json 的内容（与快照 growthNotice 字段同形） */
+export interface ButlerRecordDetail {
   date: string;
   /** 本轮用补签卡补签的张数（0/1——只补昨日） */
   makeupUsed: number;
@@ -369,6 +370,11 @@ export interface GrowthButlerOutcome {
   redeemed: ButlerRedeem[];
   /** 抽奖奖品可读名（提取失败给截断 JSON——奖品形状由活动期决定，参考项目同策略） */
   draws: string[];
+}
+
+/** 一轮管家闭环的事件汇总：全部字段可空/为零 = 无事件（静默）。
+ *  作为快照瞬时字段喂 GrowthNoticeDetector（通知）与抽屉行内记录 */
+export interface GrowthButlerOutcome extends ButlerRecordDetail {
   /** 闭环后回读的连登天数（抽屉行内刷新用；不进通知） */
   streakDays: number | null;
   /** 闭环后回读的完整状态（抽屉刷新档位胶囊用） */
@@ -542,14 +548,17 @@ async function lotteryDraw(ctx: GrowthContext, endpoints: GrowthEndpoints): Prom
 /** 连登管家闭环（ADR-0037）：补签 → 礼包/补偿 → 兑换已解锁档位 → 抽完抽奖次数。
  *  每步独立容错；整轮无任何可重试失败才打当日标记（半失败下轮补跑，幂等不重复发）。
  *  initialFull 传入调用方已拉取的连登状态可省一次 GET（抽屉回传场景）；
+ *  force 忽略当日标记——抽屉里用户主动点「领取全部奖励」时要当场真跑一遍给出结果，
+ *  而不是因为今天自动那轮跑过就静默无输出；
  *  无 butler 能力位返回 null。返回本轮事件汇总（含回读天数，无事件时全零字段） */
 export async function runGrowthButler(
   ctx: GrowthContext,
   today: string,
   initialFull?: WorkbuddyStreakFullData | null,
+  options?: { force?: boolean },
 ): Promise<GrowthButlerOutcome | null> {
   if (!ctx.capabilities.butler) return null;
-  if (butlerRanToday.get(ctx.instance.id) === today) return null;
+  if (!options?.force && butlerRanToday.get(ctx.instance.id) === today) return null;
   const endpoints = endpointsFor(ctx);
   const outcome: GrowthButlerOutcome = {
     date: today,
@@ -631,6 +640,24 @@ export async function runGrowthButler(
 
   if (!failed) butlerRanToday.set(ctx.instance.id, today);
   return outcome;
+}
+
+/** 读抽屉「最近一次领取」的留档：Rust 端 workbuddy_growth_notices 行里的当轮明细
+ *  （由通知检测器在自动闭环发通知时写入）。手动当场跑的那轮不进这里——它的结果在
+ *  抽屉会话内即时可见。老库升级后明细列为空、读不到留档时返回 null，区块照旧不显示 */
+export async function loadLastButlerRecord(
+  instanceId: string,
+): Promise<ButlerRecordDetail | null> {
+  try {
+    const row = await invoke<StoredWorkbuddyGrowthNotice | null>("get_workbuddy_growth_notice", {
+      instanceId,
+    });
+    if (!row?.detail_json) return null;
+    return JSON.parse(row.detail_json) as ButlerRecordDetail;
+  } catch {
+    // 留档是展示用的辅助源：读失败不报错、不阻断抽屉其余部分
+    return null;
+  }
 }
 
 /** 档位兑换状态（抽屉胶囊判定）：claimed=已兑换；locked=未解锁；其余=可兑换。

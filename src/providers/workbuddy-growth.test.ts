@@ -6,6 +6,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 import { cstDateString } from "./workbuddy-channel";
 import {
   fetchStreakFull,
+  loadLastButlerRecord,
   runGrowthButler,
   runTrialClaim,
   tierStatus,
@@ -208,6 +209,24 @@ describe("runGrowthButler（连登管家闭环，ADR-0037）", () => {
     expect(mockInvoke.mock.calls.length).toBe(callsAfterFirst);
   });
 
+  it("force（抽屉「领取全部奖励」）：当日标记已打也照跑，返回可显示的空结果", async () => {
+    const ctx = makeCtx("cookie");
+    mockButler({});
+    expect(await runGrowthButler(ctx, today)).not.toBeNull();
+    // 无 force 已被短路；带 force 必须真跑一遍，返回全零字段而非 null（抽屉才有东西可显示）
+    mockInvoke.mockReset();
+    mockButler({});
+    const forced = await runGrowthButler(ctx, today, null, { force: true });
+    expect(forced).not.toBeNull();
+    expect(forced!.date).toBe(today);
+    expect(forced!.makeupUsed).toBe(0);
+    expect(forced!.giftCredit).toBe(0);
+    expect(forced!.compensationCredit).toBe(0);
+    expect(forced!.redeemed).toEqual([]);
+    expect(forced!.draws).toEqual([]);
+    expect(mockInvoke.mock.calls.length).toBeGreaterThan(0);
+  });
+
   it("半失败不标记当日：礼包网络失败后重跑仍会发起请求（幂等补跑）", async () => {
     const ctx = makeCtx("cookie");
     mockButler({ gift: httpResult("network gone", 503) });
@@ -318,6 +337,34 @@ describe("tierStatus / fetchStreakFull", () => {
   });
 });
 
+describe("loadLastButlerRecord（抽屉「最近一次领取」读后端留档）", () => {
+  it("有 detail_json → 解析成明细；无行 / 列为空 / JSON 坏 → null（辅助源静默）", async () => {
+    const detail = {
+      date: "2026-09-27",
+      makeupUsed: 1,
+      giftCredit: 0,
+      compensationCredit: 0,
+      redeemed: [{ tier: "7d", credit: 100, energy: 5, cards: 1, chances: 1 }],
+      draws: ["20 积分"],
+    };
+    mockInvoke.mockResolvedValue({ instance_id: "x", notified_date: "2026-09-27", detail_json: JSON.stringify(detail) });
+    expect(await loadLastButlerRecord("x")).toEqual(detail);
+
+    mockInvoke.mockReset();
+    mockInvoke.mockResolvedValue(null);
+    expect(await loadLastButlerRecord("x")).toBeNull();
+
+    mockInvoke.mockReset();
+    // 升级前的存量行：判重日期在、明细列为空
+    mockInvoke.mockResolvedValue({ instance_id: "x", notified_date: "2026-09-27", detail_json: null });
+    expect(await loadLastButlerRecord("x")).toBeNull();
+
+    mockInvoke.mockReset();
+    mockInvoke.mockResolvedValue({ instance_id: "x", notified_date: "2026-09-27", detail_json: "{坏" });
+    expect(await loadLastButlerRecord("x")).toBeNull();
+  });
+});
+
 describe("runTrialClaim（国际站试用加油包，ADR-0037）", () => {
   it("领取成功返回到账并永久标记；重启语义由调用方刷新体现", async () => {
     const ctx = makeCtx("token", "international");
@@ -361,26 +408,30 @@ describe("通知检测器", () => {
 
   it("GrowthNoticeDetector：同日重放跳过；prune 后重报（换实例场景）", () => {
     const arrivals: string[] = [];
+    const records: { instance_id: string; notified_date: string; detail_json?: string | null }[] = [];
     const detector = new GrowthNoticeDetector({
       notify: (arrival) => arrivals.push(arrival.body),
-      onStateChange: () => undefined,
+      onStateChange: (record) => records.push(record),
     });
     const instance = makeInstance();
-    const snapshot = {
-      status: "ok",
-      growthNotice: {
-        date: "2026-09-27",
-        makeupUsed: 1,
-        giftCredit: 0,
-        compensationCredit: 0,
-        redeemed: [{ tier: "7d", credit: 100, energy: 5, cards: 1, chances: 1 }],
-        draws: [],
-      },
-    } as never;
+    const notice = {
+      date: "2026-09-27",
+      makeupUsed: 1,
+      giftCredit: 0,
+      compensationCredit: 0,
+      redeemed: [{ tier: "7d", credit: 100, energy: 5, cards: 1, chances: 1 }],
+      draws: [],
+    };
+    const snapshot = { status: "ok", growthNotice: notice } as never;
     detector.observe(instance, snapshot);
     detector.observe(instance, snapshot);
     expect(arrivals).toHaveLength(1);
     expect(arrivals[0]).toBe("成长中心到账 +{credit} 积分 +{energy} 能量；已用补签卡补签昨日");
+    // 明细随判重日期一起落库：抽屉重开（甚至重启）后仍能回看这一轮领了什么
+    expect(records).toHaveLength(1);
+    expect(records[0].instance_id).toBe(instance.id);
+    expect(records[0].notified_date).toBe("2026-09-27");
+    expect(JSON.parse(String(records[0].detail_json))).toEqual(notice);
     detector.hydrate([{ instance_id: instance.id, notified_date: "2026-09-27" }]);
     detector.observe(instance, snapshot);
     expect(arrivals).toHaveLength(1);
