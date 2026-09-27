@@ -53,8 +53,8 @@ export function WorkbuddyLogo({ className }: { className?: string }) {
   const glow = `wb-glow-${uid}`;
   const clip = `wb-clip-${uid}`;
   return (
-    <svg viewBox="0 0 40 40" fill="none" className={className} role="img" aria-label="腾讯 WorkBuddy / CodeBuddy">
-      <title>腾讯 WorkBuddy / CodeBuddy</title>
+    <svg viewBox="0 0 40 40" fill="none" className={className} role="img" aria-label="腾讯 WorkBuddy">
+      <title>腾讯 WorkBuddy</title>
       <defs>
         <filter
           id={glow}

@@ -71,7 +71,7 @@ describe("providerSites / hasMultipleSites（ADR-0031）", () => {
   });
 
   it("站点短名可直接当 i18n 键", () => {
-    expect(SITE_LABELS.china).toBe("中国站");
-    expect(SITE_LABELS.international).toBe("国际站");
+    expect(SITE_LABELS.china).toBe("CN");
+    expect(SITE_LABELS.international).toBe("Intl");
   });
 });

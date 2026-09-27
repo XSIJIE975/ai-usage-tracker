@@ -48,6 +48,9 @@ import { ProviderCard } from "../components/ProviderCard";
 import { NotificationCenterPanel } from "./NotificationCenterPanel";
 import { SettingsView } from "./SettingsView";
 import { providerHasStats, StatsSheet } from "./stats/StatsSheet";
+import { WorkbuddyTasksSheet } from "./tasks/WorkbuddyTasksSheet";
+import { workbuddyApi, workbuddySiteOf } from "../providers/workbuddy";
+import { useWorkbuddyTaskStore } from "../store/workbuddyTaskStore";
 import { formatClock } from "../lib/utils";
 import { cn } from "../lib/utils";
 import { selectOrderedInstances } from "../lib/instance";
@@ -91,6 +94,8 @@ function SortableProviderCard({
   onEdit,
   onDelete,
   onOpenStats,
+  onOpenTasks,
+  tasksBadge,
 }: {
   instance: ProviderInstance;
   snapshot: ReturnType<typeof useAppStore.getState>["snapshots"][number] | null;
@@ -104,6 +109,10 @@ function SortableProviderCard({
   onDelete: () => void;
   /** 无统计模块的种类（qoder）不传，卡片不渲染「查看统计」按钮 */
   onOpenStats?: () => void;
+  /** 成长任务入口（仅 workbuddy 国区实例，ADR-0036）；不传不渲染按钮 */
+  onOpenTasks?: () => void;
+  /** 任务待办数徽标（面板打开过才有缓存值） */
+  tasksBadge?: number;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useSortable({
     id: instance.id,
@@ -125,6 +134,8 @@ function SortableProviderCard({
           onEdit={onEdit}
           onDelete={onDelete}
           onOpenStats={onOpenStats}
+          onOpenTasks={onOpenTasks}
+          tasksBadge={tasksBadge}
           handleProps={
             { ...attributes, ...listeners } as ComponentPropsWithoutRef<"button">
           }
@@ -164,6 +175,9 @@ export function Dashboard() {
   const [editing, setEditing] = useState<ProviderInstance | null>(null);
   const [deleting, setDeleting] = useState<ProviderInstance | null>(null);
   const [statsInstance, setStatsInstance] = useState<ProviderInstance | null>(null);
+  const [taskInstance, setTaskInstance] = useState<ProviderInstance | null>(null);
+  // 成长任务待办徽标（面板打开过才有缓存值；订阅整表，徽标更新随扫描到达）
+  const taskBadges = useWorkbuddyTaskStore((state) => state.pendingBadges);
   // 各卡片的翻面朝向（id -> 是否数值面）：提升到此处持有，
   // 拖拽时 DragOverlay 浮起副本才能与占位卡保持同一朝向
   const [flippedIds, setFlippedIds] = useState<ReadonlySet<string>>(new Set());
@@ -536,6 +550,18 @@ export function Dashboard() {
                             ? () => setStatsInstance(instance)
                             : undefined
                         }
+                        // 成长任务入口：仅 workbuddy 国区（国际站无成长体系，ADR-0036）
+                        onOpenTasks={
+                          instance.providerId === "workbuddy" &&
+                          workbuddyApi(workbuddySiteOf(instance)).capabilities.tasks
+                            ? () => setTaskInstance(instance)
+                            : undefined
+                        }
+                        tasksBadge={
+                          taskBadges[instance.id] && taskBadges[instance.id] > 0
+                            ? taskBadges[instance.id]
+                            : undefined
+                        }
                       />
                     ))}
                   </div>
@@ -580,6 +606,13 @@ export function Dashboard() {
         open={statsInstance !== null}
         onOpenChange={(open) => {
           if (!open) setStatsInstance(null);
+        }}
+      />
+      <WorkbuddyTasksSheet
+        instance={taskInstance}
+        open={taskInstance !== null}
+        onOpenChange={(open) => {
+          if (!open) setTaskInstance(null);
         }}
       />
       <DeleteInstanceDialog

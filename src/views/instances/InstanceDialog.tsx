@@ -42,7 +42,7 @@ import { providerName } from "../../providers";
 import { useT } from "../../i18n";
 import type { ProviderInstance, ProviderKind, ProviderSite } from "../../types/ipc";
 
-/** 站点下拉的选项：标签=短名（域名），中文标签同时是 i18n 键 */
+/** 站点下拉的选项：标签=短码（域名）；短码语言中性（CN/Intl），en 键按拼接字面同步 */
 function siteOptions(kind: ProviderKind): { value: ProviderSite; label: string }[] {
   const profiles = siteProfiles[kind];
   if (!profiles) return [];
