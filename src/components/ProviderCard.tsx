@@ -11,6 +11,7 @@ import {
   RefreshCw,
   Settings2,
   Sparkles,
+  Ticket,
   Trash2,
 } from "lucide-react";
 import type { MetricLine, ProviderInstance, ProviderSnapshot } from "../types/ipc";
@@ -29,10 +30,12 @@ import {
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 import { ErrorDetailsDialog } from "./ErrorDetailsDialog";
+import { GlmResetCardDialog } from "./GlmResetCardDialog";
 import { DeepSeekLogo, GlmLogo, OpenCodeLogo, QoderLogo, WorkbuddyLogo } from "./brand/provider-logo";
 import { SiteBadge } from "./SiteBadge";
 import { displayName } from "../lib/instance";
 import { providerName } from "../providers";
+import { resetSplitOf, resetSplitTemplate } from "../providers/glm";
 import { useAppStore } from "../store/useAppStore";
 import { applyParams, renderLineValue, useLanguage, useT } from "../i18n";
 import { cn } from "../lib/utils";
@@ -250,6 +253,9 @@ interface CardBodyProps {
   onOpenTasks?: () => void;
   /** 任务待办数徽标（面板打开过才有缓存值；0 或缺省不显示） */
   tasksBadge?: number;
+  /** 重置卡入口（仅智谱有可用卡时传入，ADR-0014 修订）：按钮 + 弹窗都由卡片自持，
+   *  外层不经手；不传即不渲染按钮，compact 面板同样不出现 */
+  resetEntry?: { count: number; title: string; onOpen: () => void };
   handleProps?: ComponentPropsWithoutRef<"button">;
   /** 翻面容器的 face 类（flip-face-front / flip-face-back）；非翻卡卡片为空 */
   faceClassName?: string;
@@ -288,6 +294,7 @@ function CardBody({
   onOpenStats,
   onOpenTasks,
   tasksBadge,
+  resetEntry,
   handleProps,
   faceClassName,
   faceVisible,
@@ -456,7 +463,7 @@ function CardBody({
         {(!snapshot || snapshot.lines.length === 0) && !snapshot?.message ? (
           <p className="py-2 text-xs text-fg-muted">{t("暂无数据")}</p>
         ) : null}
-        {!compact && (onOpenStats || onOpenTasks) && (
+        {!compact && (onOpenStats || onOpenTasks || resetEntry) && (
           <div className="mt-3 flex gap-2 border-t border-line pt-3">
             {onOpenTasks && (
               <Button
@@ -481,6 +488,20 @@ function CardBody({
                     {t("新")}
                   </span>
                 ) : null}
+              </Button>
+            )}
+            {resetEntry && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="flex-1"
+                onClick={resetEntry.onOpen}
+                title={resetEntry.title}
+              >
+                <Ticket className="h-3.5 w-3.5" /> {t("重置卡")}
+                <span className="ml-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-brand-soft px-1 text-[10px] font-semibold tabular-nums text-brand">
+                  {resetEntry.count}
+                </span>
               </Button>
             )}
             {onOpenStats && (
@@ -602,6 +623,8 @@ export function ProviderCard({
   const t = useT();
   const now = useNow();
   const [detailOpen, setDetailOpen] = useState(false);
+  // 重置卡弹窗：入口与弹窗都由卡片自持（明细的唯一宿主，ADR-0014 修订）
+  const [resetOpen, setResetOpen] = useState(false);
   // 翻面朝向：受控（主窗口网格，拖拽浮起副本与占位卡共享）或内部自持（快速面板）。
   // 每卡片独立，不进全局设置，卡片之间、主/快窗口之间互不联动
   const [localFlipped, setLocalFlipped] = useState(false);
@@ -620,6 +643,17 @@ export function ProviderCard({
       line.limit !== undefined,
   );
 
+  // 重置卡入口：读快照 availableResetIds，无卡（或该源本轮失败）即为 null，按钮不出现。
+  // 明细的唯一宿主是弹窗，卡片正面不占行位（ADR-0014 修订）
+  const resetSplit = snapshot ? resetSplitOf(snapshot) : null;
+  const resetEntry = resetSplit
+    ? {
+        count: resetSplit.fiveHour + resetSplit.week,
+        title: `${t("重置卡")} · ${applyParams(t(resetSplitTemplate(resetSplit)), resetSplit)}`,
+        onOpen: () => setResetOpen(true),
+      }
+    : undefined;
+
   const bodyProps = {
     instance,
     snapshot,
@@ -634,6 +668,7 @@ export function ProviderCard({
     onOpenStats,
     onOpenTasks,
     tasksBadge,
+    resetEntry,
     handleProps,
   };
 
@@ -683,6 +718,18 @@ export function ProviderCard({
           title={`${title} · ${kindName}`}
           message={snapshot.message}
           messageParams={snapshot.messageParams}
+        />
+      )}
+      {/* 重置卡弹窗同样挂在 Card 外：翻卡两面共用一枚入口，弹窗只有一份。
+          挂载条件带 resetOpen：卡在别处被用掉/过期而快照本轮判明无卡时，不能把用户正在读的弹窗连根卸载
+          （那还会留下 resetOpen=true，等下一张卡到账时弹窗自己弹出来） */}
+      {(resetEntry || resetOpen) && (
+        <GlmResetCardDialog
+          instanceId={instance.id}
+          open={resetOpen}
+          onOpenChange={setResetOpen}
+          // 用过一张卡后配额窗口与卡数都变了，走既有单刷链路重取本实例快照（ADR-0014）
+          onUsed={() => onRefresh?.()}
         />
       )}
     </div>

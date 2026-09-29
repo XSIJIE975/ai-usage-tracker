@@ -123,22 +123,30 @@ export function extractAvailableResetIds(
 }
 
 /**
- * 卡片上的「可用重置卡」文本行：仅在有可用卡时渲染（与 DeepSeek 充值/赠送行的按需展示一致），
- * 无卡是常态，不显示「0 张」。
+ * 卡片入口按钮的窗口拆分（读快照的 availableResetIds，不再发请求）：
+ * 无可用卡、或重置卡源本轮失败（字段缺省）都返回 null —— 按钮随之不出现，
+ * 与「无卡是常态，不出 0 张」的旧文本行口径一致（ADR-0014 修订：明细宿主改为弹窗）。
+ * 计数按「带 recordId 的可用卡」：没有 recordId 的卡本来就用不了（弹窗「使用」要求 id）。
  */
-export function parseResetLine(data: GlmPackageResetData | undefined): MetricLine | null {
-  if (!data) return null;
-  const fiveHour = countAvailableResets(data.fiveHourResets);
-  const week = countAvailableResets(data.weekResets);
-  if (fiveHour + week === 0) return null;
-  // 模板按组合选（与到账通知的三形态同构），数值渲染端代入（t+valueParams 通道）
-  const value =
-    fiveHour > 0 && week > 0
-      ? "5 小时 ×{fiveHour} · 周 ×{week}"
-      : fiveHour > 0
-        ? "5 小时 ×{fiveHour}"
-        : "周 ×{week}";
-  return { type: "text", label: "可用重置卡", value, valueParams: { fiveHour, week } };
+export function resetSplitOf(
+  snapshot: Pick<ProviderSnapshot, "availableResetIds">,
+): { fiveHour: number; week: number } | null {
+  const ids = snapshot.availableResetIds;
+  if (!ids) return null;
+  const split = { fiveHour: ids.fiveHour.length, week: ids.week.length };
+  return split.fiveHour + split.week === 0 ? null : split;
+}
+
+/**
+ * 窗口拆分的展示模板（中文模板串，渲染端 applyParams 代入）：某窗口为零时整段省略，
+ * 与到账通知的三形态同构（alerts/reset-card-detector.ts）。
+ */
+export function resetSplitTemplate(split: { fiveHour: number; week: number }): string {
+  return split.fiveHour > 0 && split.week > 0
+    ? "5 小时 ×{fiveHour} · 周 ×{week}"
+    : split.fiveHour > 0
+      ? "5 小时 ×{fiveHour}"
+      : "周 ×{week}";
 }
 
 function truncate(text: string, max = 300): string {
@@ -341,7 +349,8 @@ function processBalance(result: HttpResult): SourceOutcome {
   }
 }
 
-/** 重置额度响应整体处理：无可用卡是常态（不报错、无行），仅请求/解析失败按失败处理 */
+/** 重置卡源整体处理：快照不再出行（明细宿主是卡片底部按钮打开的弹窗，ADR-0014 修订），
+ *  只透传本轮可用的 recordId；无可用卡是常态（不报错），仅请求/解析失败按失败处理 */
 function processReset(result: HttpResult): SourceOutcome {
   if (result.status !== 200) {
     const detail = result.bodyText?.trim() || "";
@@ -364,10 +373,11 @@ function processReset(result: HttpResult): SourceOutcome {
         },
       };
     }
-    const line = parseResetLine(json.data);
+    // 明细不在快照里出行：入口是卡片底部按钮，卡目列表由弹窗自己取（ADR-0014 修订）。
+    // 这里只透传可用 id，供到账检测与入口判「有没有卡可点用」
     return {
       ok: true,
-      lines: line ? [line] : [],
+      lines: [],
       availableResetIds: extractAvailableResetIds(json.data),
     };
   } catch (error) {

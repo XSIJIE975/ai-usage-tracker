@@ -103,8 +103,8 @@ export interface ProviderSnapshot {
   /** message 模板的占位符实参 */
   messageParams?: Record<string, string | number>;
   lines: MetricLine[];
-  /** 本轮在线的可用重置卡 recordId（仅智谱 fetch 填充；重置卡源失败时缺省=到账检测冻结）。
-   *  供到账检测差集用，落库属瞬时冗余，历史读回不参与检测 */
+  /** 本轮在线的可用重置卡 recordId（仅智谱 fetch 填充；重置卡源失败时缺省=到账检测冻结、卡片不出入口）。
+   *  供到账检测差集与卡片底部「重置卡」按钮的有无/张数用，落库属瞬时冗余，历史读回不参与检测 */
   availableResetIds?: { fiveHour: number[]; week: number[] };
   /** 本轮刷新实际执行且成功的签到（仅 WorkBuddy fetch 在本轮真的调了签到接口并拿到
    *  成功响应时填充）。落库属瞬时冗余、会随快照重放，通知判重权威在 Rust 端

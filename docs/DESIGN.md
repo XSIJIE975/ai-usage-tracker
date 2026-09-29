@@ -297,7 +297,10 @@
   `DragOverlay` 浮起副本；拖拽结束 `reorder_instances` 落库并广播 `instances-changed`。
 - 卡片头部 = 手柄 + 头像 + 标题（备注，空则供应商名；多站种类在标题旁挂站点徽标）+ 副标题（供应商名 + 更新时间，
   备注为空时只显示更新时间）+ 状态徽标 + 刷新 + ⋯ 菜单（置顶/编辑配置/删除）；
-  底部一行「查看统计」outline 按钮（`needs_config` / `error` 状态禁用并带 title 说明）。
+  底部一行 outline 按钮：「查看统计」（`needs_config` / `error` 状态禁用并带 title 说明），按需要在它左边并排
+  功能按钮（workbuddy 国区「成长中心」、智谱有可用卡时的「重置卡」，后者张数做徽标、窗口拆分放 title，
+  点开 `GlmResetCardDialog`，见 ADR-0014 修订）。功能按钮**由卡片自持弹窗**（弹窗 portal 在 `Card` 外，
+  与「详情」同法，翻卡两面共用一枚），不跨组件传实例；只有需要打开抽屉的入口才由 Dashboard 传回调。
 - 有重置时间的额度行，重置倒计时文本可点击，在「相对倒计时 / 具体时刻」间切换
   （偏好存全局设置 `resetTimeDisplay`，主窗口与快速面板同步，默认相对）。
 - **翻卡切换（百分比 ↔ 数值）**：额度行同时具备 `percentUsed` 与 `used/limit`（当前即 GLM
