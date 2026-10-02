@@ -33,6 +33,7 @@ export const en: Record<string, string> = {
   "编辑配置": "Edit settings",
   "查看统计": "View stats",
   "获取数据后可查看统计": "Available after data is fetched",
+  "获取数据后可打开成长中心": "Available after data is fetched",
   "用量统计": "Usage stats",
   "还没有供应商": "No providers yet",
   "凭据无效或已过期": "Credentials invalid or expired",

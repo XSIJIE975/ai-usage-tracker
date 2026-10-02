@@ -470,8 +470,9 @@ function CardBody({
                 variant="outline"
                 size="sm"
                 className="flex-1"
+                disabled={statsDisabled}
                 onClick={onOpenTasks}
-                title={t("成长中心")}
+                title={statsDisabled ? t("获取数据后可打开成长中心") : t("成长中心")}
               >
                 <Sparkles className="h-3.5 w-3.5" /> {t("成长中心")}
                 {tasksBadge !== undefined && tasksBadge > 0 ? (
