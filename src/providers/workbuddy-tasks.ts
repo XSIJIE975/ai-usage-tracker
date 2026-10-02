@@ -21,9 +21,12 @@ import {
 // 四条接口（国区；国际站无成长体系，能力位整段门掉）：
 // - 任务列表 GET copilot.tencent.com/v2/activity/growth/tasks（growth 域带 /v2 前缀，
 //   与 travel/streak 的无前缀不同——参考 tasks.go tasksListPath）；mp 口径同 URL 叠加
-//   X-Client-Platform: miniprogram，列表是默认口径的超集，按 task_code 去重合并
-// - 接受任务 POST .../tasks/accept {"task_codes":[...]}（幂等报名；mp 任务不 accept
-//   不计分，执行前带回读验证）
+//   X-Client-Platform: miniprogram，两口径大体重叠、各有专属任务，按 task_code 去重
+//   合并（2026-10-02 实抓：默认口径可见的体验类任务不在 mp 口径，「mp 超集」不成立）
+// - 接受任务 POST .../tasks/accept {"task_codes":[...]}（幂等报名）：上游对
+//   not_accepted 的任务不计数（参考 taskcenter.go 队列前置 acceptPendingTasks——
+//   漏了这步的表现就是上报 200 但进度不动、无法领奖），mp 任务执行前带回读验证，
+//   default 口径任务执行前尽力而为（acceptDefaultTask）
 // - 行为事件上报 POST {codebuddy.cn|copilot.tencent.com|workbuddy.cn}/v2/report——
 //   点亮判据。事件体必带 userId（uid）；桌面/mp 指纹的 machineId 等设备标识由 uid
 //   派生。**token 通道 uid 在 vault 前端拿不到明文**：事件体以 {{WB_UID}} 等占位符
@@ -356,7 +359,7 @@ function desktopFingerprint(): Record<string, unknown> {
     userNickname: NICKNAME_PLACEHOLDER,
     product: "SaaS",
     releaseDate: 1789036585355,
-    commit: "5f9692923c93033111c51ad7b003eb80204b9b75",
+    commit: "5f9692923c93033111c51ad7b003eb80204a9b75",
     ideName: "WorkBuddy",
     ideType: "WorkBuddy",
     ideVersion: "5.5.6",
@@ -1132,6 +1135,27 @@ export interface WorkbuddyTaskRunResult {
   energy: number;
 }
 
+/** default 口径任务的接受（执行前置，尽力而为）：上游对 not_accepted 的任务不计数
+ *  （参考 taskcenter.go 队列前置 acceptPendingTasks——漏了这步的表现是上报 200 但
+ *  进度不动、无法领奖）。端点与通道分流同 acceptMpTask（token → copilot /v2，
+ *  Cookie → workbuddy.cn 无 /v2，copilot 拒 Cookie POST），但头族是 web/token 标准
+ *  形态（非 miniprogram 口径，参考 AcceptTasks 用 growthJSON 标准头）。失败返回
+ *  false 不阻塞：部分任务本就无需接受，凭据失效会在随后的动作/回读里显性暴露 */
+async function acceptDefaultTask(ctx: TaskContext, taskCode: string): Promise<boolean> {
+  const baseHeaders = ctx.channel === "cookie" ? taskHeadersCookie : taskHeadersToken;
+  const acceptUrl =
+    ctx.channel === "cookie"
+      ? `${WEB_ORIGIN}/activity/growth/tasks/accept`
+      : `${GROWTH_ORIGIN}/v2/activity/growth/tasks/accept`;
+  const result = await taskRequest(ctx, acceptUrl, {
+    method: "POST",
+    headers: { ...baseHeaders, "Content-Type": "application/json" },
+    bodyText: JSON.stringify({ task_codes: [taskCode] }),
+  });
+  if (result.status !== 200) return false;
+  return unwrapEnvelope(result).ok;
+}
+
 /** mp 任务接受（带登记回读验证——上游存在 200 OK 但未落账形态，此时上报不归账）。
  *  accept 基址按通道分流：token 走 copilot /v2（参考实证），Cookie 走 workbuddy.cn
  *  无 /v2（与 travel/depart 同形态；copilot 拒 Cookie POST 真机 401）。回读列表恒
@@ -1223,6 +1247,15 @@ export async function runWorkbuddyTask(
         };
       }
     }
+  } else if (
+    !task.claimed &&
+    !task.locked &&
+    (task.acceptStatus === "not_accepted" || task.acceptStatus === "")
+  ) {
+    // default 口径：接受后才计分，执行前尽力补报（同参考队列前置语义）。快照即
+    // 面板拉取时的状态——accept 只有本执行链会推进，不值得为此再拉一次列表；
+    // 接受成功稍候再上报，给上游状态流转留时间
+    if (await acceptDefaultTask(ctx, task.taskCode)) await sleep(REPORT_GAP_MS);
   }
   const { message, params } = await action.run(ctx);
   const after = await findTaskWaiting(ctx, task.taskCode, task.isMp);

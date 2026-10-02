@@ -201,7 +201,7 @@ describe("runWorkbuddyTask", () => {
       .mockResolvedValueOnce(httpResult({ code: 0, data: { tasks: [] } }));
     await runWorkbuddyTask(
       makeCtx("cookie"),
-      task({ taskCode: "RichMeow_Chat", target: 1, current: 0 }),
+      task({ taskCode: "RichMeow_Chat", target: 1, current: 0, acceptStatus: "accepted" }),
     );
     const reportCall = mockInvoke.mock.calls.find(([, args]) =>
       String((args as Record<string, unknown>)?.["url"]).endsWith("/v2/report"),
@@ -274,7 +274,7 @@ describe("runWorkbuddyTask", () => {
       .mockResolvedValueOnce(httpResult({ code: 0, data: { tasks: [] } }));
     await runWorkbuddyTask(
       makeCtx("token"),
-      task({ taskCode: "RichMeow_Chat", target: 1, current: 0 }),
+      task({ taskCode: "RichMeow_Chat", target: 1, current: 0, acceptStatus: "accepted" }),
     );
     const reportCall = mockInvoke.mock.calls.find(([, args]) =>
       String((args as Record<string, unknown>)?.["url"]).endsWith("/v2/report"),
@@ -310,7 +310,7 @@ describe("runWorkbuddyTask", () => {
       );
     const result = await runWorkbuddyTask(
       makeCtx("token"),
-      task({ taskCode: "RichMeow_Chat", target: 1, current: 0 }),
+      task({ taskCode: "RichMeow_Chat", target: 1, current: 0, acceptStatus: "accepted" }),
     );
     expect(result.ok).toBe(true);
     expect(result.credit).toBe(100);
@@ -331,7 +331,7 @@ describe("runWorkbuddyTask", () => {
       );
     const result = await runWorkbuddyTask(
       makeCtx("token"),
-      task({ taskCode: "automation_1", target: 1 }),
+      task({ taskCode: "automation_1", target: 1, acceptStatus: "claimed" }),
     );
     expect(result.message).toBe("{message}；已领取");
     expect(result.params?.["message"]).toBe("已上报定时任务创建事件");
@@ -347,7 +347,7 @@ describe("runWorkbuddyTask", () => {
       );
     const promise = runWorkbuddyTask(
       makeCtx("token"),
-      task({ taskCode: "automation_1", target: 1 }),
+      task({ taskCode: "automation_1", target: 1, acceptStatus: "accepted" }),
     );
     await vi.runAllTimersAsync();
     const result = await promise;
@@ -379,6 +379,88 @@ describe("runWorkbuddyTask", () => {
       "https://www.workbuddy.cn/activity/growth/tasks/school_season/claim",
     ]);
     expect(result.credit).toBe(100);
+  });
+
+  it("default 口径 not_accepted → 执行前先接受（token 通道 copilot /v2 + token 头族，无 miniprogram 头）", async () => {
+    // 上游对 not_accepted 的任务不计数（参考队列前置 acceptPendingTasks）——漏 accept
+    // 的表现就是上报 200 但进度不动、积分不增。invoke 序列：
+    // 1 accept → 2 report → 3 回读达标 → 4 claim
+    mockInvoke
+      .mockResolvedValueOnce(httpResult({ code: 0, msg: "OK" }))
+      .mockResolvedValueOnce(httpResult({ code: 0, msg: "OK" }))
+      .mockResolvedValueOnce(
+        httpResult({ code: 0, data: { tasks: [{ task_code: "Buddy_App", target: 1, current: 1, accept_status: "accepted" }] } }),
+      )
+      .mockResolvedValueOnce(httpResult({ code: 0, data: { already_claimed: false, credit: 100, energy: 5 } }));
+    const result = await runWorkbuddyTask(
+      makeCtx("token"),
+      task({ taskCode: "Buddy_App", target: 1, current: 0, acceptStatus: "not_accepted" }),
+    );
+    const acceptCall = mockInvoke.mock.calls.find(([, args]) =>
+      String((args as Record<string, unknown>)?.["url"]).endsWith("/tasks/accept"),
+    );
+    expect(acceptCall).toBeTruthy();
+    const acceptArgs = acceptCall?.[1] as Record<string, unknown>;
+    expect(acceptArgs["url"]).toBe("https://copilot.tencent.com/v2/activity/growth/tasks/accept");
+    expect(acceptArgs["auth"]).toBe("workbuddy_token");
+    expect(acceptArgs["bodyText"]).toBe('{"task_codes":["Buddy_App"]}');
+    const acceptHeaders = acceptArgs["headers"] as Record<string, string>;
+    expect(acceptHeaders["X-Client-Platform"]).toBeUndefined();
+    expect(result.credit).toBe(100);
+  });
+
+  it("default 口径 accept 信封失败不阻塞动作上报（部分任务本就无需接受）", async () => {
+    mockInvoke
+      .mockResolvedValueOnce(httpResult({ code: 14001, msg: "invalid task" }))
+      .mockResolvedValueOnce(httpResult({ code: 0, msg: "OK" }))
+      .mockResolvedValueOnce(
+        httpResult({ code: 0, data: { tasks: [{ task_code: "Buddy_App", target: 1, current: 1, accept_status: "accepted" }] } }),
+      )
+      .mockResolvedValueOnce(httpResult({ code: 0, data: { already_claimed: false, credit: 100 } }));
+    const result = await runWorkbuddyTask(
+      makeCtx("token"),
+      task({ taskCode: "Buddy_App", target: 1, current: 0, acceptStatus: "not_accepted" }),
+    );
+    const reportCount = mockInvoke.mock.calls.filter(([, args]) =>
+      String((args as Record<string, unknown>)?.["url"]).endsWith("/v2/report"),
+    ).length;
+    expect(reportCount).toBe(1);
+    expect(result.credit).toBe(100);
+  });
+
+  it("default 口径 accept 的 Cookie 通道走 workbuddy.cn 无 /v2 + web 头（copilot 拒 Cookie POST）", async () => {
+    mockInvoke
+      .mockResolvedValueOnce(httpResult({ code: 0, msg: "OK" }))
+      .mockResolvedValueOnce(httpResult({ code: 0, msg: "OK" }))
+      .mockResolvedValueOnce(httpResult({ code: 0, data: { tasks: [] } }));
+    await runWorkbuddyTask(
+      makeCtx("cookie"),
+      task({ taskCode: "Buddy_App", target: 1, acceptStatus: "not_accepted" }),
+    );
+    const acceptCall = mockInvoke.mock.calls.find(([, args]) =>
+      String((args as Record<string, unknown>)?.["url"]).endsWith("/tasks/accept"),
+    );
+    const acceptArgs = acceptCall?.[1] as Record<string, unknown>;
+    expect(acceptArgs?.["url"]).toBe("https://www.workbuddy.cn/activity/growth/tasks/accept");
+    expect(acceptArgs?.["auth"]).toBe("session_cookie");
+    expect((acceptArgs?.["headers"] as Record<string, string>)["X-Client-Platform"]).toBe("web");
+  });
+
+  it("default 口径已接受/已领取快照不重复接受", async () => {
+    for (const acceptStatus of ["accepted", "claimed"]) {
+      mockInvoke
+        .mockResolvedValueOnce(httpResult({ code: 0, msg: "OK" }))
+        .mockResolvedValueOnce(httpResult({ code: 0, data: { tasks: [] } }));
+      await runWorkbuddyTask(
+        makeCtx("token"),
+        task({ taskCode: "Buddy_App", target: 1, acceptStatus }),
+      );
+      const hasAccept = mockInvoke.mock.calls.some(([, args]) =>
+        String((args as Record<string, unknown>)?.["url"]).endsWith("/tasks/accept"),
+      );
+      expect(hasAccept).toBe(false);
+      mockInvoke.mockReset();
+    }
   });
 });
 
