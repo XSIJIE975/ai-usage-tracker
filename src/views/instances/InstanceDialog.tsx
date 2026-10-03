@@ -49,7 +49,7 @@ function siteOptions(kind: ProviderKind): { value: ProviderSite; label: string }
   if (!profiles) return [];
   return providerSites(kind).map((site) => ({
     value: site,
-    label: `${SITE_LABELS[site]}（${profiles[site].domain}）`,
+    label: `${SITE_LABELS[site]}（${profiles[site]?.domain ?? ""}）`,
   }));
 }
 

@@ -167,7 +167,7 @@ export const providerFormSpecs: Record<ProviderKind, ProviderFormSpec> = {
         slot: SERVICE_TOKEN_SLOT,
         label: "MiMo serviceToken",
         placeholder: "只粘贴值，不带键名",
-        help: `获取方式：登录 platform.xiaomimimo.com 的控制台并打开余额页 → F12 打开 Network → 刷新页面 → 点任一条 /api/v1/ 请求，在 Request Headers 的 Cookie 里找到 ${SERVICE_TOKEN_COOKIE_NAME}=，复制等号后面那段值。`,
+        help: `Cookie 里 ${SERVICE_TOKEN_COOKIE_NAME}= 后面那段值`,
         required: true, // mimo.ts 的 needs_config 判据：两格缺一即不出数
         validate: (value) =>
           isValidMimoCredentialValue(value, SERVICE_TOKEN_COOKIE_NAME) ? null : "cookie_value",
@@ -176,7 +176,7 @@ export const providerFormSpecs: Record<ProviderKind, ProviderFormSpec> = {
         slot: USER_ID_SLOT,
         label: "MiMo userId",
         placeholder: "只粘贴值，不带键名",
-        help: `同一条请求的 Cookie 里 ${USER_ID_COOKIE_NAME}= 后面那段值（MiMo 账号 id，网关要求与 serviceToken 同源）。`,
+        help: `Cookie 里 ${USER_ID_COOKIE_NAME}= 后面那段值`,
         required: true,
         validate: (value) =>
           isValidMimoCredentialValue(value, USER_ID_COOKIE_NAME) ? null : "cookie_value",
@@ -201,7 +201,7 @@ export const providerFormSpecs: Record<ProviderKind, ProviderFormSpec> = {
  * `help` 是站点级长指引：多格种类折进「如何获取？」，单格种类贴在唯一的框下面。
  */
 export const siteProfiles: Partial<
-  Record<ProviderKind, Record<ProviderSite, { domain: string; help: string }>>
+  Record<ProviderKind, Partial<Record<ProviderSite, { domain: string; help: string }>>>
 > = {
   qoder: {
     china: {
@@ -222,6 +222,14 @@ export const siteProfiles: Partial<
     international: {
       domain: "workbuddy.ai",
       help: "获取方式：登录 www.workbuddy.ai → F12 打开开发者工具 → Network(网络) → 刷新页面 → 任选一条 www.workbuddy.ai 的请求 → Request Headers(请求标头)，按每格下面的提示取三个值。三项必须来自同一条请求（网关要求两个 Cookie 成对、UA 与登录时逐字节相同），都只贴值本身、不带键名。",
+    },
+  },
+  // MiMo 是单站种类（不进 providerSites、弹窗不出站点下拉），这里只借「站点级长指引」这个
+  // 位置放取凭据的导航路径：实例的 site 缺省就是 china，而多格种类的长文案会折进「如何获取？」
+  mimo: {
+    china: {
+      domain: "platform.xiaomimimo.com",
+      help: "获取方式：登录 platform.xiaomimimo.com → F12 打开 Application(应用) → Cookies → 选中该站点，按每格提示分别复制 api-platform_serviceToken 与 userId 的 Value。",
     },
   },
 };

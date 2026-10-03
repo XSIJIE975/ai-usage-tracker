@@ -59,7 +59,7 @@
 4. **智谱 GLM**：bigmodel.cn 控制台 → Coding Plan 页 → 「生成 API Key」。如果你在 Claude Code 里配过智谱 GLM，`ANTHROPIC_AUTH_TOKEN` 就是同一枚密钥，直接复用。
 5. **WorkBuddy**：登录对应站点 → 开发者工具 → Network → 刷新页面 → 任选一条该站请求 → 请求标头，按每格提示分别取 `session`、`session_2` 两个 Cookie 的值和整行 User-Agent。**三项必须来自同一条请求**，User-Agent 须与登录时逐字节相同，每格只贴值不带键名。
 6. **Qoder**：登录对应站点 → 开发者工具 → Application → Cookies → 找到名为 `qoder_session_cookie` 的 Cookie，只复制它的 Value 粘贴，不带键名与 `Cookie:` 前缀。
-7. **小米 MiMo**：登录 platform.xiaomimimo.com 并打开控制台余额页 → 开发者工具 → Network → 刷新页面 → 任选一条 `/api/v1/` 请求 → 请求标头的 Cookie 里，按每格提示分别取 `api-platform_serviceToken` 与 `userId` 的值。**两项取自同一条请求**，每格只贴值不带键名。
+7. **小米 MiMo**：登录 platform.xiaomimimo.com → 开发者工具 → Application → Cookies → 选中该站点，按每格提示分别复制 `api-platform_serviceToken` 与 `userId` 的 Value，每格只贴值、不带键名。
 
 站点说明：Qoder 的 `qoder.com.cn` 与 `qoder.com`、WorkBuddy 的 `workbuddy.cn` 与 `workbuddy.ai` 是两套互不相通的登录域，同一账号在两个站点的凭据不通用，换站后要重贴该站的凭据。
 

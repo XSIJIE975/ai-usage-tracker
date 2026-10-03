@@ -801,6 +801,40 @@ export const en: Record<string, string> = {
   "点击显示该系列": "Click to show this series",
   "模型筛选": "Model filter",
   "密钥筛选": "Key filter",
+  "只粘贴该 Cookie 的值：不要带「Cookie:」前缀或键名，也不能包含分号、空格、换行或中文":
+    'Paste the cookie value only — no "Cookie:" prefix, no cookie name, and no semicolons, spaces, line breaks, or non-ASCII text',
+  // —— 小米 MiMo（第六家供应商，ADR-0038）——
+  "小米 MiMo": "Xiaomi MiMo",
+  "查询小米 MiMo 的 Token Plan 额度与账户余额":
+    "Track the Xiaomi MiMo Token Plan quota and account balance",
+  "请在设置中填写小米 MiMo 的 {slots}": "Enter the Xiaomi MiMo {slots} in Settings",
+  "小米 MiMo 登录凭据无效或已过期，请在设置中重新填写 serviceToken 与 userId":
+    "Xiaomi MiMo sign-in credential is invalid or expired — re-enter serviceToken and userId in Settings",
+  "请先填写小米 MiMo 的 serviceToken 与 userId":
+    "Enter the Xiaomi MiMo serviceToken and userId first",
+  "Token Plan 额度": "Token Plan quota",
+  "Token Plan 已过期": "Token Plan expired",
+  "暂无额度数据": "No quota data",
+  "code 字段缺失": "missing the code field",
+  "MiMo {api} 接口返回 HTTP {status}{detail}": "MiMo {api} returned HTTP {status}{detail}",
+  "MiMo {api} 接口返回 code={code}{message}": "MiMo {api} returned code={code}{message}",
+  "MiMo {api} 接口返回数据解析失败：{detail}": "Failed to parse the MiMo {api} response: {detail}",
+  "MiMo {api} 接口未返回可用数据": "MiMo {api} returned no usable data",
+  "MiMo {api} 接口查询失败：{detail}": "MiMo {api} request failed: {detail}",
+  "获取方式：登录 platform.xiaomimimo.com → F12 打开 Application(应用) → Cookies → 选中该站点，按每格提示分别复制 api-platform_serviceToken 与 userId 的 Value。":
+    "How to get it: sign in at platform.xiaomimimo.com → open DevTools (F12) → Application → Cookies → select the site, then copy the Value of api-platform_serviceToken and of userId as each field's hint describes.",
+  "Cookie 里 api-platform_serviceToken= 后面那段值": "The api-platform_serviceToken= value from the cookies",
+  "Cookie 里 userId= 后面那段值": "The userId= value from the cookies",
+  "Token Plan 额度告警阈值（%）": "Token Plan quota alert threshold (%)",
+  "Token Plan 额度已用达到该百分比时发送系统通知；留空不告警。":
+    "Send a system notification when the Token Plan quota reaches this percentage; leave empty for no alert.",
+  "余额告警阈值": "Balance alert threshold",
+  "账户余额低于该值时发送系统通知，按账户币种计量（接口下发，如 CNY、USD）；留空不告警。":
+    "Send a system notification when the account balance drops below this value, in your account currency (as returned by the API, e.g. CNY, USD); leave empty for no alert.",
+  "Token Plan 额度已用 {percent}%，达到 {threshold}%，注意分配剩余用量。":
+    "Token Plan quota is {percent}% used, reaching {threshold}% — watch the remaining allowance.",
+  "账户余额 {balance}，低于阈值 {threshold}，请及时充值。":
+    "Account balance {balance} is below the {threshold} threshold — top it up.",
   "通知中心（{count} 条未读）": "Notification center ({count} unread)",
   "新版本 v{version} 可用，前往设置安装":
     "Version v{version} is available — go to Settings to install",

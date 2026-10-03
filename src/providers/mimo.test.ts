@@ -409,7 +409,7 @@ describe("快照", () => {
     );
     const both = await mimoProvider.fetch(makeInstance());
     expect(both.messageParams).toEqual({
-      slots: "api-platform_serviceToken 与 userId",
+      slots: "api-platform_serviceToken / userId",
     });
   });
 

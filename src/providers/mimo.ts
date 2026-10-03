@@ -54,7 +54,7 @@ export function mimoMissingCredentialSlots(status: InstanceCredentialStatus): st
     !status[USER_ID_SLOT] ? USER_ID_COOKIE_NAME : null,
   ].filter((name): name is string => !!name);
   if (missing.length === 0) return "";
-  return missing.join(" 与 ");
+  return missing.join(" / ");
 }
 
 /** 单个 Cookie 值的字符集（RFC 6265 cookie-value：可见 ASCII，排除空白、`"`、`,`、`;`）。
