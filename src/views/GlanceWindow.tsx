@@ -1,4 +1,4 @@
-import { useRef, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Bell, Gauge, LayoutGrid, List, ListX, Lock, RefreshCw, X } from "lucide-react";
 import { useFitWindowHeight } from "../hooks/use-fit-window-height";
@@ -10,6 +10,7 @@ import { Segmented } from "../components/ui/segmented";
 import { GlanceCards } from "../components/glance/GlanceCards";
 import { GlanceRows } from "../components/glance/GlanceRows";
 import { buildGlanceInstances } from "../components/glance/data";
+import { NotificationCenterPanel } from "./NotificationCenterPanel";
 import { useAppStore } from "../store/useAppStore";
 import { useAlertStore } from "../store/useAlertStore";
 import { selectUnreadCount, useNotificationStore } from "../store/useNotificationStore";
@@ -33,12 +34,19 @@ export function GlanceWindow() {
   const loading = useAppStore((state) => state.loading);
   const unread = useNotificationStore(selectUnreadCount);
   const alertActiveMap = useAlertStore((state) => state.active);
+  const [noticeOpen, setNoticeOpen] = useState(false);
   const t = useT();
   const language = useLanguage();
 
   const { ready, panelVisible, hideWindow } = usePanelWindow({
     shownEvent: "glance-shown",
     hideCommand: "hide_glance_window",
+    // 通知面板打开时 Esc 先关面板，不收起整个速览面板
+    onEscape: () => {
+      if (!noticeOpen) return false;
+      setNoticeOpen(false);
+      return true;
+    },
   });
   usePanelAutoRefresh(panelVisible);
 
@@ -111,6 +119,12 @@ export function GlanceWindow() {
       <main className="no-scrollbar min-h-0 flex-1 overflow-y-auto bg-canvas p-2.5">
         {/* 高度测量的参照物：包裹层的自然高度不受视口钳制，内容超出上限时 main 内部滚动 */}
         <div ref={contentRef}>
+          {/* 通知中心内嵌展示（与快速面板同款）：点开就地查看，不跳主窗口 */}
+          {noticeOpen ? (
+            <div className="absolute inset-x-2 top-12 z-40">
+              <NotificationCenterPanel inline onClose={() => setNoticeOpen(false)} />
+            </div>
+          ) : null}
           {!ready ? (
             <div className="flex h-40 items-center justify-center">
               <span className="h-5 w-5 animate-spin rounded-full border-2 border-line-strong border-t-brand" />
@@ -160,8 +174,12 @@ export function GlanceWindow() {
       <footer className="flex shrink-0 items-center justify-between border-t border-line bg-surface-2/40 px-3 py-1.5">
         <button
           type="button"
-          onClick={() => void openMain()}
-          className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded px-1 py-0.5 text-[11px] text-fg-muted transition-colors hover:text-fg-secondary"
+          onClick={() => setNoticeOpen((open) => !open)}
+          aria-label={`${t("通知中心")}${unread > 0 ? `（${unread} ${t("条未读")}）` : ""}`}
+          className={cn(
+            "flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded px-1 py-0.5 text-[11px] transition-colors",
+            noticeOpen ? "text-fg" : "text-fg-muted hover:text-fg-secondary",
+          )}
         >
           <Bell className="h-3 w-3" />
           {unread > 0 ? `${unread} ${t("条未读")}` : t("通知中心")}
