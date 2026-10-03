@@ -1,3 +1,5 @@
+import type { ThemeMode } from "../lib/theme";
+
 export type ProviderKind = "deepseek" | "opencode-go" | "glm" | "workbuddy" | "qoder";
 
 /** 供应商站点（ADR-0031）：同一供应商的两套登录域，Cookie/凭据不互通。
@@ -218,6 +220,9 @@ export interface AppSettings {
   resetTimeDisplay: "relative" | "absolute";
   /** 界面语言：auto 按系统语言检测（中文→中文，否则英文） */
   interfaceLanguage: "auto" | "zh" | "en";
+  /** 主题模式：system 跟随系统 / light 浅色 / dark 深色；null＝旧版本数据未迁移，
+   *  启动对账时从浏览器存储收编（WebView2 的 localStorage 可能因硬退出丢写，不入库不可靠） */
+  themeMode: ThemeMode | null;
   /** 开机自启：随系统登录自动运行程序 */
   autoStart: boolean;
   /** 静默启动：仅自启路径生效（ADR-0015），关闭自启时复位为关 */

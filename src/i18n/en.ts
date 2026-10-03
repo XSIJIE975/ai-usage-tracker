@@ -509,7 +509,7 @@ export const en: Record<string, string> = {
   "刷新间隔": "Refresh interval",
   "所有供应商共用同一间隔。": "Shared by all providers.",
   "外观": "Appearance",
-  "主题偏好仅保存在本机浏览器存储中。": "Theme preference is stored locally only.",
+  "主题偏好保存在本机设置中。": "Theme preference is saved in local app settings.",
   "主题模式": "Theme mode",
   "跟随系统": "System",
   "浅色": "Light",

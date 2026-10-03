@@ -5,7 +5,8 @@ import { emit, listen } from "@tauri-apps/api/event";
  * 主题模式：
  * - "system" 跟随系统（默认）
  * - "light" / "dark" 手动锁定
- * 仅持久化在 localStorage，属于纯界面偏好，不入库。
+ * 事实源在本机设置库（AppSettings.themeMode）；localStorage 仅作首帧缓存——
+ * WebView2 的 localStorage 可能因进程硬退出丢写，单独依赖它重启后偏好会丢。
  */
 export type ThemeMode = "system" | "light" | "dark";
 
@@ -31,6 +32,24 @@ export function applyTheme(mode: ThemeMode = getThemeMode()) {
     root.removeAttribute("data-theme");
   } else {
     root.setAttribute("data-theme", mode);
+  }
+}
+
+/**
+ * 启动对账（loadInitial 首次成功后调用一次）：以落库值为准修复可能丢写的浏览器存储；
+ * stored 为 null（旧版本数据未迁移）时反向收编浏览器存储现值，避免升级把用户已选
+ * 主题重置成默认。persist 由调用方落库——store 持有完整设置，本模块不反向依赖 store。
+ */
+export function reconcileThemeMode(
+  stored: ThemeMode | null | undefined,
+  persist: (mode: ThemeMode) => void,
+) {
+  if (stored == null) {
+    persist(getThemeMode());
+    return;
+  }
+  if (stored !== getThemeMode()) {
+    setThemeMode(stored);
   }
 }
 

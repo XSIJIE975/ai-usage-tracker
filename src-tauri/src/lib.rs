@@ -271,6 +271,26 @@ fn harden_release_webviews(app: &AppHandle) {
 #[cfg(not(windows))]
 fn harden_release_webviews(_app: &AppHandle) {}
 
+/// 优雅退出：先销毁全部 webview 窗口，给 WebView2 浏览器进程留出把 localStorage 等
+/// 浏览器侧存储写完落盘的时间，再退出进程。直接 `app.exit(0)` 会硬杀正在写盘的
+/// WebView2，在 LevelDB 日志里留下撕裂记录——其后同一数据块内的所有写入永远读不
+/// 回来（主题偏好重启即丢的根因）。
+/// 主窗口的 CloseRequested 监听会把 close() 拦成隐藏到托盘，这里必须用 destroy() 绕过。
+/// 在独立线程等待：销毁经事件循环处理，阻塞主线程会让自己等不到窗口清空。
+fn quit_gracefully(app: &AppHandle) {
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        for window in handle.webview_windows().values() {
+            let _ = window.destroy();
+        }
+        let deadline = Instant::now() + std::time::Duration::from_secs(3);
+        while !handle.webview_windows().is_empty() && Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        handle.exit(0);
+    });
+}
+
 fn setup_tray(app: &AppHandle, language: &str) -> tauri::Result<()> {
     let menu = build_tray_menu(app, language)?;
 
@@ -281,9 +301,7 @@ fn setup_tray(app: &AppHandle, language: &str) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open" => open_main(app),
             "quick" => toggle_quick(app),
-            "quit" => {
-                app.exit(0);
-            }
+            "quit" => quit_gracefully(app),
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {

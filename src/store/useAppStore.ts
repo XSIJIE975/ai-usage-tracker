@@ -12,6 +12,7 @@ import type {
   VaultStatus,
 } from "../types/ipc";
 import { getProviderModule } from "../providers";
+import { reconcileThemeMode } from "../lib/theme";
 import { useAlertStore } from "./useAlertStore";
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -25,6 +26,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   quickAutoHide: true,
   resetTimeDisplay: "relative",
   interfaceLanguage: "auto",
+  themeMode: null,
   autoStart: false,
   silentStart: false,
   trayIconScheme: "default",
@@ -33,6 +35,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   glanceInstanceScope: "all",
   glanceInstanceIds: [],
 };
+
+/** 主题对账只在每个窗口的首次设置加载后做一次：中途重复对账会和保存中的写入竞态 */
+let themeReconciled = false;
 
 function normalizeSettings(settings: Partial<AppSettings>): AppSettings {
   return { ...DEFAULT_SETTINGS, ...settings };
@@ -221,13 +226,23 @@ export const useAppStore = create<AppStore>((set, get) => ({
         invokeWithTimeout<StoredSnapshot[]>("get_latest_snapshots", 4_000),
         invokeWithTimeout<ProviderInstance[]>("list_instances", 4_000),
       ]);
+      const normalized = normalizeSettings(settings);
       set({
-        settings: normalizeSettings(settings),
+        settings: normalized,
         instances,
         initialLoaded: true,
         snapshots: snapshots.map(toSnapshot),
         error: null,
       });
+      // 主题偏好对账（每窗口一次）：localStorage 可能因 WebView2 硬退出丢写（LevelDB
+      // 撕裂后同块写入全部失效），以落库值为准修复；旧数据无 themeMode 时反向收编
+      // 浏览器存储现值，避免升级把用户已选主题重置成默认
+      if (!themeReconciled) {
+        themeReconciled = true;
+        reconcileThemeMode(normalized.themeMode, (mode) => {
+          void get().saveSettings({ ...normalized, themeMode: mode });
+        });
+      }
       // 水合告警边沿/冷却（ADR-0025）：早于任何一轮评估（评估要等刷新网络往返），
       // F5/重启后同一状况不再重复通知；仅主窗口实际执行（ADR-0022）
       void useAlertStore.getState().hydrate();
