@@ -660,9 +660,19 @@ async function reportDesktopEvents(
   if (!envelope.ok) throw envelopeError("事件上报失败：{detail}", envelope.msg);
 }
 
-/** chat 活跃上报（billing 域 /v2/report，chat_5 计数与领养前置） */
-async function reportChatActivity(ctx: TaskContext, conversationId: string): Promise<void> {
-  const event = chatRequestEvent(conversationId, conversationId);
+/** chat 活跃上报（billing 域 /v2/report，chat_5 计数与领养前置；Sequential_Tasks_5
+ *  的 PC 兜底走同端点带模型字段——缺省模型与参考 chatRequestEvent 一致） */
+async function reportChatActivity(
+  ctx: TaskContext,
+  conversationId: string,
+  modelId?: string,
+  modelName?: string,
+): Promise<void> {
+  const event = {
+    ...chatRequestEvent(conversationId, conversationId),
+    ...(modelId ? { requestModelId: modelId } : {}),
+    ...(modelName ? { requestModelName: modelName } : {}),
+  };
   const headers =
     ctx.channel === "cookie" ? chatReportHeadersCookie : chatReportHeadersToken;
   const raw = JSON.stringify([event]);
@@ -849,6 +859,9 @@ const REPORT_GAP_MS = 1050;
  *  抖动；**首条也等**（上一轮残留进度被回滚后立即重报同样无效）。宁可慢不可白报 */
 const MP_CHAT_EVENT_GAP_MS = 45_000;
 const MP_CHAT_EVENT_JITTER_MS = 10_000;
+/** 双形态判据任务（Sequential_Tasks_5/7）：primary 上报未点亮时补 fallback 前的
+ *  重读间隔（参考 runSequentialEventTask 两轮各隔 claimPollGap 的口径） */
+const FALLBACK_REREAD_MS = 3_000;
 
 /** 生成一次性会话标识（参考实现 wb2api-<ms> 前缀语义，服务端不校验一致性） */
 const freshId = (prefix: string) => `${prefix}-${now()}-${Math.floor(Math.random() * 1e4)}`;
@@ -873,6 +886,47 @@ const APPEARANCE_THEME_KEY = "theme-tkmw7j";
  *  证出数（spike 与日常使用），保持不动 */
 function growthBase(ctx: TaskContext): string {
   return ctx.channel === "cookie" ? WEB_ORIGIN : GROWTH_ORIGIN;
+}
+
+/** 「定时任务创建成功」桌面事件（automation_1 与 Sequential_Tasks_4 共用判据，
+ *  参考 DesktopAutomationCreateEvent：纯 API 上报即点亮，无需真实创建） */
+function desktopAutomationCreateEvent(): Record<string, unknown> {
+  return {
+    eventCode: "automated_task_create_suc",
+    name: "自动化任务",
+    source: "manually", modelId: "fast-model", modelIsThinking: true,
+    connectorCount: 0, skills: "", skillCount: 0,
+    scheduleType: "once", mode: "LOCAL",
+  };
+}
+
+/** mp 指纹对话事件 + 模型字段（Sequential_Tasks_5「体验 GLM-5.2」判据载体，
+ *  参考 MiniChatModelEvent：小程序 chat_request_send 真实发射点带 requestModelId/
+ *  requestModelName——Tasks_1/3 的裸对话事件不带模型，模型任务须用本形态） */
+function mpChatModelEvent(conversationId: string, modelId: string, modelName: string): Record<string, unknown> {
+  return {
+    ...mpChatEvent(conversationId, false),
+    requestModelId: modelId,
+    requestModelName: modelName,
+  };
+}
+
+/** mp 指纹灵感事件组（Sequential_Tasks_7 判据载体，参考 MiniPlaybookEvents：
+ *  mpsrc 发射点 playbook_cta_click → playbook_prompt_send，extVersion 覆盖
+ *  2.2.8——任务在 mp 链上，判据认 PC 侧还是 mp 侧待解锁实测，双侧都发） */
+function mpPlaybookEvents(caseId: string, caseName: string): Record<string, unknown>[] {
+  const base = {
+    id: caseId, name: caseName, type: "document",
+    categoryId: "", categoryName: "", skills: "", skillNames: "",
+  };
+  return [
+    { eventCode: "playbook_cta_click", source: "discover", position: 1, extVersion: "2.2.8", ...base },
+    {
+      eventCode: "playbook_prompt_send", source: "discover",
+      promptLength: 96, isOfficial: 1,
+      conversationId: freshId("wb2api-mp-pb"), extVersion: "2.2.8", ...base,
+    },
+  ];
 }
 
 export const TASK_ACTIONS: TaskAction[] = [
@@ -953,13 +1007,7 @@ export const TASK_ACTIONS: TaskAction[] = [
     taskCode: "automation_1",
     fallbackTitle: "设置自动化任务",
     run: async (ctx) => {
-      await reportDesktopEvents(ctx, [{
-        eventCode: "automated_task_create_suc",
-        name: "自动化任务",
-        source: "manually", modelId: "fast-model", modelIsThinking: true,
-        connectorCount: 0, skills: "", skillCount: 0,
-        scheduleType: "once", mode: "LOCAL",
-      }]);
+      await reportDesktopEvents(ctx, [desktopAutomationCreateEvent()]);
       return { message: "已上报定时任务创建事件" };
     },
   },
@@ -1080,6 +1128,61 @@ export const TASK_ACTIONS: TaskAction[] = [
     mp: true,
     run: (ctx, progress) => reportMpChatBackfill(ctx, progress),
   },
+  {
+    // 每日解锁链第四环（判据待解锁验证）：mp 源码无 automation 发射点，参考以
+    // PC 同源桌面事件作判据（automation_1 三账号实测点亮）
+    taskCode: "Sequential_Tasks_4",
+    fallbackTitle: "小程序创建定时任务",
+    mp: true,
+    run: async (ctx) => {
+      await reportDesktopEvents(ctx, [desktopAutomationCreateEvent()]);
+      return { message: "已上报定时任务创建事件" };
+    },
+  },
+  {
+    taskCode: "Sequential_Tasks_5",
+    fallbackTitle: "小程序体验 GLM-5.2 模型",
+    mp: true,
+    run: (ctx, progress) =>
+      runSequentialDualForm(
+        ctx,
+        progress,
+        "Sequential_Tasks_5",
+        () => reportMpEvents(ctx, [mpChatModelEvent(freshId("wb2api-mp-glm"), "glm-5.2", "GLM-5.2")]),
+        "已上报模型对话事件（{model}）",
+        { model: "GLM-5.2" },
+        () => reportChatActivity(ctx, freshId("wb2api-mp-glm"), "glm-5.2", "GLM-5.2"),
+        "模型对话已上报 PC 活跃（{model}）兜底",
+      ),
+  },
+  {
+    taskCode: "Sequential_Tasks_6",
+    fallbackTitle: "小程序完成 10 次对话",
+    mp: true,
+    run: (ctx, progress) => reportMpChatBackfill(ctx, progress),
+  },
+  {
+    taskCode: "Sequential_Tasks_7",
+    fallbackTitle: "小程序体验灵感功能",
+    mp: true,
+    run: (ctx, progress) => {
+      const conversationId = freshId("wb2api-pb");
+      return runSequentialDualForm(
+        ctx,
+        progress,
+        "Sequential_Tasks_7",
+        () =>
+          reportDesktopEvents(
+            ctx,
+            desktopPlaybookPromptSequence(conversationId, `${conversationId}-req`, "pm-gtm-launch-plan", "新产品上市 GTM 发布计划一页纸"),
+          ),
+        "已上报灵感功能事件",
+        undefined,
+        () => reportMpEvents(ctx, mpPlaybookEvents("pm-gtm-launch-plan", "新产品上市 GTM 发布计划一页纸")),
+        "灵感功能已上报 mp 指纹兜底",
+      );
+    },
+  },
 ];
 
 /** mp 对话任务按差额补报（Sequential_Tasks_3/6 共用形状：mini 指纹 chat_request_send，
@@ -1094,6 +1197,30 @@ async function reportMpChatBackfill(ctx: TaskContext, progress: TaskProgress): P
     await reportMpEvents(ctx, [mpChatEvent(freshId("wb2api-mp"), false)]);
   }
   return { message: "已按真人节奏补报 {count} 条对话事件", params: { count: need } };
+}
+
+/** 双形态判据任务（Sequential_Tasks_5/7，每日解锁链的预留环）：primary 上报后
+ *  有界重读一次，未点亮补 fallback 再交外层轮询——判据认 PC 侧还是 mp 侧待解锁
+ *  实测，两侧都是各自任务上实测点亮过的形状（参考 runSequentialEventTask 同款） */
+async function runSequentialDualForm(
+  ctx: TaskContext,
+  progress: TaskProgress,
+  taskCode: string,
+  primary: () => Promise<void>,
+  primaryMessage: string,
+  primaryParams: Record<string, string | number> | undefined,
+  fallback: () => Promise<void>,
+  fallbackMessage: string,
+): Promise<TaskActionRunResult> {
+  await primary();
+  await sleep(FALLBACK_REREAD_MS);
+  const target = progress.target > 0 ? progress.target : 1;
+  const after = await findTask(ctx, taskCode, true);
+  if (!after || after.current < target) {
+    await fallback();
+    return { message: fallbackMessage };
+  }
+  return { message: primaryMessage, params: primaryParams };
 }
 
 /** 自动执行码集合（动作表全集） */

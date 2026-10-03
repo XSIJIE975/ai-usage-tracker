@@ -129,6 +129,21 @@ describe("layerTasks", () => {
     expect(layers.done).toHaveLength(0);
   });
 
+  it("Sequential 链 4~7 进可自动完成层（解锁即显示），locked 照旧排除", () => {
+    const layers = layerTasks([
+      ...(["Sequential_Tasks_4", "Sequential_Tasks_5", "Sequential_Tasks_6", "Sequential_Tasks_7"] as const).map(
+        (taskCode) => task({ taskCode, isMp: true }),
+      ),
+      task({ taskCode: "Sequential_Tasks_7", isMp: true, locked: true }),
+    ]);
+    expect(layers.automatable.map((item) => item.taskCode)).toEqual([
+      "Sequential_Tasks_4",
+      "Sequential_Tasks_5",
+      "Sequential_Tasks_6",
+      "Sequential_Tasks_7",
+    ]);
+  });
+
   it("可自动完成层按动作表依赖序排列（领养链前置在前）", () => {
     const layers = layerTasks([
       task({ taskCode: "chat_5" }),
@@ -561,6 +576,111 @@ describe("runWorkbuddyTask", () => {
       String((args as Record<string, unknown>)?.["url"]).endsWith("/v2/report"),
     );
     expect(mpReports).toHaveLength(1);
+  });
+
+  it("Sequential_Tasks_4（每日解锁链）mp 口径 accept + PC 同源桌面事件判据", async () => {
+    // 1 mp 前置读（not_accepted）→ 2 accept → 3 accept 回读 → 4 桌面 report → 5 回读达标 → 6 claim
+    const responses = [
+      httpResult({ code: 0, data: { tasks: [{ task_code: "Sequential_Tasks_4", accept_status: "not_accepted" }] } }),
+      httpResult({ code: 0, msg: "OK" }),
+      httpResult({ code: 0, data: { tasks: [{ task_code: "Sequential_Tasks_4", target: 1, current: 0, accept_status: "accepted" }] } }),
+      httpResult({ code: 0, msg: "OK" }),
+      httpResult({ code: 0, data: { tasks: [{ task_code: "Sequential_Tasks_4", target: 1, current: 1, accept_status: "accepted" }] } }),
+      httpResult({ code: 0, data: { already_claimed: false, credit: 100 } }),
+    ];
+    mockInvoke.mockImplementation(async () => responses.shift()!);
+    const result = await runWorkbuddyTask(
+      makeCtx("token"),
+      task({ taskCode: "Sequential_Tasks_4", isMp: true, acceptStatus: "not_accepted", target: 1 }),
+    );
+    const reportUrls = mockInvoke.mock.calls
+      .map(([, args]) => String((args as Record<string, unknown>)?.["url"]))
+      .filter((url) => url.endsWith("/v2/report"));
+    expect(reportUrls).toEqual(["https://copilot.tencent.com/v2/report"]);
+    expect(result.credit).toBe(100);
+    mockInvoke.mockReset();
+  });
+
+  it("Sequential_Tasks_5 primary（mp 模型对话）未点亮 → PC 模型活跃兜底", async () => {
+    // 1 mp 前置读（accepted）→ 2 mp report → 3 重读未点亮 → 4 billing 域 PC 兜底 → 5 回读达标 → 6 claim
+    const responses = [
+      httpResult({ code: 0, data: { tasks: [{ task_code: "Sequential_Tasks_5", target: 1, current: 0, accept_status: "accepted" }] } }),
+      httpResult({ code: 0, msg: "OK" }),
+      httpResult({ code: 0, data: { tasks: [{ task_code: "Sequential_Tasks_5", target: 1, current: 0, accept_status: "accepted" }] } }),
+      httpResult({ code: 0, msg: "OK" }),
+      httpResult({ code: 0, data: { tasks: [{ task_code: "Sequential_Tasks_5", target: 1, current: 1, accept_status: "accepted" }] } }),
+      httpResult({ code: 0, data: { already_claimed: false, credit: 100 } }),
+    ];
+    mockInvoke.mockImplementation(async () => responses.shift()!);
+    const result = await runWorkbuddyTask(
+      makeCtx("token"),
+      task({ taskCode: "Sequential_Tasks_5", isMp: true, acceptStatus: "accepted", target: 1 }),
+    );
+    const reportCalls = mockInvoke.mock.calls.filter(([, args]) =>
+      String((args as Record<string, unknown>)?.["url"]).endsWith("/v2/report"),
+    );
+    // 两形态同走 codebuddy 域（mp report 与 PC 活跃同端点），按事件体区分指纹
+    expect(reportCalls.map(([, args]) => (args as Record<string, unknown>)?.["url"])).toEqual([
+      "https://www.codebuddy.cn/v2/report",
+      "https://www.codebuddy.cn/v2/report",
+    ]);
+    const bodies = reportCalls.map(([, args]) => String((args as Record<string, unknown>)?.["bodyText"]));
+    expect(bodies[0]).toContain('"agentName":"mp"'); // mp 模型对话 primary
+    expect(bodies[1]).toContain("glm-5.2"); // PC 模型活跃 fallback
+    expect(bodies[1]).toContain('"requestId"');
+    expect(result.params?.["message"]).toContain("兜底");
+    mockInvoke.mockReset();
+  });
+
+  it("Sequential_Tasks_6 按差额补报（current=8/target=10 → 2 条，真人节奏）", async () => {
+    vi.useFakeTimers();
+    const responses = [
+      httpResult({ code: 0, data: { tasks: [{ task_code: "Sequential_Tasks_6", target: 10, current: 8, accept_status: "accepted" }] } }),
+      httpResult({ code: 0, msg: "OK" }),
+      httpResult({ code: 0, msg: "OK" }),
+      httpResult({ code: 0, data: { tasks: [{ task_code: "Sequential_Tasks_6", target: 10, current: 10, accept_status: "accepted" }] } }),
+      httpResult({ code: 0, data: { already_claimed: false, credit: 100 } }),
+    ];
+    mockInvoke.mockImplementation(async () => responses.shift()!);
+    const promise = runWorkbuddyTask(
+      makeCtx("token"),
+      task({ taskCode: "Sequential_Tasks_6", isMp: true, acceptStatus: "accepted", target: 10, current: 8 }),
+    );
+    await vi.runAllTimersAsync();
+    const result = await promise;
+    vi.useRealTimers();
+    const mpReports = mockInvoke.mock.calls.filter(([, args]) =>
+      String((args as Record<string, unknown>)?.["url"]).endsWith("/v2/report"),
+    );
+    expect(mpReports).toHaveLength(2);
+    expect(result.credit).toBe(100);
+    mockInvoke.mockReset();
+  });
+
+  it("Sequential_Tasks_7 primary（PC 灵感事件组）未点亮 → mp 指纹灵感兜底", async () => {
+    // 1 mp 前置读（accepted）→ 2 桌面 report → 3 重读未点亮 → 4 mp report → 5 回读达标 → 6 claim
+    const responses = [
+      httpResult({ code: 0, data: { tasks: [{ task_code: "Sequential_Tasks_7", target: 1, current: 0, accept_status: "accepted" }] } }),
+      httpResult({ code: 0, msg: "OK" }),
+      httpResult({ code: 0, data: { tasks: [{ task_code: "Sequential_Tasks_7", target: 1, current: 0, accept_status: "accepted" }] } }),
+      httpResult({ code: 0, msg: "OK" }),
+      httpResult({ code: 0, data: { tasks: [{ task_code: "Sequential_Tasks_7", target: 1, current: 1, accept_status: "accepted" }] } }),
+      httpResult({ code: 0, data: { already_claimed: false, credit: 500 } }),
+    ];
+    mockInvoke.mockImplementation(async () => responses.shift()!);
+    const result = await runWorkbuddyTask(
+      makeCtx("token"),
+      task({ taskCode: "Sequential_Tasks_7", isMp: true, acceptStatus: "accepted", target: 1 }),
+    );
+    const reports = mockInvoke.mock.calls
+      .map(([, args]) => String((args as Record<string, unknown>)?.["url"]))
+      .filter((url) => url.endsWith("/v2/report"));
+    expect(reports).toEqual([
+      "https://copilot.tencent.com/v2/report", // PC 灵感事件组 primary
+      "https://www.codebuddy.cn/v2/report", // mp 指纹 fallback
+    ]);
+    expect(result.params?.["message"]).toContain("兜底");
+    mockInvoke.mockReset();
   });
 });
 
