@@ -19,7 +19,7 @@ import {
   parseBalanceData,
   parseMimoPeriodEnd,
   parsePlanDetail,
-  parseUsageWindows,
+  parseUsageWindow,
   readEnvelope,
   SERVICE_TOKEN_COOKIE_NAME,
   USER_ID_COOKIE_NAME,
@@ -199,52 +199,46 @@ describe("订阅状态", () => {
 
 describe("额度窗口", () => {
   it("未订阅时 items 是 null（不是空数组）→ 没有窗口", () => {
-    expect(parseUsageWindows(dataOf(readFixture("mimo-plan-usage.json")) as never)).toEqual([]);
+    expect(parseUsageWindow(dataOf(readFixture("mimo-plan-usage.json")) as never)).toBeNull();
   });
 
-  it("逐项出行，行名用接口原词，百分比本地算", () => {
-    const windows = parseUsageWindows(
+  it("只取 month_total_token 那一项，卡片上不漏接口内部标识符", () => {
+    const window = parseUsageWindow(
       dataOf(readFixture("mimo-plan-usage-subscribed.json")) as never,
     );
-    expect(windows).toEqual([
-      { label: "Token Plan", used: 6500, limit: 20000, remaining: 13500, percent: 32.5 },
-    ]);
+    // fixture 里 month_total_token 故意不放第一位：选中它靠名字，不靠顺序
+    expect(window).toEqual({ used: 6500, limit: 20000, remaining: 13500, percent: 32.5 });
   });
 
-  it("多窗口保持响应顺序，恒零与矛盾数据跳过", () => {
-    const windows = parseUsageWindows({
-      monthUsage: {
-        percent: 10,
-        items: [
-          { name: "本月", used: 100, limit: 1000, percent: 10 },
-          { name: "恒零", used: 0, limit: 0, percent: 0 },
-          { name: "矛盾", used: 5, limit: 0, percent: 0 },
-          { name: "脏值", used: -1, limit: 100, percent: 0 },
-          { used: 1, limit: 2, percent: 50 },
-        ],
-      },
-    });
-    expect(windows.map((window) => window.label)).toEqual(["本月", "Token Plan 额度"]);
+  it("没有 month_total_token 时退到第一条合法项，脏项跳过", () => {
+    expect(
+      parseUsageWindow({
+        monthUsage: {
+          percent: 10,
+          items: [
+            { name: "脏值", used: -1, limit: 100 },
+            { name: "缺项", used: 5 },
+            { name: "plan_total_token", used: 100, limit: 1000 },
+          ],
+        },
+      }),
+    ).toEqual({ used: 100, limit: 1000, remaining: 900, percent: 10 });
+  });
+
+  it("恒零的月总量是「这个月没分配」，不出行也不画 0%", () => {
+    expect(parseUsageWindow({ monthUsage: { percent: 0, items: [{ used: 0, limit: 0 }] } })).toBeNull();
+    expect(parseUsageWindow({ monthUsage: { percent: 0, items: [] } })).toBeNull();
+    expect(parseUsageWindow(undefined)).toBeNull();
   });
 });
 
 describe("卡片行", () => {
   const balance = { amount: 1, currency: "CNY" };
-  const window: MimoUsageWindow = {
-    label: "Token Plan",
-    used: 6500,
-    limit: 20000,
-    remaining: 13500,
-    percent: 32.5,
-  };
+  const window: MimoUsageWindow = { used: 6500, limit: 20000, remaining: 13500, percent: 32.5 };
   const plan = (state: PlanState): PlanState => state;
 
   it("未订阅：中性事实行在前，余额行在后", () => {
-    const lines = buildMimoLines(
-      plan({ kind: "unsubscribed" }),
-      [],
-      balance,
-    );
+    const lines = buildMimoLines(plan({ kind: "unsubscribed" }), null, balance);
     expect(lines).toEqual([
       { type: "text", label: "Token Plan", value: "未订阅" },
       { type: "text", label: "账户余额", value: "¥1.00", balance: true },
@@ -255,21 +249,21 @@ describe("卡片行", () => {
   });
 
   it("已过期走中性行，不出进度行也不出倒计时", () => {
-    const lines = buildMimoLines(plan({ kind: "expired" }), [window], balance);
+    const lines = buildMimoLines(plan({ kind: "expired" }), window, balance);
     expect(lines.some((line) => line.type === "progress")).toBe(false);
     expect(lines[0]).toEqual({ type: "text", label: "Token Plan", value: "Token Plan 已过期" });
   });
 
-  it("在期内：徽章 + 进度行（带重置时刻）+ 余额行", () => {
+  it("在期内：徽章 + 一条进度行（带重置时刻）+ 余额行", () => {
     const lines = buildMimoLines(
       plan({ kind: "active", tier: "MiMo Pro", resetsAt: new Date("2026-11-01T15:59:59.000Z") }),
-      [window],
+      window,
       balance,
     );
     expect(lines[0]).toEqual({ type: "badge", label: "套餐档位", value: "MiMo Pro" });
     expect(lines[1]).toEqual({
       type: "progress",
-      label: "Token Plan",
+      label: "Token Plan 额度",
       used: 6500,
       limit: 20000,
       percentUsed: 32.5,
@@ -278,42 +272,37 @@ describe("卡片行", () => {
     expect(lines[2]).toEqual({ type: "text", label: "账户余额", value: "¥1.00", balance: true });
     // 周期时长不下发 → 不猜 windowPeriodMs（托盘环层序回退快照顺序）
     expect(lines[1].windowPeriodMs).toBeUndefined();
+    // 余额标记只挂在金额行上，全快照只有一条
+    expect(lines.filter((line) => line.balance === true)).toHaveLength(1);
   });
 
-  it("多窗口只有第一条带重置时刻，余额标记只挂在金额行", () => {
+  it("没有 planName/planCode 时不出徽章行（无档位可说）", () => {
     const lines = buildMimoLines(
       plan({ kind: "active", tier: null, resetsAt: new Date("2026-11-01T15:59:59.000Z") }),
-      [window, { ...window, label: "资源包", used: 10, limit: 100, remaining: 90, percent: 10 }],
+      window,
       balance,
     );
-    const progress = lines.filter((line) => line.type === "progress");
-    expect(progress).toHaveLength(2);
-    expect(progress[0].resetsAt).toBe("2026-11-01T15:59:59.000Z");
-    expect(progress[1].resetsAt).toBeUndefined();
-    expect(lines.filter((line) => line.balance === true)).toHaveLength(1);
-    expect(primaryProgressLine(lines as never)).toBe(progress[0]);
-    // 没有 planName/planCode 时不出徽章行（无档位可说）
     expect(lines.some((line) => line.type === "badge")).toBe(false);
   });
 
   it("detail 源失败：进度行照出，只是没有倒计时", () => {
-    const lines = buildMimoLines(plan({ kind: "unknown" }), [window], balance);
-    expect(lines[0]).toMatchObject({ type: "progress", label: "Token Plan" });
+    const lines = buildMimoLines(plan({ kind: "unknown" }), window, balance);
+    expect(lines[0]).toMatchObject({ type: "progress", label: "Token Plan 额度" });
     expect(lines[0].resetsAt).toBeUndefined();
   });
 
-  it("订阅在期内但没有可画窗口：说状态，不编一个 0%", () => {
+  it("订阅在期内但没有可画额度：说状态，不编一个 0%", () => {
     const lines = buildMimoLines(
       plan({ kind: "active", tier: "MiMo Pro", resetsAt: null }),
-      [],
+      null,
       balance,
     );
     expect(lines[1]).toEqual({ type: "text", label: "Token Plan", value: "暂无额度数据" });
   });
 
   it("余额源失败时只剩额度行，不挤出一句「余额未知」", () => {
-    const lines = buildMimoLines(plan({ kind: "unknown" }), [window], null);
-    expect(lines.map((line) => line.label)).toEqual(["Token Plan"]);
+    const lines = buildMimoLines(plan({ kind: "unknown" }), window, null);
+    expect(lines.map((line) => line.label)).toEqual(["Token Plan 额度"]);
   });
 });
 

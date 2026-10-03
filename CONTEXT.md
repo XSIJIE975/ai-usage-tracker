@@ -194,7 +194,7 @@ _Avoid_：额度窗口 / 配额窗口（那是同一容器内的 5 小时、每�
 
 ## 小米 MiMo
 
-第六个受支持的供应商（provider 标识 `mimo`，显示名「小米 MiMo」），追踪小米 MiMo 开放平台的 Token Plan 额度与账户余额。数据来自 platform.xiaomimimo.com 控制台网页的只读私有接口（`balance`、`tokenPlan/detail`、`tokenPlan/usage`，接入边界见 ADR-0038），凭据是登录态的两个 Cookie 值（`api-platform_serviceToken` 与 `userId`，各占一格）。**单站**：`mimo.mi.com` 只是同一账号空间的另一个前置域名（同一个小米账号 STS 会话），不是另一个站点。全程只读、无动作接口，也没有统计抽屉。两个量纲并存：Token Plan 额度是主指标（百分比配额窗口），账户余额是现金（按接口下发的币种显示，不做「元」这类币种假设）。
+第六个受支持的供应商（provider 标识 `mimo`，显示名「小米 MiMo」），追踪小米 MiMo 开放平台的 Token Plan 额度与账户余额。数据来自 platform.xiaomimimo.com 控制台网页的只读私有接口（`balance`、`tokenPlan/detail`、`tokenPlan/usage`，接入边界见 ADR-0038），凭据是登录态的两个 Cookie 值（`api-platform_serviceToken` 与 `userId`，各占一格）。**单站**：`mimo.mi.com` 只是同一账号空间的另一个前置域名（同一个小米账号 STS 会话），不是另一个站点。全程只读、无动作接口，也没有统计抽屉。两个量纲并存：Token Plan 额度是主指标（一条进度行，取月总量那一项，单位是 token），账户余额是现金（按接口下发的币种显示，不做「元」这类币种假设）。接口 `items[].name`（`month_total_token` 这类）是内部标识符，不上界面。
 _Avoid_：把 MiMo 的余额说成「元」（币种由接口下发，真机 CNY、社区样本 USD）；把 `mimo.mi.com` 当国际站（那是同一登录域）；从没订阅的账号上画 0% 进度（那个 `percent: 0` 是「无套餐」的伴生值，未订阅判据看套餐标识不看百分比）
 
 ## 快速面板

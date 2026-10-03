@@ -23,7 +23,7 @@ Status: accepted
 3. **只读，卡片即全部展示面**：三个端点全是 GET，无写操作、无动作接口；统计抽屉不做（明细端点零侦察，与 Qoder 首版同判断，日后拿到契约再补）。
 4. **双轨阈值，币种不写死**：主指标 = Token Plan 已用百分比（既有 %阈值 / 额度耗尽 / 托盘环零改动沿用），百分比一律本地按 `used/limit` 算，下发的 `percent` 不参与判定（ADR-0030 §4 同一条精度理由）。账户余额是第二轨，走 **MiMo 自己的一条告警 arm**：金额按接口 `currency` 做 Intl 格式化（`¥1.00` / `US$12.34`），正文与阈值标签都**不写「元」**。GLM/DeepSeek 那两条 arm 的「{balance} 元」与「阈值（元）→ CNY」是人民币硬编码，套到 MiMo 上就是给非人民币账户写假话（真机是 CNY，社区样本是 USD，两家都活）。
 5. **`currentPeriodEnd` 按 Asia/Shanghai 解析成绝对时刻**：那是服务端下发的数据属性，不是观察者的属性——用 `Date.parse` 的本地时区语义会让同一账号的重置时刻随用户笔记本时区漂移，按 UTC 解析（CodexBar）则恒早 8 小时。串里自带 `Z` 或 `±hh:mm` 时按它说的算，不再叠偏移。只认未来的时刻（过期与缺失同处理，隐藏倒计时那一格），解析失败不阻塞取数。**周期时长不下发也不猜**：不填 `windowPeriodMs`，托盘环层序回退快照顺序（CodexBar 的 fail-closed 决议同结论——它也不从剩余天数反推窗口）。
-6. **按状态出行，一个状态只让一个控件说**：`planName ?? planCode` 出档位徽章（原词不翻译，同 ADR-0030 对 `operation` 的口径）；每个额度窗口一条进度行，**只有第一条带 `resetsAt`**（全响应只有一个周期末，`primaryProgressLine` 靠它选主指标行）；余额行带 `balance: true` 且排在最后。未订阅与已过期都走**中性事实行**（不出进度行 → 红条、倒计时、耗尽告警、满环都无从产生）：
+6. **按状态出行，一个状态只让一个控件说**：`planName ?? planCode` 出档位徽章（原词不翻译，同 ADR-0030 对 `operation` 的口径）；额度**只一条进度行**，取 `monthUsage.items` 里 `name === "month_total_token"` 那一项（没有该项时退到第一条合法项），行名固定「Token Plan 额度」——`items[].name` 是 `plan_total_token` / `compensation_total_token` 这类**内部标识符**（同 WorkBuddy 的 `agentPurpose`），照 ADR-0030 的分工该建映射而不是原样上界面，而我们连映射的目标词都没证据，所以先用一个不含内部标识符的通用行名；`resetsAt` 挂这条行；余额行带 `balance: true` 且排在最后。未订阅与已过期都走**中性事实行**（不出进度行 → 红条、倒计时、耗尽告警、满环都无从产生）：
    - 未订阅判据看 `planCode`/`planName` 是否为空，**不看 `monthUsage.percent`**——未订阅账号那个字段是 0，照它画就是一条 0% 的假进度。
    - 已过期优先于用量：过期套餐的 `used/limit` 是历史数字，画成进度等于给它挂一个「重置前不可用」的假承诺。
    - 额度源本轮失败时**不写**「暂无额度数据」——那是「取到了、只是没额度」，与「没取到」是两回事（中性事实行与错误快照的分工）。
@@ -37,13 +37,15 @@ Status: accepted
 - **Copy as cURL 整串**：WorkBuddy 为「UA 与登录时逐字节同源」才走上去，MiMo 网关无此约束（CodexBar 硬编码 UA 实证），要求用户理解请求导出格式是无谓的门槛。
 - **只填一格 serviceToken**：上游把两个键都列为必需，「只带一个能不能过」目前没有证据。WorkBuddy 正是在没证据时先做单值、被网关二分实测打回、返工了三轮，所以这里从两格起步；若真机证实单格可过，砍掉 `userId` 格是有证据的收窄（改动面：删一槽、删一校验、拼串少一段）。
 - **照抄 CodexBar 的 UTC 解析 / 只取 items.first / expired 必填布尔**：三条都拒。这是 ADR-0030 那条教训的第二次应用——上游项目做了什么 ≠ 上游项目证明了什么。
+- **`monthUsage.items` 逐项出一行**（首版实现就是这么写的，2026-10-03 按证据改掉）：三份独立实现没有一个画多行——CodexBar 取 `items.first`，prime-radiant 的 agentic-usage-meter 只认 `month_total_token`，qunqin24 的 Pulse 取 first 并把「多桶时第一个未必是套餐本体」列为未决。而 `monthUsage.percent` 是月级的**单个**数字，多出来的 `plan_total_token` / `compensation_total_token` 看着是这一个月的**构成**，并列成兄弟行就是 ADR-0030 §4 拒过的「汇总位与分容器相加」。故收成一行，取月总量那一项。
+- **行名用 `items[].name` 原词**（首版做法，已改）：它是 snake_case 内部标识符，印到卡片上等于给用户看调试串。社区实现给出的中文「套餐积分」「补偿积分」是**它们自己配置表里的标签**，不是 MiMo 界面的词，跟着写就是把我方推断包装成官方口径。
 - **统计抽屉本期一起做**：明细端点一个都没侦察到，做不了；与 Qoder 首版同判断（后来是他 F12 拿到契约才补的）。
 - **订阅管理面（自动续费、`autoRenewDiscount`、MiMo Claw 的 `clawEnabled`/`clawPeriodEnd`/`clawPurchased`）**：一律不读不显示。本工具是监控与提醒，续费开关与产品线状态是决策类信息，出错代价在用户的钱包上。
 - **`total_quota` 式汇总位**：MiMo 没有实例级汇总端点，余额与额度是两个量纲各自成行，不做任何跨量纲合并。
 
 ## Consequences
 
-- **订阅路径只有合成样本**：`__fixtures__/mimo-plan-detail-subscribed.json` 与 `mimo-plan-usage-subscribed.json` 按 CodexBar 解码器声明的字段形状构造，**未经真机证实**。因此以下四条都还是待证事项，真机响应到手可能要改：① `items` 是否多于 1 项（多于 1 就按 Qoder §5 一窗一行，本模块已经逐项出行，只是行序与主行选择要复核）；② `items[].name` 的原词（行名直接用它，官网叫什么就叫什么）；③ `used`/`limit` 的**单位**（积分？Token 数？请求数？目前只显示裸数字不带单位后缀）；④ `expired=false` 时 `currentPeriodEnd` 按 CST 换算后必须晚于当下——这条同时是 CST 基准的自检，若换算结果落在过去而 `expired` 又是 false，说明基准判错，改 `parseMimoPeriodEnd` 里那个偏移常量。
+- **订阅路径仍无真机样本**：使用者那个账号确认**未订阅 Token Plan**（2026-10-03 二次抓取，三份响应与首版逐字一致），所以订阅态只能继续靠合成 fixture（`mimo-plan-*-subscribed.json`）+ 三份社区实现旁证。已据此定掉的：`items[].name` 是内部标识符、单位是 token（字段名后缀 `_token` 与 agentic-usage-meter 的 `unit: "tokens"`）、多桶时取 `month_total_token`。**仍未证实的三条**：① `month_total_token` 是否就是界面展示的那一项总量（若它是 plan+compensation 之和，画一行是对的；若三者是并列额度，一行会漏信号）；② 界面上这项到底叫什么中文词——定了才换掉「Token Plan 额度」这个中性行名；③ `expired=false` 时 `currentPeriodEnd` 按 CST 换算后必须晚于当下，这是 CST 基准的自检，落在过去就说明基准判错、改 `parseMimoPeriodEnd` 里那个偏移常量。三条都要等一个订阅账号的真机响应，拿到前不改。
 - 未订阅是**当前唯一有真机证据的形态**，它已经钉住三件事：`items` 会为 null、`expired` 会为 null、`percent` 会为 0。合成样本不能替真机说话，测试里凡涉及订阅态的断言都注明了这一点。
 - 余额阈值与账户同币种，但输入框里没有币种提示（币种是接口下发的，配置时还没有数据）；hint 里写明了「按账户币种计量」。跨币种换算不做。
 - 两格凭据任一失效即整卡报错（错误可见，ADR-0024），出路是重贴；`api-platform_ph` / `api-platform_slh` 那两个可选 Cookie 不登记成槽位——上游标注可选且实测缺了不影响取数，多两格就多两套「留空会怎样」的要解释。

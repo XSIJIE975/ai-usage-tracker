@@ -5,7 +5,9 @@
     "monthUsage": {
       "percent": 32.5,
       "items": [
-        { "name": "Token Plan", "used": 6500, "limit": 20000, "percent": 32.5 }
+        { "name": "compensation_total_token", "used": 1200, "limit": 4000, "percent": 30 },
+        { "name": "month_total_token", "used": 6500, "limit": 20000, "percent": 32.5 },
+        { "name": "plan_total_token", "used": 5300, "limit": 16000, "percent": 33.1 }
       ]
     },
     "usage": null

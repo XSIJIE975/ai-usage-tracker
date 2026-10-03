@@ -147,8 +147,10 @@ export interface MimoBalance {
   currency: string;
 }
 
+/** 月总量那一项的内部名（agentic-usage-meter 的筛选键，2026-10-03 据其解码器） */
+export const MONTH_TOTAL_NAME = "month_total_token";
+
 export interface MimoUsageWindow {
-  label: string;
   used: number;
   limit: number;
   remaining: number;
@@ -249,30 +251,38 @@ export function parsePlanDetail(data: PlanDetailData | null | undefined, now = D
   return { kind: "active", tier, resetsAt: parseMimoPeriodEnd(data.currentPeriodEnd, now) };
 }
 
-/** 本月额度 → 窗口列表。未订阅账号 `items` 是 **null**（不是空数组），逐项读、脏项跳过 */
-export function parseUsageWindows(data: UsageData | null | undefined): MimoUsageWindow[] {
+/**
+ * 本月额度 → 一行读数。未订阅账号 `items` 是 **null**（不是空数组）。
+ *
+ * 只取一项，且行名不用接口的 `name`：三份独立社区实现（CodexBar 取 items.first、
+ * prime-radiant 的 agentic-usage-meter 只认 `month_total_token`、Pulse 取 first 并把
+ * 「多桶时第一个未必是套餐本体」列为未决）没有一个画多行，而 `monthUsage.percent`
+ * 是月级的单个数字——多出来的 `plan_total_token` / `compensation_total_token` 这类
+ * 名字看着是这个月的**构成**，并列成兄弟行就是 Qoder 那种「汇总位与分容器相加」的
+ * 重复计数风险（ADR-0030 §4）。`name` 本身是 snake_case 内部标识符（同 WorkBuddy 的
+ * agentPurpose），印到卡片上等于给用户看调试串，所以行名固定用「Token Plan 额度」。
+ * 单位是 token（两种实现的字段名后缀 `_token` 与 unit: "tokens"），故不标「积分」。
+ */
+export function parseUsageWindow(data: UsageData | null | undefined): MimoUsageWindow | null {
   const items = data?.monthUsage?.items;
-  if (!Array.isArray(items)) return [];
-  const windows: MimoUsageWindow[] = [];
-  for (const item of items) {
-    if (!item || typeof item !== "object") continue;
-    const used = toCount(item.used);
-    const limit = toCount(item.limit);
-    if (used == null || limit == null) continue;
-    // 恒零窗口不出行：没分配就没窗口可画（与 Qoder 的恒零容器同口径）
-    if (limit <= 0 && used <= 0) continue;
-    // 有用量却没总量是矛盾数据，画出来会是一个算不出的百分比（Qoder 同条：整体拒收）
-    if (limit <= 0) continue;
-    windows.push({
-      label: toText(item.name) ?? "Token Plan 额度",
-      used,
-      limit,
-      remaining: Math.max(0, limit - used),
-      // 百分比一律本地按 used/limit 算，下发的 percent 不参与判定（同 ADR-0030 §4 的精度理由）
-      percent: (used / limit) * 100,
-    });
-  }
-  return windows;
+  if (!Array.isArray(items)) return null;
+  const valid = items.filter((item): item is UsageItem => {
+    if (!item || typeof item !== "object") return false;
+    return toCount(item.used) != null && toCount(item.limit) != null;
+  });
+  const chosen = valid.find((item) => toText(item.name) === MONTH_TOTAL_NAME) ?? valid[0];
+  if (!chosen) return null;
+  const used = toCount(chosen.used) as number;
+  const limit = toCount(chosen.limit) as number;
+  // 恒零 = 这个月没分配额度（与 Qoder 的恒零容器同口径，不出行、不画 0%）
+  if (limit <= 0) return null;
+  return {
+    used,
+    limit,
+    remaining: Math.max(0, limit - used),
+    // 百分比一律本地按 used/limit 算，下发的 percent 不参与判定（同 ADR-0030 §4 的精度理由）
+    percent: (used / limit) * 100,
+  };
 }
 
 const clampPercent = (value: number): number => Math.min(100, Math.max(0, value));
@@ -288,14 +298,13 @@ const clampPercent = (value: number): number => Math.min(100, Math.max(0, value)
  *    已过期套餐的 used/limit 仍是历史数字，画成进度等于给它挂一个「重置前不可用」的假承诺。
  * 2. **`balance` 标记只挂在金额行上**（GLM 同法）：MiMo 有现金账户，速览余额位就该是它，
  *    不需要像 Qoder 那样让进度行代持。
- * 3. **`resetsAt` 只挂第一条进度行**：全响应只有一个周期末，多窗口时主指标取它，
- *    其余行不带重置时刻（primaryProgressLine 按重置最远选主行）。
- *    周期时长（月/年）接口不下发，故不填 `windowPeriodMs`——猜一个 30 天会让托盘环层序
- *    与「余量还能撑多久」都建立在编造的分母上（CodexBar 的 fail-closed 决议同结论）。
+ * 3. **进度行只有一条**（见 parseUsageWindow 的取证），`resetsAt` 就挂它。周期时长（月/年）
+ *    接口不下发，故不填 `windowPeriodMs`——猜一个 30 天会让托盘环层序与「余量还能撑多久」
+ *    都建立在编造的分母上（CodexBar 的 fail-closed 决议同结论）。
  */
 export function buildMimoLines(
   plan: PlanState,
-  windows: MimoUsageWindow[],
+  window: MimoUsageWindow | null,
   balance: MimoBalance | null,
   /** 额度源这一轮是否成功：失败时不写「暂无额度数据」——那是「取到了、只是没额度」，
    *  与「没取到」是两回事（中性事实行与错误快照的分工） */
@@ -311,21 +320,17 @@ export function buildMimoLines(
     lines.push({ type: "text", label: "Token Plan", value: "未订阅" });
   } else if (plan.kind === "expired") {
     lines.push({ type: "text", label: "Token Plan", value: "Token Plan 已过期" });
-  } else if (windows.length > 0) {
-    windows.forEach((window, index) => {
-      const line: MetricLine = {
-        type: "progress",
-        label: window.label,
-        used: window.used,
-        limit: window.limit,
-        percentUsed: clampPercent(window.percent),
-      };
-      // detail 源失败时（state=unknown）没有周期信息，进度行照出、只是不带倒计时
-      if (index === 0 && plan.kind === "active" && plan.resetsAt) {
-        line.resetsAt = plan.resetsAt.toISOString();
-      }
-      lines.push(line);
-    });
+  } else if (window) {
+    const line: MetricLine = {
+      type: "progress",
+      label: "Token Plan 额度",
+      used: window.used,
+      limit: window.limit,
+      percentUsed: clampPercent(window.percent),
+    };
+    // detail 源失败时（kind=unknown）没有周期信息，进度行照出、只是不带倒计时
+    if (plan.kind === "active" && plan.resetsAt) line.resetsAt = plan.resetsAt.toISOString();
+    lines.push(line);
   } else if (plan.kind === "active" && usageAvailable) {
     // 订阅在期内但这一轮没有可画的窗口（未用过 / 接口没给明细）：陈述状态而非故障
     lines.push({ type: "text", label: "Token Plan", value: "暂无额度数据" });
@@ -479,8 +484,12 @@ async function fetchMimoSnapshot(instance: ProviderInstance): Promise<ProviderSn
   const plan = settledOutcome<PlanState>(detailSettled, "tokenPlan/detail", (data) =>
     parsePlanDetail(data as PlanDetailData | undefined),
   );
-  const usage = settledOutcome<MimoUsageWindow[]>(usageSettled, "tokenPlan/usage", (data) =>
-    parseUsageWindows(data as UsageData | undefined),
+  // 包一层对象：parseUsageWindow 返回 null 是「取到了、这个月没有额度」，
+  // 而 settledOutcome 把 null 当「这个源没读到」——两种 null 不能共用一个信号
+  const usage = settledOutcome<{ window: MimoUsageWindow | null }>(
+    usageSettled,
+    "tokenPlan/usage",
+    (data) => ({ window: parseUsageWindow(data as UsageData | undefined) }),
   );
 
   // 凭据失效是三个源共同的成因，任一源报这个就把整张卡判为错误快照（重贴即恢复）；
@@ -526,7 +535,7 @@ async function fetchMimoSnapshot(instance: ProviderInstance): Promise<ProviderSn
 
   const lines = buildMimoLines(
     plan.value ?? { kind: "unknown" },
-    usage.value ?? [],
+    usage.value?.window ?? null,
     balance.value,
     usage.ok,
   );
