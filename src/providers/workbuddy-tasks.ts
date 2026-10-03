@@ -822,17 +822,33 @@ export interface TaskActionRunResult {
   params?: Record<string, string | number>;
 }
 
+/** 动作执行时的最新进度（mp 任务取 accept 回读、其余取前置读/快照；target≤0
+ *  由动作自行兜底 1——accept 前 mp 列表 target 下发 0，兜底值会少报误领） */
+export interface TaskProgress {
+  target: number;
+  current: number;
+}
+
 interface TaskAction {
   taskCode: string;
   /** 面板兜底标题（上游 title 优先） */
   fallbackTitle: string;
   mp?: boolean;
-  run: (ctx: TaskContext) => Promise<TaskActionRunResult>;
+  /** 按差额补报的动作置位：执行引擎为其拉取最新进度（非 mp 任务多一次列表 GET） */
+  needProgress?: boolean;
+  run: (ctx: TaskContext, progress: TaskProgress) => Promise<TaskActionRunResult>;
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 /** 连续上报之间的节流（参考 reportGap 1050ms 风控口径） */
 const REPORT_GAP_MS = 1050;
+/** mp 对话事件（chat_request_send）的真人节奏：上游对 Sequential 链多轮对话任务有
+ *  反作弊校验——数秒级连发的事件先被计入进度（回读甚至短暂 completed）、随后判无效
+ *  **整体回滚**（进度回落、claim 400 "task not completed"），参考项目 2026-09-26 实测
+ *  2s 连发 4 条全灭、45s 间隔逐条上报全存活且领奖成功。每条上报前 sleep gap + 0~10s
+ *  抖动；**首条也等**（上一轮残留进度被回滚后立即重报同样无效）。宁可慢不可白报 */
+const MP_CHAT_EVENT_GAP_MS = 45_000;
+const MP_CHAT_EVENT_JITTER_MS = 10_000;
 
 /** 生成一次性会话标识（参考实现 wb2api-<ms> 前缀语义，服务端不校验一致性） */
 const freshId = (prefix: string) => `${prefix}-${now()}-${Math.floor(Math.random() * 1e4)}`;
@@ -863,12 +879,18 @@ export const TASK_ACTIONS: TaskAction[] = [
   {
     taskCode: "chat_5",
     fallbackTitle: "完成 5 次对话",
-    run: async (ctx) => {
-      for (let index = 0; index < 5; index += 1) {
+    needProgress: true,
+    run: async (ctx, progress) => {
+      // 按差额补报（参考 runChat5 同款）：target 缺失兜底任务语义值 5；
+      // 快照 current 落后于服务端时按前置读最新值补，不重复上报
+      const target = progress.target > 0 ? progress.target : 5;
+      const need = target - progress.current;
+      if (need <= 0) return { message: "进度已达标，无需补报" };
+      for (let index = 0; index < need; index += 1) {
         await reportChatActivity(ctx, freshId("wb2api-chat5"));
-        if (index < 4) await sleep(REPORT_GAP_MS);
+        if (index < need - 1) await sleep(REPORT_GAP_MS);
       }
-      return { message: "已上报 5 条对话活跃事件" };
+      return { message: "已补报 {count} 条对话事件", params: { count: need } };
     },
   },
   {
@@ -1056,15 +1078,23 @@ export const TASK_ACTIONS: TaskAction[] = [
     taskCode: "Sequential_Tasks_3",
     fallbackTitle: "小程序完成 5 次对话",
     mp: true,
-    run: async (ctx) => {
-      for (let index = 0; index < 5; index += 1) {
-        await reportMpEvents(ctx, [mpChatEvent(freshId("wb2api-mp"), false)]);
-        if (index < 4) await sleep(2_000);
-      }
-      return { message: "已上报小程序对话事件 ×5" };
-    },
+    run: (ctx, progress) => reportMpChatBackfill(ctx, progress),
   },
 ];
+
+/** mp 对话任务按差额补报（Sequential_Tasks_3/6 共用形状：mini 指纹 chat_request_send，
+ *  target 由 accept 后回读下发）。每条前等真人节奏（MP_CHAT_EVENT_GAP_MS+抖动，
+ *  **首条也等**）——连发会被上游反作弊判无效整体回滚，见常量注释 */
+async function reportMpChatBackfill(ctx: TaskContext, progress: TaskProgress): Promise<TaskActionRunResult> {
+  const target = progress.target > 0 ? progress.target : 1;
+  const need = target - progress.current;
+  if (need <= 0) return { message: "进度已达标，无需补报" };
+  for (let index = 0; index < need; index += 1) {
+    await sleep(MP_CHAT_EVENT_GAP_MS + Math.floor(Math.random() * MP_CHAT_EVENT_JITTER_MS));
+    await reportMpEvents(ctx, [mpChatEvent(freshId("wb2api-mp"), false)]);
+  }
+  return { message: "已按真人节奏补报 {count} 条对话事件", params: { count: need } };
+}
 
 /** 自动执行码集合（动作表全集） */
 export const AUTOMATABLE_CODES = new Set(TASK_ACTIONS.map((action) => action.taskCode));
@@ -1160,8 +1190,10 @@ async function acceptDefaultTask(ctx: TaskContext, taskCode: string): Promise<bo
  *  accept 基址按通道分流：token 走 copilot /v2（参考实证），Cookie 走 workbuddy.cn
  *  无 /v2（与 travel/depart 同形态；copilot 拒 Cookie POST 真机 401）。回读列表恒
  *  copilot GET（Cookie 通道已真机证出数）。HTTP 401/403 是凭据失效，直接抛凭据
- *  文案——与「每日锁定窗口」（业务成功但回读未登记）是两回事，不能混同误导 */
-async function acceptMpTask(ctx: TaskContext, taskCode: string): Promise<boolean> {
+ *  文案——与「每日锁定窗口」（业务成功但回读未登记）是两回事，不能混同误导。
+ *  成功返回**accept 后回读到的任务**：accept 前 mp 列表 target 下发 0、回读才带
+ *  真实 target/current——调用方据此按差额补报（A2），失败返回 null */
+async function acceptMpTask(ctx: TaskContext, taskCode: string): Promise<WorkbuddyTask | null> {
   const baseHeaders = ctx.channel === "cookie" ? taskHeadersCookie : taskHeadersToken;
   const acceptUrl =
     ctx.channel === "cookie"
@@ -1187,11 +1219,11 @@ async function acceptMpTask(ctx: TaskContext, taskCode: string): Promise<boolean
       const envelope = unwrapEnvelope(listResult);
       if (envelope.ok) {
         const found = parseGrowthTasks(envelope.data, true).find((task) => task.taskCode === taskCode);
-        if (found && found.acceptStatus !== "not_accepted" && found.acceptStatus !== "") return true;
+        if (found && found.acceptStatus !== "not_accepted" && found.acceptStatus !== "") return found;
       }
     }
   }
-  return false;
+  return null;
 }
 
 /** 回读定位单个任务（按 isMp 只拉单口径：回读不需要双口径合并，一轮执行的总
@@ -1233,6 +1265,9 @@ export async function runWorkbuddyTask(
   if (!action) {
     return { taskCode: task.taskCode, ok: false, message: "该任务不支持自动完成", credit: 0, energy: 0 };
   }
+  // 执行时进度：mp 任务取 accept 回读（accept 前 target 下发 0），其余取前置读或
+  // 面板快照；needProgress 的动作靠它按差额补报
+  let progress: TaskProgress = { target: task.target, current: task.current };
   if (action.mp) {
     const current = (await findTask(ctx, task.taskCode, task.isMp)) ?? task;
     if (current.acceptStatus === "not_accepted" || current.acceptStatus === "") {
@@ -1246,7 +1281,15 @@ export async function runWorkbuddyTask(
           energy: 0,
         };
       }
+      progress = { target: accepted.target, current: accepted.current };
+    } else {
+      progress = { target: current.target, current: current.current };
     }
+  } else if (action.needProgress) {
+    // 非 mp 的差额任务：快照 current 可能落后于服务端（计分只增不减），按快照
+    // 差额补报会超额上报——前置读一次拿最新值
+    const latest = (await findTask(ctx, task.taskCode, task.isMp)) ?? task;
+    progress = { target: latest.target, current: latest.current };
   } else if (
     !task.claimed &&
     !task.locked &&
@@ -1257,7 +1300,7 @@ export async function runWorkbuddyTask(
     // 接受成功稍候再上报，给上游状态流转留时间
     if (await acceptDefaultTask(ctx, task.taskCode)) await sleep(REPORT_GAP_MS);
   }
-  const { message, params } = await action.run(ctx);
+  const { message, params } = await action.run(ctx, progress);
   const after = await findTaskWaiting(ctx, task.taskCode, task.isMp);
   if (after?.claimable) {
     const outcome = await claimReward(ctx, after);
