@@ -16,10 +16,10 @@ export const FORM_ERROR_TEXT = {
   threshold_not_number: "阈值请填写数字",
   threshold_not_integer: "阈值请填写整数",
   threshold_out_of_range: "阈值需在 {min}–{max} 之间",
-  qoder_cookie_value:
-    "只粘贴 qoder_session_cookie 的值：不要带「Cookie:」前缀或键名，也不能包含分号、空格、换行或中文",
-  workbuddy_cookie_value:
-    "只粘贴该 Cookie 的值：不要带键名或「Cookie:」前缀，也不能包含分号、空格、换行或中文",
+  // 三个 Cookie 值供应商（qoder / workbuddy / mimo）共用这一条码与这句话：具体该复制哪个
+  // 键写在字段的 placeholder 与取凭据指引里，错误文案里逐家复述就会三份漂移，还会在探测
+  // 路径上把别家的键名说给用户（diagnostics 的 invalid-credential-format 用同一句）
+  cookie_value: "只粘贴该 Cookie 的值：不要带「Cookie:」前缀或键名，也不能包含分号、空格、换行或中文",
   workbuddy_ua_value:
     "只粘贴 User-Agent 的值：不要带「User-Agent:」前缀，也不能包含换行或中文",
 } as const;

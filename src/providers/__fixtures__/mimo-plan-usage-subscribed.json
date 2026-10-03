@@ -1,0 +1,13 @@
+{
+  "code": 0,
+  "message": "",
+  "data": {
+    "monthUsage": {
+      "percent": 32.5,
+      "items": [
+        { "name": "Token Plan", "used": 6500, "limit": 20000, "percent": 32.5 }
+      ]
+    },
+    "usage": null
+  }
+}

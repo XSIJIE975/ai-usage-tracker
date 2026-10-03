@@ -1,6 +1,6 @@
 # AI 用量助手 / AI Usage Tracker
 
-常驻系统托盘的跨平台桌面工具，用来看 AI 订阅额度与 API 用量：余量进度、重置倒计时、消耗趋势与逐条明细，以及额度见底时的系统通知。内置五家供应商，其中腾讯 WorkBuddy / CodeBuddy 与 Qoder 各分中国站与国际站。凭据与用量数据全部留在本机，不上传任何服务。
+常驻系统托盘的跨平台桌面工具，用来看 AI 订阅额度与 API 用量：余量进度、重置倒计时、消耗趋势与逐条明细，以及额度见底时的系统通知。内置六家供应商，其中腾讯 WorkBuddy / CodeBuddy 与 Qoder 各分中国站与国际站。凭据与用量数据全部留在本机，不上传任何服务。
 
 ## 功能
 
@@ -21,12 +21,12 @@
 
 ### 用量统计
 
-- 卡片底部「查看统计」打开右侧统计抽屉，五家供应商都有。可看区间内的消耗趋势（按用途或模型堆叠）、用途占比、模型明细与逐条记录；具体有哪几块取决于各家数据可得性。
+- 卡片底部「查看统计」打开右侧统计抽屉，除小米 MiMo 外五家供应商都有。可看区间内的消耗趋势（按用途或模型堆叠）、用途占比、模型明细与逐条记录；具体有哪几块取决于各家数据可得性。
 - 时间范围：今天 / 昨天 / 近 7 天 / 近 30 天 / 本月 / 上月 / 自定义。上限按各家实际能力给——Qoder 可选到一年，DeepSeek、智谱 GLM、WorkBuddy 为 30 天；OpenCode Go 按自然月看。
 
 ### 告警
 
-- **阈值告警**：按实例设置，单位随各家——DeepSeek 与智谱 GLM 是余额（元），OpenCode Go、WorkBuddy、Qoder 是已用百分比，智谱 GLM 两项都有。留空即不告警，没有默认值。
+- **阈值告警**：按实例设置，单位随各家——DeepSeek 与智谱 GLM 是余额（元），OpenCode Go、WorkBuddy、Qoder、小米 MiMo 是已用百分比，智谱 GLM 与小米 MiMo 两项都有（MiMo 的余额阈值按账户币种，不写死「元」）。留空即不告警，没有默认值。
 - **额度耗尽**：任一配额窗口用到 100% 即告警，与阈值设置无关。
 - **事件通知**：智谱重置卡到账、WorkBuddy 签到成功与喵喵旅行奖励到账。
 - 采用边沿触发：越过阈值的那一刻通知一次，回落到阈值之下后才会再次提醒；重复提醒间隔 1 / 3 / 6 / 12 / 24 小时或关闭，默认 6 小时。
@@ -47,6 +47,7 @@
 | 智谱 GLM | 单站 | Coding Plan API Key | 套餐档位与 5 小时 / 每周配额进度、账户余额、重置卡；模型与工具用量明细 |
 | 腾讯 WorkBuddy / CodeBuddy | 中国站 / 国际站 | session、session\_2、User-Agent 三项 | 积分余量与套餐明细、逐条消耗明细；中国站的签到、连续登录与喵喵旅行进度 |
 | Qoder | 中国站 / 国际站 | qoder\_session\_cookie 的值 | 订阅积分与资源包积分分别成行、各自的重置或到期时间、近一年消耗分布 |
+| 小米 MiMo | 单站 | serviceToken、userId 两项 | Token Plan 额度进度与重置时间、套餐档位、账户余额（按账户币种） |
 
 ### 凭据怎么拿
 
@@ -58,6 +59,7 @@
 4. **智谱 GLM**：bigmodel.cn 控制台 → Coding Plan 页 → 「生成 API Key」。如果你在 Claude Code 里配过智谱 GLM，`ANTHROPIC_AUTH_TOKEN` 就是同一枚密钥，直接复用。
 5. **WorkBuddy**：登录对应站点 → 开发者工具 → Network → 刷新页面 → 任选一条该站请求 → 请求标头，按每格提示分别取 `session`、`session_2` 两个 Cookie 的值和整行 User-Agent。**三项必须来自同一条请求**，User-Agent 须与登录时逐字节相同，每格只贴值不带键名。
 6. **Qoder**：登录对应站点 → 开发者工具 → Application → Cookies → 找到名为 `qoder_session_cookie` 的 Cookie，只复制它的 Value 粘贴，不带键名与 `Cookie:` 前缀。
+7. **小米 MiMo**：登录 platform.xiaomimimo.com 并打开控制台余额页 → 开发者工具 → Network → 刷新页面 → 任选一条 `/api/v1/` 请求 → 请求标头的 Cookie 里，按每格提示分别取 `api-platform_serviceToken` 与 `userId` 的值。**两项取自同一条请求**，每格只贴值不带键名。
 
 站点说明：Qoder 的 `qoder.com.cn` 与 `qoder.com`、WorkBuddy 的 `workbuddy.cn` 与 `workbuddy.ai` 是两套互不相通的登录域，同一账号在两个站点的凭据不通用，换站后要重贴该站的凭据。
 
@@ -78,7 +80,7 @@
 
 ## 已知边界
 
-- **私有接口**：Qoder 未对个人账号开放用量 API，数据取自账号控制台的网页接口；WorkBuddy 用网页登录态会话；OpenCode Go 官方 `/usage` 接口尚未上线，额度主要靠解析后台页面得到；DeepSeek 的用量统计、智谱的配额与余额同样走控制台私有接口。这类通道官方无兼容性承诺，平台改版可能失效。
+- **私有接口**：Qoder 与小米 MiMo 都未对个人账号开放用量 API，数据取自账号控制台的网页接口；WorkBuddy 用网页登录态会话；OpenCode Go 官方 `/usage` 接口尚未上线，额度主要靠解析后台页面得到；DeepSeek 的用量统计、智谱的配额与余额同样走控制台私有接口。这类通道官方无兼容性承诺，平台改版可能失效。
 - **会话类凭据会过期**：WorkBuddy 的会话有效期由服务端掌控，换浏览器、换机器、浏览器升版都得重填三项；Qoder、OpenCode Go、DeepSeek 的 Cookie 与令牌同理。失效时卡片与弹窗会点名要重填哪一格，重填即恢复。
 - WorkBuddy 的网关校验 session、session\_2、User-Agent 三项同源，缺一即拒；User-Agent 必须逐字节相同，程序不猜兜底值。
 - WorkBuddy 的每日签到、连续登录与喵喵旅行是中国站独有玩法，国际站没有对应功能。

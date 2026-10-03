@@ -31,7 +31,7 @@ import {
 } from "./ui/dropdown-menu";
 import { ErrorDetailsDialog } from "./ErrorDetailsDialog";
 import { GlmResetCardDialog } from "./GlmResetCardDialog";
-import { DeepSeekLogo, GlmLogo, OpenCodeLogo, QoderLogo, WorkbuddyLogo } from "./brand/provider-logo";
+import { DeepSeekLogo, GlmLogo, MimoLogo, OpenCodeLogo, QoderLogo, WorkbuddyLogo } from "./brand/provider-logo";
 import { SiteBadge } from "./SiteBadge";
 import { displayName } from "../lib/instance";
 import { providerName } from "../providers";
@@ -61,6 +61,7 @@ const BRAND_LOGOS: Record<
   glm: { Logo: GlmLogo, bg: "bg-transparent" },
   workbuddy: { Logo: WorkbuddyLogo, bg: "bg-transparent" },
   qoder: { Logo: QoderLogo, bg: "bg-transparent" },
+  mimo: { Logo: MimoLogo, bg: "bg-transparent" },
 };
 
 function ProviderAvatar({ providerId, name }: { providerId: string; name: string }) {

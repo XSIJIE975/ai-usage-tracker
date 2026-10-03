@@ -222,7 +222,7 @@
 
 ## 6.6 统计抽屉模块约定 `views/stats/`
 
-- 统计从顶层页签下沉到卡片触发的右侧抽屉：`StatsSheet` 按 `instance.providerId` 挂载五家模块
+- 统计从顶层页签下沉到卡片触发的右侧抽屉：`StatsSheet` 按 `instance.providerId` 挂载各家模块（小米 MiMo 无统计抽屉，不出「查看统计」）
   （`DeepSeekStats` / `OpenCodeStats` / `GlmStats` / `WorkbuddyStats` / `QoderStats`，各自一个子目录），
   标题 = 实例显示名 + 供应商名 +（多站种类的）站点徽标；
   每个供应商一个独立文件，新增供应商 = 在 `StatsSheet` 注册映射 + 新建模块文件，互不改对方代码。

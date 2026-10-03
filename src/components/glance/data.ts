@@ -19,7 +19,7 @@ export interface GlanceWindowItem {
 /** 速览面板单实例的展示数据（新布局，与快速面板的卡片无共享） */
 export interface GlanceInstance {
   id: string;
-  /** 供应商类型，用于取官方标识（ProviderKind 是封闭联合，五家都有现成 logo） */
+  /** 供应商类型，用于取官方标识（ProviderKind 是封闭联合，六家都有现成 logo） */
   providerId: ProviderKind;
   /** 实例站点，多站供应商的徽标要用（ADR-0031） */
   site: ProviderSite;

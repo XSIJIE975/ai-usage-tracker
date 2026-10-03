@@ -28,6 +28,7 @@ import {
   testDeepSeekApiKey,
   testDeepSeekUserToken,
   testGlmCodingPlanKey,
+  testMimoCredential,
   testOpenCodeApiKey,
   testOpenCodeConnection,
   testQoderCookie,
@@ -86,13 +87,22 @@ function diagnosisFor(
   }
 }
 
-/** 成对/成组才有意义的凭据按组探测：WorkBuddy 三值缺一即 401（ADR-0029），
- *  所以它不挂在哪一格下面，而是三格之后一次探测这三格 */
+/** 成对/成组才有意义的凭据按组探测：WorkBuddy 三值缺一即 401（ADR-0029）、MiMo 的
+ *  serviceToken 与 userId 同为必需（ADR-0038），所以它们不挂在哪一格下面，而是几格之后
+ *  一次探测这几格 */
 function groupDiagnosisFor(
   kind: ProviderKind,
   values: Record<string, string>,
   site: ProviderSite,
 ) {
+  if (kind === "mimo") {
+    const serviceToken = values.serviceToken ?? "";
+    const userId = values.userId ?? "";
+    return {
+      test: () => testMimoCredential(serviceToken, userId),
+      disabled: !serviceToken.trim() || !userId.trim(),
+    };
+  }
   if (kind !== "workbuddy") return null;
   const session = values.session ?? "";
   const session2 = values.session2 ?? "";

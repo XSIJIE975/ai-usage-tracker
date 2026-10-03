@@ -27,6 +27,8 @@ pub const PROVIDER_KINDS: &[(&str, &[(&str, &str)])] = &[
     ("workbuddy", &[]),
     // qoder 晚于实例化改造加入（ADR-0030），无旧扁平凭据键需要迁移
     ("qoder", &[]),
+    // 小米 MiMo 同样晚于实例化改造（ADR-0038），两格凭据没有旧扁平键
+    ("mimo", &[]),
 ];
 
 /// (kind, slot) 组合的人类可读凭据名，用于缺凭据时的报错文案
@@ -48,6 +50,8 @@ pub fn credential_label(kind: &str, slot: &str) -> Option<&'static str> {
         ("workbuddy", "expiresAt") => Some("WorkBuddy 扫码登录有效期"),
         ("workbuddy", "nickname") => Some("WorkBuddy 扫码账号昵称"),
         ("qoder", "cookie") => Some("Qoder 会话 Cookie 值"),
+        ("mimo", "serviceToken") => Some("小米 MiMo serviceToken"),
+        ("mimo", "userId") => Some("小米 MiMo userId"),
         _ => None,
     }
 }
@@ -63,6 +67,19 @@ pub struct WorkbuddySession {
 const MAX_COOKIE_VALUE_LENGTH: usize = 65_536;
 /// UA 上限：主流浏览器 UA 不足 200 字符，超出即视为误粘了整段请求
 const MAX_USER_AGENT_LENGTH: usize = 512;
+
+/// RFC 6265 cookie-value 字符集（可见 ASCII，排除空白、`"`、`,`、`;`）。
+/// 三个 Cookie 值供应商共用这一份判定（workbuddy 的 session/session_2、mimo 的两格、
+/// qoder 的会话 Cookie 值在 commands.rs 里也调它），加上前端各模块的同款正则——任一处
+/// 收紧都会误伤真机凭据，所以只留一份
+pub fn is_cookie_value_chars(value: &str) -> bool {
+    value.chars().all(|c| {
+        c == '!'
+            || ('\u{23}'..='\u{2b}').contains(&c)
+            || ('\u{2d}'..='\u{3a}').contains(&c)
+            || ('\u{3c}'..='\u{7e}').contains(&c)
+    })
+}
 
 /// 从三槽解析出鉴权头。三点都必需，缺哪一点名哪一槽——0.9.0 的「只发 session」与
 /// 0.9.x 的「UA 用内置常量兜底」都被实测否决过（前者 401、后者浏览器一升版就 401），
@@ -158,10 +175,8 @@ pub fn workbuddy_token(credentials: &Value) -> Result<WorkbuddyToken, String> {
     })
 }
 
-/// RFC 6265 cookie-value 字符集（可见 ASCII，排除空白、`"`、`,`、`;`）与长度上限。
-/// 凭据是用户填的外部输入，拼进请求头之前必须先过这关——白名单同时挡住 CRLF 头注入
-/// （字符集与前端 `providers/workbuddy.ts`、qoder 的同款校验逐字符一致，任一处收紧都会
-/// 误伤真机凭据）
+/// RFC 6265 cookie-value 字符集与长度上限。凭据是用户填的外部输入，拼进请求头之前必须先
+/// 过这关——白名单同时挡住 CRLF 头注入（字符集见 `is_cookie_value_chars`，三家共用）
 fn validate_cookie_value(value: &str) -> Result<String, String> {
     if value.is_empty() {
         return Err("WorkBuddy session Cookie 的值为空".to_string());
@@ -169,17 +184,62 @@ fn validate_cookie_value(value: &str) -> Result<String, String> {
     if value.len() > MAX_COOKIE_VALUE_LENGTH {
         return Err("WorkBuddy Cookie 值过长，请确认只粘贴了该 Cookie 的值".to_string());
     }
-    if !value.chars().all(|c| {
-        c == '!'
-            || ('\u{23}'..='\u{2b}').contains(&c)
-            || ('\u{2d}'..='\u{3a}').contains(&c)
-            || ('\u{3c}'..='\u{7e}').contains(&c)
-    }) {
+    if !is_cookie_value_chars(value) {
         return Err(
             "WorkBuddy Cookie 值包含非法字符（不能带空格、引号、分号或控制符）".to_string(),
         );
     }
     Ok(value.to_string())
+}
+
+/// MiMo 登录态所在的两个 Cookie 名。凭据槽存的只是这两个键的**值**，键名由这里拼进
+/// Cookie 头（与 workbuddy 的 session/session_2、qoder 的 qoder_cookie 同法：拼装口径
+/// 不进前端）。`api-platform_ph` / `api-platform_slh` 上游标注可选，实测缺了不影响取数，
+/// 故不登记成槽位（ADR-0038）
+pub const MIMO_SERVICE_TOKEN_COOKIE: &str = "api-platform_serviceToken";
+pub const MIMO_USER_ID_COOKIE: &str = "userId";
+
+/// 拼好的 MiMo 鉴权头
+#[derive(Debug)]
+pub struct MimoCookies {
+    pub cookie_header: String,
+}
+
+/// 两槽 → Cookie 头。缺一即点名那一槽：上游文档把 serviceToken 与 userId 都列为必需，
+/// 只发一个的代价是 401 后无从解释（WorkBuddy 单发 session 就是这条），所以宁缺不猜
+pub fn mimo_cookies(credentials: &Value) -> Result<MimoCookies, String> {
+    let slot = |name: &str| -> Result<String, String> {
+        let raw = instance_credential(credentials, name).ok_or_else(|| {
+            format!(
+                "缺少 {}",
+                credential_label("mimo", name).unwrap_or(name)
+            )
+        })?;
+        if raw.is_empty() {
+            return Err(format!("{} 的值为空", credential_label("mimo", name).unwrap_or(name)));
+        }
+        if raw.len() > MAX_COOKIE_VALUE_LENGTH {
+            return Err(format!(
+                "{} 过长（{} 字符），请只粘贴该 Cookie 的值",
+                credential_label("mimo", name).unwrap_or(name),
+                raw.len()
+            ));
+        }
+        if !is_cookie_value_chars(raw) {
+            return Err(format!(
+                "{} 包含非法字符（不能带空格、引号、分号或控制符）",
+                credential_label("mimo", name).unwrap_or(name)
+            ));
+        }
+        Ok(raw.to_string())
+    };
+    let service_token = slot("serviceToken")?;
+    let user_id = slot("userId")?;
+    Ok(MimoCookies {
+        cookie_header: format!(
+            "{MIMO_SERVICE_TOKEN_COOKIE}={service_token}; {MIMO_USER_ID_COOKIE}={user_id}"
+        ),
+    })
 }
 
 /// UA 校验：浏览器 UA 是纯可见 ASCII；挡 CRLF 注入与误粘的整段请求
@@ -244,6 +304,9 @@ const ALLOWED_HOSTS: &[(&str, &[&str])] = &[
         ],
     ),
     ("qoder", &["qoder.com.cn", "qoder.com"]),
+    // 小米 MiMo：mimo.mi.com 是同一账号空间的另一个前置域名（裸探 401 的 loginUrl 指向
+    // 同一个 account.xiaomi.com STS 会话），登录态种在 xiaomimimo.com 侧，故只登记这一条
+    ("mimo", &["platform.xiaomimimo.com"]),
 ];
 
 /// 该种类允许的目标域名；未登记的种类返回 None，调用方按拒绝处理
@@ -905,10 +968,41 @@ mod tests {
         let workbuddy_resource = "https://www.workbuddy.ai/billing/meter/get-user-resource";
         assert!(validate_request_url("glm", glm_quota).is_ok());
         assert!(validate_request_url("qoder", qoder_intl).is_ok());
+        assert!(validate_request_url("mimo", "https://platform.xiaomimimo.com/api/v1/balance").is_ok());
         // 跨种类：凭据离开所属供应商即算泄露
         assert!(validate_request_url("workbuddy", glm_quota).is_err());
         assert!(validate_request_url("qoder", workbuddy_resource).is_err());
         assert!(validate_request_url("glm", workbuddy_resource).is_err());
+        assert!(validate_request_url("mimo", qoder_intl).is_err());
+        // 同族的另一个前置域名未登记（登录态不在它身上），照样拒
+        assert!(validate_request_url("mimo", "https://mimo.mi.com/api/v1/balance").is_err());
+    }
+
+    #[test]
+    fn mimo_cookies_require_both_slots_and_reject_malformed() {
+        let full = json!({ "serviceToken": "svc-1", "userId": "42" });
+        assert_eq!(
+            mimo_cookies(&full).unwrap().cookie_header,
+            "api-platform_serviceToken=svc-1; userId=42"
+        );
+
+        // 缺一即点名那一槽（两格都是出数前提，只补一格不会变好）
+        assert!(mimo_cookies(&json!({ "serviceToken": "svc-1" }))
+            .unwrap_err()
+            .contains("userId"));
+        assert!(mimo_cookies(&json!({ "userId": "42" }))
+            .unwrap_err()
+            .contains("serviceToken"));
+        // 空串等同未填
+        assert!(mimo_cookies(&json!({ "serviceToken": "", "userId": "42" })).is_err());
+        // 把整段 Cookie 头贴进一格（带空格与分号）→ 非法字符，而不是拼出坏头
+        assert!(mimo_cookies(
+            &json!({ "serviceToken": "api-platform_serviceToken=svc-1; userId=42", "userId": "42" })
+        )
+        .unwrap_err()
+        .contains("非法字符"));
+        // CRLF 头注入
+        assert!(mimo_cookies(&json!({ "serviceToken": "svc\r\nX: 1", "userId": "42" })).is_err());
     }
 
     #[test]
@@ -932,7 +1026,7 @@ mod tests {
         assert!(validate_probe_url(opencode_dashboard).is_ok());
         assert!(validate_probe_url(deepseek_balance).is_ok());
         assert!(validate_probe_url(glm_balance).is_ok());
-        // 探测同样不允许离开登记过的 9 个 host
+        // 探测同样只允许离开 ALLOWED_HOSTS 登记过的主机名（数量随接入变化，这里不写死计数）
         assert!(validate_probe_url("https://github.com/XSIJIE975/ai-usage-tracker").is_err());
         assert!(validate_probe_url("http://qoder.com/api").is_err());
     }

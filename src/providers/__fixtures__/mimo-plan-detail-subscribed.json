@@ -1,0 +1,16 @@
+{
+  "code": 0,
+  "message": "",
+  "data": {
+    "planCode": "pro",
+    "planName": "MiMo Pro",
+    "currentPeriodEnd": "2026-11-01 23:59:59",
+    "expired": false,
+    "enableAutoRenew": true,
+    "autoRenewDiscount": "0.88",
+    "hasAutoRenewSubscribed": true,
+    "clawEnabled": false,
+    "clawPeriodEnd": null,
+    "clawPurchased": false
+  }
+}

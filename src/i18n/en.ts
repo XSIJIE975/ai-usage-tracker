@@ -148,8 +148,6 @@ export const en: Record<string, string> = {
     "How to get them: sign in at www.workbuddy.ai → open DevTools (F12) → Network → reload → pick any www.workbuddy.ai request → Request Headers, then take the three values as each field's hint below describes. All three must come from the same request (the gateway wants the two cookies as a pair and a byte-identical UA) — values only, no names.",
   "Qoder 会话 Cookie": "Qoder session cookie",
   "只粘贴 qoder_session_cookie 的值": "Paste only the qoder_session_cookie value",
-  "只粘贴 qoder_session_cookie 的值：不要带「Cookie:」前缀或键名，也不能包含分号、空格、换行或中文":
-    'Paste only the qoder_session_cookie value — no "Cookie:" prefix, no cookie name, and no semicolons, spaces, line breaks, or non-ASCII text',
   "获取方式：登录 qoder.com.cn → F12 → Application(应用) → Cookies → https://qoder.com.cn → 找到名为 qoder_session_cookie 的 Cookie，只复制它的 Value 粘贴（不要带键名或「Cookie:」前缀）。":
     "How to get it: sign in at qoder.com.cn → open DevTools (F12) → Application → Cookies → https://qoder.com.cn → find the cookie named qoder_session_cookie and copy its Value only (no cookie name, no leading \"Cookie:\").",
   "获取方式：登录 qoder.com → F12 → Application(应用) → Cookies → https://qoder.com → 找到名为 qoder_session_cookie 的 Cookie，只复制它的 Value 粘贴（不要带键名或「Cookie:」前缀）。":
@@ -576,8 +574,6 @@ export const en: Record<string, string> = {
   "Cookie 行里 session= 后面的那段值": "The session= value from the Cookie line",
   "Cookie 行里 session_2= 后面的那段值": "The session_2= value from the Cookie line",
   "User-Agent 行的整行值，须与登录时逐字节相同": "The full User-Agent line, byte-identical to the one used at sign-in",
-  "只粘贴该 Cookie 的值：不要带键名或「Cookie:」前缀，也不能包含分号、空格、换行或中文":
-    'Paste the cookie value only — no cookie name, no "Cookie:" prefix, and no semicolons, spaces, line breaks, or non-ASCII text',
   "只粘贴 User-Agent 的值：不要带「User-Agent:」前缀，也不能包含换行或中文":
     'Paste the User-Agent value only — no "User-Agent:" prefix, and no line breaks or non-ASCII text',
   "积分已用告警阈值（%）": "Credits usage alert threshold (%)",

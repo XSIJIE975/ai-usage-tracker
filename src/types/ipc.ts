@@ -1,6 +1,6 @@
 import type { ThemeMode } from "../lib/theme";
 
-export type ProviderKind = "deepseek" | "opencode-go" | "glm" | "workbuddy" | "qoder";
+export type ProviderKind = "deepseek" | "opencode-go" | "glm" | "workbuddy" | "qoder" | "mimo";
 
 /** 供应商站点（ADR-0031）：同一供应商的两套登录域，Cookie/凭据不互通。
  *  哪些种类是多站，单一判据见 lib/instance.ts 的 providerSites */
@@ -15,7 +15,7 @@ export interface ProviderInstance {
   autoRefresh: boolean;
   /** DeepSeek=元，其余=已用百分比；null=不告警 */
   threshold: number | null;
-  /** 余额告警阈值（元，低于触发）；仅 glm 使用，null=不告警 */
+  /** 余额告警阈值（与账户余额同币种，低于触发）；glm 与 mimo 使用，null=不告警 */
   balanceThreshold: number | null;
   /** 站点（仅多站种类有意义，单站种类一律忽略并按 china 处理） */
   site: ProviderSite;
@@ -49,8 +49,16 @@ export interface ProviderRequestOptions {
   bodyText?: string;
   /** "session_cookie"：从 vault 槽位读 session 的 Value，校验后拼作 Cookie: session=<值>（workbuddy）
    *  "workbuddy_token"：从 vault 槽位读扫码所得 accessToken/uid，注入 Bearer + billing UA + X-User-Id（ADR-0034）
-   *  "qoder_cookie"：从 vault 槽位读 qoder_session_cookie 的 Value，校验后拼作 Cookie: qoder_session_cookie=<值>（qoder，ADR-0030） */
-  auth?: "bearer" | "cookie" | "none" | "session_cookie" | "workbuddy_token" | "qoder_cookie";
+   *  "qoder_cookie"：从 vault 槽位读 qoder_session_cookie 的 Value，校验后拼作 Cookie: qoder_session_cookie=<值>（qoder，ADR-0030）
+   *  "mimo_cookie"：从 vault 两个槽位读 api-platform_serviceToken 与 userId 的值，拼作两条 Cookie（mimo，ADR-0038） */
+  auth?:
+    | "bearer"
+    | "cookie"
+    | "none"
+    | "session_cookie"
+    | "workbuddy_token"
+    | "qoder_cookie"
+    | "mimo_cookie";
   /** bearer/session_cookie/qoder_cookie 时的凭据槽；bearer 缺省用该种类的主鉴权键 */
   credentialSlot?: string;
 }

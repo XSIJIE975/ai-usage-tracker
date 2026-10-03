@@ -1,4 +1,4 @@
-import { extractBalanceValue, extractMetric, primaryProgressLine } from "./metric";
+import { extractBalanceValue, extractMetric, firstBalanceLine, primaryProgressLine } from "./metric";
 import { applyParams } from "../i18n/apply-params";
 import type { MetricLine, ProviderInstance, ProviderSnapshot } from "../types/ipc";
 
@@ -118,6 +118,37 @@ export function evaluateRules(
         title: title.title,
         body: "当前余额 {balance} 元，已低于 {threshold} 元，请及时充值。",
         params: { ...title.params, balance: balance.toFixed(2), threshold: balanceThreshold },
+      });
+    }
+  } else if (instance.providerId === "mimo") {
+    // MiMo 两个量纲各一条规则：额度是百分比配额窗（与 workbuddy/qoder 同机制），余额是
+    // 现金账户（与 glm 同机制）。刻意不复用 glm 那条 arm——它的正文写死「{balance} 元」、
+    // 阈值标签是人民币，而 MiMo 的币种由接口下发（真机 CNY、社区样本 USD），套过去就是
+    // 给非人民币账户写假话（ADR-0038）。金额原文取余额行自己格式化好的那个值
+    const primary = primaryProgressLine(snapshot.lines);
+    const percent = primary?.percentUsed;
+    if (usable(threshold) && typeof percent === "number" && percent >= threshold!) {
+      const title = alertTitle(instance, snapshot, "额度告警");
+      fires.push({
+        ruleKey: `${instance.id}:quota`,
+        instanceId: instance.id,
+        title: title.title,
+        body: "Token Plan 额度已用 {percent}%，达到 {threshold}%，注意分配剩余用量。",
+        params: { ...title.params, percent: percent.toFixed(1), threshold: threshold! },
+      });
+    }
+    const mimoBalanceThreshold = instance.balanceThreshold;
+    const mimoBalance = extractBalanceValue(snapshot);
+    if (usable(mimoBalanceThreshold) && usable(mimoBalance) && mimoBalance < mimoBalanceThreshold) {
+      const title = alertTitle(instance, snapshot, "余额告警");
+      const amount =
+        firstBalanceLine(snapshot.lines)?.value ?? `${mimoBalance!.toFixed(2)}`;
+      fires.push({
+        ruleKey: `${instance.id}:balance`,
+        instanceId: instance.id,
+        title: title.title,
+        body: "账户余额 {balance}，低于阈值 {threshold}，请及时充值。",
+        params: { ...title.params, balance: amount, threshold: mimoBalanceThreshold },
       });
     }
   }

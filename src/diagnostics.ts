@@ -1,6 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import { buildUsageQuery } from "./providers/deepseek-stats";
 import { isValidSessionCookieValue, qoderUsageHeaders, qoderUsageUrl } from "./providers/qoder";
+import {
+  isValidMimoCredentialValue,
+  MIMO_BALANCE_URL,
+  SERVICE_TOKEN_COOKIE_NAME,
+  USER_ID_COOKIE_NAME,
+  mimoRequestHeaders,
+} from "./providers/mimo";
 import { workbuddyApi, workbuddySiteOf, isValidCookiePartValue, isValidUserAgentValue } from "./providers/workbuddy";
 import type { ProviderSite } from "./types/ipc";
 
@@ -11,6 +18,7 @@ export type DiagnosisCode =
   | "missing-user-token"
   | "missing-workspace-cookie"
   | "missing-credential"
+  | "missing-mimo-credential"
   /** 凭据原文没过保存侧同一份白名单（探测与保存同口径，ADR-0030 §2） */
   | "invalid-credential-format"
   | "network-error"
@@ -42,10 +50,13 @@ export function describeDiagnosis(result: DiagnosisResult, t: TFn): string {
       return t("请先填写 Workspace ID 和 Auth Cookie");
     case "missing-credential":
       return t("请先填写凭据值");
+    case "missing-mimo-credential":
+      return t("请先填写小米 MiMo 的 serviceToken 与 userId");
     case "invalid-credential-format":
-      // 与保存时拦下的是同一条文案：探测不该比保存宽松
+      // 与保存时拦下的是同一条文案：探测不该比保存宽松。措辞按 Cookie 值通说（三家共用
+      // 这个码），具体该复制哪个键写在字段的取凭据指引里，不在这里逐家复述
       return t(
-        "只粘贴 qoder_session_cookie 的值：不要带「Cookie:」前缀或键名，也不能包含分号、空格、换行或中文",
+        "只粘贴该 Cookie 的值：不要带「Cookie:」前缀或键名，也不能包含分号、空格、换行或中文",
       );
     case "network-error":
       return t("网络请求失败：{detail}").replace("{detail}", result.detail ?? "");
@@ -117,6 +128,37 @@ export function testOpenCodeApiKey(key: string): Promise<DiagnosisResult> {
   if (!key.trim())
     return Promise.resolve({ ok: false, status: 0, latencyMs: 0, code: "missing-api-key" });
   return diagnose("https://opencode.ai/zen/go/v1/usage", "bearer", key);
+}
+
+/** 小米 MiMo 登录凭据：余额端点探测（mimo_cookie 通道）。两个值交给 Rust 端的同一个拼装
+ *  入口，所以探测用的 Cookie 头与 UA 与保存后刷新发出的一字不差（测得过即存得过）；
+ *  探测走 GET 余额端点，与卡片刷新同法同端点 */
+export function testMimoCredential(
+  serviceToken: string,
+  userId: string,
+): Promise<DiagnosisResult> {
+  const pair = {
+    serviceToken: serviceToken.trim(),
+    userId: userId.trim(),
+  };
+  if (!pair.serviceToken || !pair.userId)
+    return Promise.resolve({ ok: false, status: 0, latencyMs: 0, code: "missing-mimo-credential" });
+  // 探测与保存过同一份白名单：否则非法输入会真发出去，撞成一句查不出原因的 network-error
+  if (
+    !isValidMimoCredentialValue(pair.serviceToken, SERVICE_TOKEN_COOKIE_NAME) ||
+    !isValidMimoCredentialValue(pair.userId, USER_ID_COOKIE_NAME)
+  )
+    return Promise.resolve({
+      ok: false,
+      status: 0,
+      latencyMs: 0,
+      code: "invalid-credential-format",
+    });
+  return invoke<DiagnosisResult>("diagnose_request", {
+    url: MIMO_BALANCE_URL,
+    mimoPair: pair,
+    headers: mimoRequestHeaders(),
+  });
 }
 
 /** 智谱 Coding Plan API Key：Coding Plan 配额接口探测 */

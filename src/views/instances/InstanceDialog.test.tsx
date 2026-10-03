@@ -192,7 +192,7 @@ describe("新建 WorkBuddy 实例的必填校验", () => {
 
     expect(
       await screen.findByText(
-        "只粘贴该 Cookie 的值：不要带键名或「Cookie:」前缀，也不能包含分号、空格、换行或中文",
+        "只粘贴该 Cookie 的值：不要带「Cookie:」前缀或键名，也不能包含分号、空格、换行或中文",
       ),
     ).toBeTruthy();
     expect(addInstance).not.toHaveBeenCalled();

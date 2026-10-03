@@ -17,6 +17,7 @@ const REQUIRED_SLOTS: Record<ProviderKind, string[]> = {
   glm: ["planKey"], // glm.ts:387
   workbuddy: ["session", "session2", "userAgent"], // workbuddy.ts:593
   qoder: ["cookie"], // qoder.ts:283
+  mimo: ["serviceToken", "userId"], // mimo.ts 的两格 needs_config 判据
 };
 
 /** 各槽位一个能通过格式校验的合法值 */
@@ -29,6 +30,8 @@ const VALID: Record<string, string> = {
   session: "sessionvalue1",
   session2: "sessionvalue2",
   userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+  serviceToken: "eyJhbGciOi.svc-value_1",
+  userId: "1029384756",
 };
 
 function valuesFor(
@@ -130,7 +133,7 @@ describe("空值语义：表单值就是事实源", () => {
     expect(credentialErrors("workbuddy", {}, false)).toEqual({});
     // 但读到了值就照常校验格式
     expect(credentialErrors("qoder", { cookie: "Cookie: abc" }, false).cookie).toContain(
-      "qoder_cookie_value",
+      "cookie_value",
     );
   });
 });
@@ -138,13 +141,13 @@ describe("空值语义：表单值就是事实源", () => {
 describe("格式校验：复用供应商模块的同口径谓词", () => {
   it("qoder 拒「Cookie:」前缀与带空格/分号的整段 Cookie", () => {
     for (const bad of ["Cookie: abc", "qoder_session_cookie=abc", "abc def", "a;b"]) {
-      expect(credentialErrors("qoder", { cookie: bad }).cookie, bad).toContain("qoder_cookie_value");
+      expect(credentialErrors("qoder", { cookie: bad }).cookie, bad).toContain("cookie_value");
     }
   });
 
   it("workbuddy 两个 Cookie 格拒分号与空格，UA 格拒换行", () => {
     const errors = credentialErrors("workbuddy", { session: "a b", userAgent: "a\nb" });
-    expect(errors.session).toContain("workbuddy_cookie_value");
+    expect(errors.session).toContain("cookie_value");
     expect(errors.userAgent).toContain("workbuddy_ua_value");
   });
 });

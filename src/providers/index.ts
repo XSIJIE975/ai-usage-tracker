@@ -5,6 +5,7 @@ import { opencodeGoProvider } from "./opencode-go";
 import { glmProvider } from "./glm";
 import { workbuddyProvider } from "./workbuddy";
 import { qoderProvider } from "./qoder";
+import { mimoProvider } from "./mimo";
 
 export const providerModules: ProviderModule[] = [
   opencodeGoProvider,
@@ -12,6 +13,7 @@ export const providerModules: ProviderModule[] = [
   glmProvider,
   workbuddyProvider,
   qoderProvider,
+  mimoProvider,
 ];
 
 export function getProviderModule(id: string) {
@@ -28,4 +30,5 @@ export { deepseekProvider } from "./deepseek";
 export { glmProvider } from "./glm";
 export { workbuddyProvider } from "./workbuddy";
 export { qoderProvider } from "./qoder";
+export { mimoProvider } from "./mimo";
 export type { ProviderModule } from "./types";

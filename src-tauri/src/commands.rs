@@ -240,6 +240,17 @@ pub const QODER_DEFAULT_UA: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/
 /// 拼进 Cookie 头（与 WorkBuddy 的 session / session_2 同法：拼装口径不进前端）
 const QODER_SESSION_COOKIE_NAME: &str = "qoder_session_cookie";
 
+/// 小米 MiMo 会话通道的缺省浏览器 UA（ADR-0038）：与 Qoder 同形——网关不绑定登录时 UA
+/// （CodexBar 硬编码 Chrome UA 实证），所以 UA 不占凭据格。平台段随本机编译目标走：
+/// UA 声称 Macintosh 而 TLS 指纹是本机 Windows 是风控最容易识别的不自洽。版本串与
+/// CodexBar 实证可用的那个对齐（Chrome/143），风控升级时跟随更新
+#[cfg(target_os = "windows")]
+pub const MIMO_DEFAULT_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
+#[cfg(target_os = "macos")]
+pub const MIMO_DEFAULT_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const MIMO_DEFAULT_UA: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
+
 /// 凭据相关头只允许由鉴权分支注入：调用方（渲染进程）传来的同名头一律剔除。
 /// 排序挡不住这件事——reqwest 的 `RequestBuilder::header` 内部是 `HeaderMap::append`
 /// （同名会并存两条，先到的那条被网关读到），所以「先铺静态头再注入凭据头」并不等于
@@ -263,12 +274,7 @@ fn validate_qoder_session_value(value: &str) -> Result<(), ()> {
     if value.is_empty() {
         return Err(());
     }
-    if !value.chars().all(|c| {
-        c == '!'
-            || ('\u{23}'..='\u{2b}').contains(&c)
-            || ('\u{2d}'..='\u{3a}').contains(&c)
-            || ('\u{3c}'..='\u{7e}').contains(&c)
-    }) {
+    if !instances::is_cookie_value_chars(value) {
         return Err(());
     }
     Ok(())
@@ -618,10 +624,19 @@ pub struct WorkbuddySessionInput {
     user_agent: String,
 }
 
+/// 探测用的小米 MiMo 两值：表单里刚填、尚未保存的 serviceToken 与 userId（camelCase 与前端一致）
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MimoCookieInput {
+    service_token: String,
+    user_id: String,
+}
+
 /// 用"刚输入、尚未保存"的凭据值发起一次真实探测请求，验证连通性。
 /// auth: "bearer"（携带 credential 作为 Bearer token）| "cookie"（auth=<normalized credential>）
 /// session_triple：WorkBuddy 的 session / session_2 / 登录 UA 三个值——走与 provider_request
 /// 的 session_cookie 通道同一个拼装与校验入口；给出时忽略 auth/credential
+/// mimo_pair：MiMo 的 serviceToken / userId 两个值，同走 instances::mimo_cookies
 #[tauri::command]
 pub async fn diagnose_request(
     url: String,
@@ -629,6 +644,7 @@ pub async fn diagnose_request(
     credential: Option<String>,
     expect_html: Option<bool>,
     session_triple: Option<WorkbuddySessionInput>,
+    mimo_pair: Option<MimoCookieInput>,
     // 随探测附加的静态协议头（如 Qoder 的 Origin/Referer/Bx-V、WorkBuddy 的 x-client-platform），
     // 让探测与刷新链路的请求形态尽量一致
     headers: Option<HashMap<String, String>>,
@@ -667,6 +683,15 @@ pub async fn diagnose_request(
         }))?;
         request = request.header("Cookie", session.cookie_header);
         request = request.header("User-Agent", session.user_agent);
+    } else if let Some(pair) = mimo_pair {
+        // 与刷新链路的 mimo_cookie 通道同一个拼装与字符集入口：两值合法且网关放行，
+        // 才说明保存后能用（测得过即存得过）
+        let cookies = instances::mimo_cookies(&serde_json::json!({
+            "serviceToken": pair.service_token,
+            "userId": pair.user_id,
+        }))?;
+        request = request.header("Cookie", cookies.cookie_header);
+        request = request.header("User-Agent", MIMO_DEFAULT_UA);
     } else {
         match auth.as_deref() {
             Some("bearer") => {
@@ -1134,6 +1159,17 @@ pub async fn provider_request(
                 .entry("User-Agent".to_string())
                 .or_insert_with(|| QODER_DEFAULT_UA.to_string());
         }
+        Some("mimo_cookie") if kind == "mimo" => {
+            // 两格（serviceToken / userId）存的都是用户填的值原文，拼头与字符集校验收敛在
+            // instances::mimo_cookies（与 workbuddy 的 session_cookie 同法）：上游把两个键
+            // 都列为必需，缺一即点名报错而不是兜底猜一个（ADR-0038）
+            let cookies = instances::mimo_cookies(&instance_credentials)?;
+            headers.insert("Cookie".to_string(), cookies.cookie_header);
+            headers
+                .entry("User-Agent".to_string())
+                .or_insert_with(|| MIMO_DEFAULT_UA.to_string());
+        }
+        Some("mimo_cookie") => return Err("不支持的 provider mimo_cookie auth".to_string()),
         Some("cookie") => return Err("不支持的 provider cookie auth".to_string()),
         _ => {}
     }

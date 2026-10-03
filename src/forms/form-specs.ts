@@ -3,6 +3,13 @@ import type { ProviderKind, ProviderSite } from "../types/ipc";
 import type { FormErrorCode } from "./error-codes";
 import { isValidSessionCookieValue } from "../providers/qoder";
 import { isValidCookiePartValue, isValidUserAgentValue } from "../providers/workbuddy";
+import {
+  isValidMimoCredentialValue,
+  SERVICE_TOKEN_COOKIE_NAME,
+  SERVICE_TOKEN_SLOT,
+  USER_ID_COOKIE_NAME,
+  USER_ID_SLOT,
+} from "../providers/mimo";
 
 /**
  * 供应商实例表单的字段规格表：渲染元数据 + 必填矩阵 + 格式校验，一张表管到底。
@@ -120,7 +127,7 @@ export const providerFormSpecs: Record<ProviderKind, ProviderFormSpec> = {
         // 必填=Cookie 通道的出数前提（ADR-0029 网关要求成对）；扫码登录（token 通道，
         // ADR-0034）生效时三格豁免必填——instance-schema 的 tokenConfigured 分支
         required: true,
-        validate: (value) => (isValidCookiePartValue(value) ? null : "workbuddy_cookie_value"),
+        validate: (value) => (isValidCookiePartValue(value) ? null : "cookie_value"),
       },
       {
         slot: "session2",
@@ -128,7 +135,7 @@ export const providerFormSpecs: Record<ProviderKind, ProviderFormSpec> = {
         placeholder: "只粘贴值，不带键名",
         help: "Cookie 行里 session_2= 后面的那段值",
         required: true,
-        validate: (value) => (isValidCookiePartValue(value) ? null : "workbuddy_cookie_value"),
+        validate: (value) => (isValidCookiePartValue(value) ? null : "cookie_value"),
       },
       {
         slot: "userAgent",
@@ -148,11 +155,42 @@ export const providerFormSpecs: Record<ProviderKind, ProviderFormSpec> = {
         label: "Qoder 会话 Cookie",
         placeholder: "只粘贴 qoder_session_cookie 的值",
         required: true, // qoder.ts:283 缺即 needs_config
-        validate: (value) => (isValidSessionCookieValue(value) ? null : "qoder_cookie_value"),
+        validate: (value) => (isValidSessionCookieValue(value) ? null : "cookie_value"),
         // help 按选中站点动态生成，见 siteProfiles
       },
     ],
     threshold: { label: "积分已用告警阈值（%）", hint: "积分已用达到该百分比时发送系统通知；留空不告警。", min: 1, max: 100 },
+  },
+  mimo: {
+    fields: [
+      {
+        slot: SERVICE_TOKEN_SLOT,
+        label: "MiMo serviceToken",
+        placeholder: "只粘贴值，不带键名",
+        help: `获取方式：登录 platform.xiaomimimo.com 的控制台并打开余额页 → F12 打开 Network → 刷新页面 → 点任一条 /api/v1/ 请求，在 Request Headers 的 Cookie 里找到 ${SERVICE_TOKEN_COOKIE_NAME}=，复制等号后面那段值。`,
+        required: true, // mimo.ts 的 needs_config 判据：两格缺一即不出数
+        validate: (value) =>
+          isValidMimoCredentialValue(value, SERVICE_TOKEN_COOKIE_NAME) ? null : "cookie_value",
+      },
+      {
+        slot: USER_ID_SLOT,
+        label: "MiMo userId",
+        placeholder: "只粘贴值，不带键名",
+        help: `同一条请求的 Cookie 里 ${USER_ID_COOKIE_NAME}= 后面那段值（MiMo 账号 id，网关要求与 serviceToken 同源）。`,
+        required: true,
+        validate: (value) =>
+          isValidMimoCredentialValue(value, USER_ID_COOKIE_NAME) ? null : "cookie_value",
+      },
+    ],
+    threshold: { label: "Token Plan 额度告警阈值（%）", hint: "Token Plan 额度已用达到该百分比时发送系统通知；留空不告警。", min: 1, max: 100 },
+    // 币种由接口下发（真机 CNY、社区样本 USD），所以标签与文案都不写「元」——
+    // 沿用 GLM 那条人民币硬编码会给非人民币账户写假话（ADR-0038）
+    balanceThreshold: {
+      label: "余额告警阈值",
+      hint: "账户余额低于该值时发送系统通知，按账户币种计量（接口下发，如 CNY、USD）；留空不告警。",
+      min: 0,
+      max: 1_000_000,
+    },
   },
 };
 
