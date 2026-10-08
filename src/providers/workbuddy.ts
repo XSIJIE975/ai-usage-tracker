@@ -375,12 +375,12 @@ async function runGrowthRituals(ctx: NonNullable<Awaited<ReturnType<typeof creat
   const { travel, travelLine } = await runTravelMachine(ctx);
   // 连登完整状态（辅助源：失败无行）；管家闭环消费同一份数据省一次 GET
   let streakFull = await fetchStreakFull(ctx);
-  let streakLine = parseStreakLine(streakFull ?? undefined);
+  let streakLine = parseStreakLine(streakFull ?? undefined, ctx.capabilities.butler);
   // 管家闭环（自动跟随刷新，ADR-0037）：当日已完整跑过/能力位门控返回 null
   const butler = await runGrowthButler(ctx, today, streakFull);
   if (butler?.streakFull) {
     streakFull = butler.streakFull;
-    streakLine = parseStreakLine(streakFull ?? undefined);
+    streakLine = parseStreakLine(streakFull ?? undefined, ctx.capabilities.butler);
   }
   // 国际站试用加油包（一次性，已领永久静默）
   const trial = await runTrialClaim(ctx);

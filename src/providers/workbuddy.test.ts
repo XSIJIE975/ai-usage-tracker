@@ -412,6 +412,15 @@ describe("parseStreakLine", () => {
     expect(parseStreakLine({ streak: { days: 0 } })).toBeNull();
     expect(parseStreakLine(undefined)).toBeNull();
   });
+
+  it("无成长中心的站点（国际站）不带距档尾巴：只说天数，不许诺不存在的档位", () => {
+    expect(parseStreakLine({ streak: { days: 8 } }, false)).toEqual({
+      type: "text",
+      label: "连登",
+      value: "{days} 天",
+      valueParams: { days: 8 },
+    });
+  });
 });
 
 describe("parseExpiry / cstDateString", () => {

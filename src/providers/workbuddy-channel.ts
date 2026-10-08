@@ -440,11 +440,16 @@ export function nextTierGap(days: number): { tier: number; gap: number } | null 
   return next === undefined ? null : { tier: next, gap: next - days };
 }
 
-/** 连登卡片行：天数 + 距下一档尾巴（本地计算，不依赖服务端 next_tier 字段） */
-export function parseStreakLine(data: WorkbuddyStreakFullData | undefined): MetricLine | null {
+/** 连登卡片行：天数 + 距下一档尾巴（档位门槛本地计算，不依赖服务端 next_tier 字段）。
+ *  withTierGap 传站点的 butler 能力位——国际站没有成长中心（2026-10-08 用户确认官网
+ *  无该页面），给它写「距 7 天档还差 6 天」就是许诺一个那里不存在的奖励 */
+export function parseStreakLine(
+  data: WorkbuddyStreakFullData | undefined,
+  withTierGap = true,
+): MetricLine | null {
   const days = data?.streak?.days;
   if (typeof days !== "number" || !Number.isFinite(days) || days <= 0) return null;
-  const next = nextTierGap(days);
+  const next = withTierGap ? nextTierGap(days) : null;
   if (next) {
     return {
       type: "text",

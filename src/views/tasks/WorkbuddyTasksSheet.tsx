@@ -629,9 +629,12 @@ function StreakSection({
   const recordLines = butlerRecord ? butlerRecordLines(butlerRecord) : [];
   // 档位胶囊只在服务端真给了 tiers 时画：本地 TIER_DEFS 那三档是国区运营的形状，
   // 拿它给国际站画三个「锁着」的胶囊，等于替官方宣称这里有这套奖励（ADR-0039 待证项）
-  const serverTiers = streakFull?.redemption_status?.tiers ?? [];
-  const tierChips = serverTiers.length > 0 ? TIER_DEFS : [];
-  const tierMeta = (tier: string) => serverTiers.find((item) => item.tier === tier);
+  // 档位相关的三样（距档那行、进度条、档位胶囊、补签卡/抽奖计数）都属成长中心，
+  // 国际站没有这套（2026-10-08 用户确认 www.workbuddy.ai 无成长中心页面）——
+  // 按 butler 能力位整块收，不靠服务端字段猜：tiers 的形状我们至今没在真机核对过
+  const tierChips = butlerEnabled ? TIER_DEFS : [];
+  const tierMeta = (tier: string) =>
+    streakFull?.redemption_status?.tiers?.find((item) => item.tier === tier);
   const status = (tier: string) => (streakFull ? tierStatus(streakFull, tier) : "locked");
   /** 今日活跃那行的文案（三态分开：已上报且天数在涨 / 已上报但天数为 0 / 没报成） */
   const activityLine = !activityEnabled
@@ -683,13 +686,13 @@ function StreakSection({
               <span className="text-lg font-semibold leading-none tnum">
                 {renderTemplate(t("连登 {days} 天"), { days }, t)}
               </span>
-              {next && (
+              {butlerEnabled && next && (
                 <span className="text-xs text-fg-muted tnum">
                   {renderTemplate(t("距 {tier} 天档还差 {gap} 天"), { tier: next.tier, gap: next.gap }, t)}
                 </span>
               )}
             </div>
-            {next && (
+            {butlerEnabled && next && (
               <Progress value={(days / next.tier) * 100} aria-label={t("距下一档进度")} />
             )}
             <div className="flex gap-1.5">
@@ -737,7 +740,7 @@ function StreakSection({
                 );
               })}
             </div>
-            {(cards != null || lotteryChances != null) && (
+            {butlerEnabled && (
               <p className="text-xs text-fg-muted tnum">
                 {renderTemplate(
                   t("补签卡 ×{cards} · 抽奖次数 {chances}"),
