@@ -875,84 +875,27 @@ pub fn save_seen_reset_cards(
     db.save_seen_reset_cards(&seen)
 }
 
-/// WorkBuddy 签到通知判重水合：None = 该实例从未通知过签到
+/// WorkBuddy 例程判据读取（ADR-0039）：None = 该实例这一格从未写过（动作没做过、
+/// 通知没发过）。kind 说这是什么判据，值按 kind 自解释（CST 日期 / 行程键 / '1' / JSON）
 #[tauri::command]
-pub fn get_workbuddy_checkin(
+pub fn get_workbuddy_state(
     state: State<'_, AppState>,
     instance_id: String,
-) -> Result<Option<db::StoredWorkbuddyCheckin>, String> {
+    kind: String,
+) -> Result<Option<String>, String> {
     let db = state.db.lock().expect("db lock poisoned");
-    db.get_workbuddy_checkin(&instance_id)
+    db.get_workbuddy_state(&instance_id, &kind)
 }
 
-/// WorkBuddy 签到通知判重回写：重启/F5 后据此恢复「每天只通知一次」
+/// WorkBuddy 例程判据回写（UPSERT 幂等）：动作与通知的「今天已经做过」都以此为准，
+/// 重启、webview 重载、主窗口隐藏后依然成立
 #[tauri::command]
-pub fn save_workbuddy_checkin(
+pub fn save_workbuddy_state(
     state: State<'_, AppState>,
-    checkin: db::StoredWorkbuddyCheckin,
+    record: db::StoredWorkbuddyState,
 ) -> Result<(), String> {
     let db = state.db.lock().expect("db lock poisoned");
-    db.save_workbuddy_checkin(&checkin)
-}
-
-/// WorkBuddy 旅行领奖通知判重水合：None = 该实例从未通知过领奖
-#[tauri::command]
-pub fn get_workbuddy_travel_claim(
-    state: State<'_, AppState>,
-    instance_id: String,
-) -> Result<Option<db::StoredWorkbuddyTravelClaim>, String> {
-    let db = state.db.lock().expect("db lock poisoned");
-    db.get_workbuddy_travel_claim(&instance_id)
-}
-
-/// WorkBuddy 旅行领奖通知判重回写：按行程键判重，重启/F5 后不重复通知同一趟到账
-#[tauri::command]
-pub fn save_workbuddy_travel_claim(
-    state: State<'_, AppState>,
-    claim: db::StoredWorkbuddyTravelClaim,
-) -> Result<(), String> {
-    let db = state.db.lock().expect("db lock poisoned");
-    db.save_workbuddy_travel_claim(&claim)
-}
-
-/// WorkBuddy 管家通知判重水合：None = 该实例从未通知过管家闭环事件
-#[tauri::command]
-pub fn get_workbuddy_growth_notice(
-    state: State<'_, AppState>,
-    instance_id: String,
-) -> Result<Option<db::StoredWorkbuddyGrowthNotice>, String> {
-    let db = state.db.lock().expect("db lock poisoned");
-    db.get_workbuddy_growth_notice(&instance_id)
-}
-
-/// WorkBuddy 管家通知判重回写：按日判重（一轮多事件汇总一条），重启/F5 后当日不重报
-#[tauri::command]
-pub fn save_workbuddy_growth_notice(
-    state: State<'_, AppState>,
-    notice: db::StoredWorkbuddyGrowthNotice,
-) -> Result<(), String> {
-    let db = state.db.lock().expect("db lock poisoned");
-    db.save_workbuddy_growth_notice(&notice)
-}
-
-/// WorkBuddy 试用加油包通知判重水合：None = 该实例从未通知过领取
-#[tauri::command]
-pub fn get_workbuddy_trial(
-    state: State<'_, AppState>,
-    instance_id: String,
-) -> Result<Option<db::StoredWorkbuddyTrial>, String> {
-    let db = state.db.lock().expect("db lock poisoned");
-    db.get_workbuddy_trial(&instance_id)
-}
-
-/// WorkBuddy 试用加油包通知判重回写：一次性事件实例级一行，重启/F5 后不重报
-#[tauri::command]
-pub fn save_workbuddy_trial(
-    state: State<'_, AppState>,
-    trial: db::StoredWorkbuddyTrial,
-) -> Result<(), String> {
-    let db = state.db.lock().expect("db lock poisoned");
-    db.save_workbuddy_trial(&trial)
+    db.save_workbuddy_state(&record)
 }
 
 #[tauri::command]

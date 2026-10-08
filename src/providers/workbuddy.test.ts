@@ -25,14 +25,40 @@ import type { WorkbuddyPackage, WorkbuddyResourceData } from "./workbuddy";
 
 const mockInvoke = vi.mocked(invoke);
 
+/** workbuddy_states 的测试替身（ADR-0039）：一张 Map 充当表，get/save 走它。
+ *  「当日已签就跳过调用」「同一行程只领一次」这类用例判的就是格子里的值，
+ *  替身必须真存得下——不能让它们靠「读不到」蒙过 */
+const states = new Map<string, string>();
+
+const stateKey = (instanceId: string, kind: string): string => `${instanceId}:${kind}`;
+
+/** 拦下两个判据命令并给出返回值；handled=false 表示这条 invoke 不是判据命令 */
+const handleStateCommand = (
+  cmd: string,
+  payload?: unknown,
+): { handled: true; value: string | null } | { handled: false } => {
+  if (cmd === "get_workbuddy_state") {
+    const { instanceId, kind } = payload as { instanceId: string; kind: string };
+    return { handled: true, value: states.get(stateKey(instanceId, kind)) ?? null };
+  }
+  if (cmd === "save_workbuddy_state") {
+    const { record } = payload as {
+      record: { instance_id: string; kind: string; value: string };
+    };
+    states.set(stateKey(record.instance_id, record.kind), record.value);
+    return { handled: true, value: null };
+  }
+  return { handled: false };
+};
+
 const httpResult = (body: unknown, status = 200): HttpResult => ({
   status,
   headers: {},
   bodyText: typeof body === "string" ? body : JSON.stringify(body),
 });
 
-/** 每个用例独立实例 id：provider 模块的「今日已签」内存标记按实例记录，
- *  同文件内复用 id 会让后续用例跳过签到调用，污染调用次数断言 */
+/** 每个用例独立实例 id：provider 的「今日已签」等判据按 (实例, 格子) 记在
+ *  workbuddy_states，同文件复用 id 会让后续用例跳过签到调用，污染调用次数断言 */
 let nextId = 0;
 const makeInstance = (): ProviderInstance => {
   nextId += 1;
@@ -137,6 +163,8 @@ const mockFetchSequence = (opts: {
 }) => {
   const travelStatusQueue = opts.travelStatus ?? [httpResult({ code: 0, msg: "OK", data: {} })];
   mockInvoke.mockImplementation(async (cmd: string, payload?: unknown) => {
+    const state = handleStateCommand(cmd, payload);
+    if (state.handled) return state.value;
     if (cmd === "vault_credential_status") return opts.credentialStatus ?? credentialStatus();
     if (cmd !== "provider_request") throw new Error(`意外的命令：${cmd}`);
     const url =
@@ -468,6 +496,7 @@ describe("parseTravelLine", () => {
 describe("workbuddyProvider.fetch", () => {
   beforeEach(() => {
     mockInvoke.mockReset();
+    states.clear();
   });
 
   it("无凭据时快照为 needs_config，不发任何请求", async () => {
@@ -537,7 +566,7 @@ describe("workbuddyProvider.fetch", () => {
     const first = await workbuddyProvider.fetch(instance);
     expect(first.checkin).toBeUndefined();
 
-    // 同一实例第二次刷新：内存标记生效，不再调用签到接口
+    // 同一实例第二次刷新：checkin_acted 格已记今日，不再调用签到接口
     mockInvoke.mockReset();
     mockFetchSequence({
       resource: httpResult(resourcePayload([totalPackage()])),
@@ -605,6 +634,7 @@ describe("workbuddyProvider.fetch", () => {
 describe("workbuddyProvider.fetch 喵喵旅行", () => {
   beforeEach(() => {
     mockInvoke.mockReset();
+    states.clear();
   });
 
   it("到站自动领奖并出发：快照携带 travel 字段与旅行行，claim 带 record_id", async () => {
@@ -634,7 +664,7 @@ describe("workbuddyProvider.fetch 喵喵旅行", () => {
     });
   });
 
-  it("同一行程跨刷新只领一次（内存行程键），但名额未用尽会继续出发", async () => {
+  it("同一行程跨刷新只领一次（travel_tried 记行程键），但名额未用尽会继续出发", async () => {
     const instance = makeInstance();
     const firstMocks = {
       checkin: httpResult({ code: 10001, msg: "已签到" }),
@@ -727,6 +757,7 @@ describe("站点端点与能力表（ADR-0031）", () => {
   // 本文件只有部分 describe 重置 invoke mock；这里要断言调用次数，自己重置
   beforeEach(() => {
     mockInvoke.mockReset();
+    states.clear();
   });
 
   it("中国站：端点与 referer 指向 www.workbuddy.cn，成长体系能力全开", () => {
@@ -783,6 +814,8 @@ describe("站点端点与能力表（ADR-0031）", () => {
 
   it("国际站刷新只打取数与 trial 接口：签到、连登、旅行一个都不发", async () => {
     mockInvoke.mockImplementation(async (command: string, payload?: unknown) => {
+      const state = handleStateCommand(command, payload);
+      if (state.handled) return state.value;
       if (command === "vault_credential_status")
             return { session: true, session2: true, userAgent: true };
       const url =
@@ -865,6 +898,7 @@ describe("三格输入的合法性判定", () => {
 describe("token 通道（扫码登录，ADR-0034）", () => {
   beforeEach(() => {
     mockInvoke.mockReset();
+    states.clear();
   });
 
   /** token 通道的调用按命令分派（次序由 runResource/签到链决定，sequence 难维护）。
@@ -881,6 +915,8 @@ describe("token 通道（扫码登录，ADR-0034）", () => {
   }) => {
     // 第二参加宽为 unknown 再收窄：按 { url?: string } 声明会对 InvokeArgs 逆变
     mockInvoke.mockImplementation(async (cmd: string, payload?: unknown) => {
+      const state = handleStateCommand(cmd, payload);
+      if (state.handled) return state.value;
       if (cmd === "vault_credential_status") {
         return credentialStatus({ accessToken: true, session: false });
       }

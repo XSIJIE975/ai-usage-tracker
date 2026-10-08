@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { HttpResult, ProviderInstance, ProviderSite } from "../types/ipc";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+import { wbStateKind, type WorkbuddyStateRecord } from "../lib/workbuddy-states";
 import { cstDateString } from "./workbuddy-channel";
 import {
   fetchStreakFull,
@@ -17,14 +18,44 @@ import { TrialDetector } from "../alerts/trial-detector";
 
 const mockInvoke = vi.mocked(invoke);
 
+/** workbuddy_states 的测试替身（ADR-0039）：一张 Map 充当表。
+ *  「当日已跑就短路」「trial 永久静默」这些用例判的就是格子里的值，替身必须真的
+ *  存得下、读得回，否则用例通过只证明了读不到格子时的兜底路径 */
+const states = new Map<string, string>();
+
+const stateKey = (instanceId: string, kind: string): string => `${instanceId}:${kind}`;
+
+/** 拦下两个判据命令并给出返回值；handled=false 表示这条 invoke 不是判据命令 */
+const handleStateCommand = (
+  cmd: string,
+  payload?: unknown,
+): { handled: true; value: string | null } | { handled: false } => {
+  if (cmd === "get_workbuddy_state") {
+    const { instanceId, kind } = payload as { instanceId: string; kind: string };
+    return { handled: true, value: states.get(stateKey(instanceId, kind)) ?? null };
+  }
+  if (cmd === "save_workbuddy_state") {
+    const { record } = payload as {
+      record: { instance_id: string; kind: string; value: string };
+    };
+    states.set(stateKey(record.instance_id, record.kind), record.value);
+    return { handled: true, value: null };
+  }
+  return { handled: false };
+};
+
+/** 只统计真实 HTTP 出站（provider_request）——判据读写也是 invoke，
+ *  「发了几次请求」的断言不能被格子操作污染 */
+const httpCalls = () => mockInvoke.mock.calls.filter((call) => call[0] === "provider_request");
+
 const httpResult = (body: unknown, status = 200): HttpResult => ({
   status,
   headers: {},
   bodyText: typeof body === "string" ? body : JSON.stringify(body),
 });
 
-/** 每个用例独立实例 id：growth 层的签到/管家/trial 幂等标记都按实例记录在模块级
- *  Map 里，同文件复用 id 会让后续用例被「当日已跑」短路 */
+/** 每个用例独立实例 id：growth 层的签到/管家/trial 判据都按 (实例, 格子) 记在
+ *  workbuddy_states，同文件复用 id 会让后续用例被「当日已跑」短路 */
 let nextId = 0;
 const makeInstance = (site: ProviderSite = "china"): ProviderInstance => {
   nextId += 1;
@@ -85,6 +116,8 @@ const mockButler = (opts: {
   const redeemQueue = [...(opts.redeem ?? [])];
   const drawQueue = [...(opts.lotteryDraw ?? [])];
   mockInvoke.mockImplementation(async (cmd: string, payload?: unknown) => {
+    const state = handleStateCommand(cmd, payload);
+    if (state.handled) return state.value;
     if (cmd !== "provider_request") throw new Error(`意外的命令：${cmd}`);
     const url =
       typeof payload === "object" && payload !== null
@@ -132,6 +165,9 @@ const today = cstDateString();
 
 beforeEach(() => {
   mockInvoke.mockReset();
+  // 判据表按用例清空：格子按 (实例, kind) 存，用例之间即使用了独立实例 id，
+  // 也不该被上一个用例写过的「当日已跑」之类的判据影响
+  states.clear();
 });
 
 describe("runGrowthButler（连登管家闭环，ADR-0037）", () => {
@@ -203,10 +239,11 @@ describe("runGrowthButler（连登管家闭环，ADR-0037）", () => {
     expect(first!.makeupUsed).toBe(0);
     expect(first!.redeemed).toEqual([]);
     expect(first!.draws).toEqual([]);
-    const callsAfterFirst = mockInvoke.mock.calls.length;
+    expect(states.get(stateKey(ctx.instance.id, "butler_acted"))).toBe(today);
+    const callsAfterFirst = httpCalls().length;
     const second = await runGrowthButler(ctx, today);
     expect(second).toBeNull();
-    expect(mockInvoke.mock.calls.length).toBe(callsAfterFirst);
+    expect(httpCalls().length).toBe(callsAfterFirst);
   });
 
   it("force（抽屉「领取全部奖励」）：当日标记已打也照跑，返回可显示的空结果", async () => {
@@ -337,8 +374,8 @@ describe("tierStatus / fetchStreakFull", () => {
   });
 });
 
-describe("loadLastButlerRecord（抽屉「最近一次领取」读后端留档）", () => {
-  it("有 detail_json → 解析成明细；无行 / 列为空 / JSON 坏 → null（辅助源静默）", async () => {
+describe("loadLastButlerRecord（抽屉「最近一次领取」读 butler_detail 格）", () => {
+  it("格里有明细 → 解析成明细；无格 / JSON 坏 / 读失败 → null（辅助源静默）", async () => {
     const detail = {
       date: "2026-09-27",
       makeupUsed: 1,
@@ -347,44 +384,76 @@ describe("loadLastButlerRecord（抽屉「最近一次领取」读后端留档�
       redeemed: [{ tier: "7d", credit: 100, energy: 5, cards: 1, chances: 1 }],
       draws: ["20 积分"],
     };
-    mockInvoke.mockResolvedValue({ instance_id: "x", notified_date: "2026-09-27", detail_json: JSON.stringify(detail) });
+    mockInvoke.mockImplementation(async (cmd: string, payload?: unknown) => {
+      const state = handleStateCommand(cmd, payload);
+      if (state.handled) return state.value;
+      throw new Error(`意外的命令：${cmd}`);
+    });
+    states.set(stateKey("x", "butler_detail"), JSON.stringify(detail));
     expect(await loadLastButlerRecord("x")).toEqual(detail);
 
-    mockInvoke.mockReset();
-    mockInvoke.mockResolvedValue(null);
+    // 从没写过这格（新实例、或升级当天旧留档不搬）：抽屉那段照旧不显示
+    states.clear();
     expect(await loadLastButlerRecord("x")).toBeNull();
 
-    mockInvoke.mockReset();
-    // 升级前的存量行：判重日期在、明细列为空
-    mockInvoke.mockResolvedValue({ instance_id: "x", notified_date: "2026-09-27", detail_json: null });
+    states.set(stateKey("x", "butler_detail"), "{坏");
     expect(await loadLastButlerRecord("x")).toBeNull();
 
-    mockInvoke.mockReset();
-    mockInvoke.mockResolvedValue({ instance_id: "x", notified_date: "2026-09-27", detail_json: "{坏" });
+    // 读库本身失败（凭据库锁定等）：留档是展示辅助源，不报错、不阻断抽屉其余部分
+    states.clear();
+    mockInvoke.mockImplementation(async () => {
+      throw new Error("db locked");
+    });
     expect(await loadLastButlerRecord("x")).toBeNull();
   });
 });
 
 describe("runTrialClaim（国际站试用加油包，ADR-0037）", () => {
-  it("领取成功返回到账并永久标记；重启语义由调用方刷新体现", async () => {
+  /** trial 用例的出站替身：判据读写落到 states 表，provider_request 单独计数 */
+  const mockTrial = (respond: () => HttpResult) => {
+    let requests = 0;
+    mockInvoke.mockImplementation(async (cmd: string, payload?: unknown) => {
+      const state = handleStateCommand(cmd, payload);
+      if (state.handled) return state.value;
+      if (cmd !== "provider_request") throw new Error(`意外的命令：${cmd}`);
+      requests += 1;
+      return respond();
+    });
+    return () => requests;
+  };
+
+  it("领取成功返回到账并永久写格；同实例不再发第二次请求（重启后读库同样短路）", async () => {
     const ctx = makeCtx("token", "international");
-    mockInvoke.mockResolvedValueOnce(httpResult({ code: 0, msg: "OK", data: { credit: 500 } }));
+    const requests = mockTrial(() => httpResult({ code: 0, msg: "OK", data: { credit: 500 } }));
     const first = await runTrialClaim(ctx);
     expect(first).toEqual({ credit: 500 });
-    expect(mockInvoke).toHaveBeenCalledTimes(1);
-    // 进程内标记：不再发第二次
+    expect(requests()).toBe(1);
+    expect(states.get(stateKey(ctx.instance.id, "trial_acted"))).toBe("1");
     expect(await runTrialClaim(ctx)).toBeUndefined();
-    expect(mockInvoke).toHaveBeenCalledTimes(1);
+    expect(requests()).toBe(1);
   });
 
-  it("已领取（幂等码 14051）与 4xx 都永久静默", async () => {
+  it("已领取（幂等码 14051）与 4xx 都永久写格静默", async () => {
     const ctx = makeCtx("token", "international");
-    mockInvoke.mockResolvedValueOnce(httpResult({ code: 14051, msg: "已领取过" }, 400));
+    const requests = mockTrial(() => httpResult({ code: 14051, msg: "已领取过" }, 400));
     expect(await runTrialClaim(ctx)).toBeUndefined();
-    mockInvoke.mockReset();
-    mockInvoke.mockResolvedValueOnce(httpResult("not found", 404));
-    expect(await runTrialClaim(makeCtx("token", "international"))).toBeUndefined();
-    expect(mockInvoke).toHaveBeenCalledTimes(1);
+    expect(requests()).toBe(1);
+    expect(states.get(stateKey(ctx.instance.id, "trial_acted"))).toBe("1");
+    // 端点 404（该站根本没这个福利）同样写格——反复试探没有意义
+    const other = makeCtx("token", "international");
+    const otherRequests = mockTrial(() => httpResult("not found", 404));
+    expect(await runTrialClaim(other)).toBeUndefined();
+    expect(otherRequests()).toBe(1);
+    expect(states.get(stateKey(other.instance.id, "trial_acted"))).toBe("1");
+  });
+
+  it("网络/5xx 失败不写格：下轮刷新还会再试一次", async () => {
+    const ctx = makeCtx("token", "international");
+    const requests = mockTrial(() => httpResult("gateway down", 503));
+    expect(await runTrialClaim(ctx)).toBeUndefined();
+    expect(states.get(stateKey(ctx.instance.id, "trial_acted"))).toBeUndefined();
+    expect(await runTrialClaim(ctx)).toBeUndefined();
+    expect(requests()).toBe(2);
   });
 
   it("国区实例无 trial 能力位：不发请求", async () => {
@@ -406,12 +475,12 @@ describe("通知检测器", () => {
     expect(buildButlerNoticeBody(0, 0, 0)).toBe("成长中心奖励已领取");
   });
 
-  it("GrowthNoticeDetector：同日重放跳过；prune 后重报（换实例场景）", () => {
+  it("GrowthNoticeDetector：同日重放跳过；通知判重与留档明细各写一格", () => {
     const arrivals: string[] = [];
-    const records: { instance_id: string; notified_date: string; detail_json?: string | null }[] = [];
+    const records: WorkbuddyStateRecord[] = [];
     const detector = new GrowthNoticeDetector({
       notify: (arrival) => arrivals.push(arrival.body),
-      onStateChange: (record) => records.push(record),
+      onStateChange: (written) => records.push(...written),
     });
     const instance = makeInstance();
     const notice = {
@@ -427,28 +496,37 @@ describe("通知检测器", () => {
     detector.observe(instance, snapshot);
     expect(arrivals).toHaveLength(1);
     expect(arrivals[0]).toBe("成长中心到账 +{credit} 积分 +{energy} 能量；已用补签卡补签昨日");
-    // 明细随判重日期一起落库：抽屉重开（甚至重启）后仍能回看这一轮领了什么
-    expect(records).toHaveLength(1);
-    expect(records[0].instance_id).toBe(instance.id);
-    expect(records[0].notified_date).toBe("2026-09-27");
-    expect(JSON.parse(String(records[0].detail_json))).toEqual(notice);
-    detector.hydrate([{ instance_id: instance.id, notified_date: "2026-09-27" }]);
+    // 两格一起回写：butler_notified（按日通知判重）+ butler_detail（抽屉「最近一次领取」
+    // 的唯一持久留档——快照上的 growthNotice 会被下轮刷新覆盖）
+    expect(records).toHaveLength(2);
+    expect(records[0]).toEqual({
+      instance_id: instance.id,
+      kind: wbStateKind.butlerNotified,
+      value: "2026-09-27",
+    });
+    expect(records[1].kind).toBe(wbStateKind.butlerDetail);
+    expect(JSON.parse(records[1].value)).toEqual(notice);
+    detector.hydrate([{ instance_id: instance.id, kind: wbStateKind.butlerNotified, value: "2026-09-27" }]);
     detector.observe(instance, snapshot);
     expect(arrivals).toHaveLength(1);
   });
 
   it("TrialDetector：实例级一次性判重，hydrate 播种后重放不再通知", () => {
     const arrivals: string[] = [];
+    const records: WorkbuddyStateRecord[] = [];
     const detector = new TrialDetector({
       notify: (arrival) => arrivals.push(arrival.body),
-      onStateChange: () => undefined,
+      onStateChange: (record) => records.push(record),
     });
     const instance = makeInstance("international");
     const snapshot = { status: "ok", trial: { credit: 500 } } as never;
     detector.observe(instance, snapshot);
     detector.observe(instance, snapshot);
     expect(arrivals).toEqual(["试用加油包已领取（+{credit} 积分）"]);
-    detector.hydrate([{ instance_id: instance.id, claimed: true }]);
+    expect(records).toEqual([
+      { instance_id: instance.id, kind: wbStateKind.trialNotified, value: "1" },
+    ]);
+    detector.hydrate([{ instance_id: instance.id, kind: wbStateKind.trialNotified, value: "1" }]);
     detector.observe(instance, snapshot);
     expect(arrivals).toHaveLength(1);
   });

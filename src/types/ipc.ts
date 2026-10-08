@@ -118,7 +118,7 @@ export interface ProviderSnapshot {
   availableResetIds?: { fiveHour: number[]; week: number[] };
   /** 本轮刷新实际执行且成功的签到（仅 WorkBuddy fetch 在本轮真的调了签到接口并拿到
    *  成功响应时填充）。落库属瞬时冗余、会随快照重放，通知判重权威在 Rust 端
-   *  workbuddy_checkins 行（按 date 每天、按实例各一次）；错误快照也携带——签到与
+   *  workbuddy_states 的 checkin_notified 格（按 date 每天、按实例各一次）；错误快照也携带——签到与
    *  取数是两个源，取数失败不吞掉已发生的签到事件 */
   checkin?: { /** 签到当日（CST，YYYY-MM-DD），检测器据此判重 */
     date: string;
@@ -126,7 +126,7 @@ export interface ProviderSnapshot {
     credited: number;
   };
   /** 本轮刷新真实领到的喵喵旅行奖励（仅 WorkBuddy fetch 本轮调 claim 拿到成功响应时填充）。
-   *  同 checkin 属瞬时冗余，通知判重权威在 Rust 端 workbuddy_travel_claims 行（按行程
+   *  同 checkin 属瞬时冗余，通知判重权威在 workbuddy_states 的 travel_notified 格（按行程
    *  depart_at 判重——一天可有多趟旅行）；错误快照也携带 */
   travel?: { /** 行程标识（depart_at，秒级 epoch 字符串化），检测器据此判重 */
     tripKey: string;
@@ -135,7 +135,7 @@ export interface ProviderSnapshot {
   };
   /** 本轮连登管家闭环发生的事件汇总（仅 WorkBuddy fetch 本轮真的跑了管家且发生事件时
    *  填充；ADR-0037）。落库属瞬时冗余、会随快照重放，通知判重权威在 Rust 端
-   *  workbuddy_growth_notices 行（按 date 每日一条汇总通知）；错误快照也携带——
+   *  workbuddy_states 的 butler_notified 格（按 date 每日一条汇总通知）；错误快照也携带——
    *  管家与取数是不同源，取数失败不吞掉已发生的管家事件 */
   growthNotice?: {
     /** 闭环当日（CST，YYYY-MM-DD），检测器据此判重 */
@@ -159,7 +159,7 @@ export interface ProviderSnapshot {
   };
   /** 本轮真实领取的国际站试用加油包（仅 WorkBuddy fetch 国际站实例本轮领取成功时
    *  填充；ADR-0037）。一次性事件：领取成功只可能发生一次，重启后重试只会拿到
-   *  幂等静默（14051），判重权威是 Rust 端 workbuddy_trials 行（实例级一行） */
+   *  幂等静默（14051），判重权威是 workbuddy_states 的 trial_notified 格（实例级一次性） */
   trial?: {
     /** 到账积分（端点未返回时为 0；加油包本体随余额套餐行出现） */
     credit: number;
@@ -180,37 +180,14 @@ export interface StoredSeenResetCards {
   seeded: boolean;
 }
 
-/** WorkBuddy 签到通知判重行（Rust 端 workbuddy_checkins 表，字段 snake_case 同口径）；
- *  notified_date 是最近一次发出「签到成功」通知的日期（CST YYYY-MM-DD） */
-export interface StoredWorkbuddyCheckin {
+/** WorkBuddy 例程判据的一格（Rust 端 workbuddy_states 表，字段 snake_case 同口径）：
+ *  kind 说这是什么判据（见 lib/workbuddy-states 的 wbStateKind），value 按 kind 自解释——
+ *  按日的存 CST 日期、按行程的存行程键、一次性的存 '1'、留档的存 JSON。
+ *  它取代了「一事一表」的四张判据表：动作判据此前只在内存里，重启即失效（ADR-0039） */
+export interface StoredWorkbuddyState {
   instance_id: string;
-  notified_date: string;
-}
-
-/** WorkBuddy 旅行领奖通知判重行（Rust 端 workbuddy_travel_claims 表）；claimed_key 是
- *  最近一次发出「旅行到账」通知的行程标识（depart_at）——按行程而非日期，一天多趟各判各的 */
-export interface StoredWorkbuddyTravelClaim {
-  instance_id: string;
-  claimed_key: string;
-}
-
-/** WorkBuddy 管家通知判重行（Rust 端 workbuddy_growth_notices 表）；notified_date 是
- *  最近一次发出「成长中心管家」汇总通知的日期（CST YYYY-MM-DD）——管家一轮可能产生
- *  补签/礼包/兑换/抽奖多个事件，通知按日汇总为一条。
- *  detail_json 是那一轮的到账明细（ButlerRecordDetail 的 JSON，档位/奖品/礼包逐条），
- *  供成长中心抽屉显示「最近一次领取」——快照上的 growthNotice 会被下轮刷新覆盖，
- *  判重行才是留档处 */
-export interface StoredWorkbuddyGrowthNotice {
-  instance_id: string;
-  notified_date: string;
-  detail_json?: string | null;
-}
-
-/** WorkBuddy 试用加油包通知判重行（Rust 端 workbuddy_trials 表）——一次性事件，
- *  实例级一行即够（重启后快照重放同一次领取不再重复通知） */
-export interface StoredWorkbuddyTrial {
-  instance_id: string;
-  claimed: boolean;
+  kind: string;
+  value: string;
 }
 
 export interface AppSettings {

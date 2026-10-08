@@ -1,4 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
+import {
+  readWorkbuddyState,
+  wbStateKind,
+  writeWorkbuddyState,
+} from "../lib/workbuddy-states";
 import type {
   HttpResult,
   InstanceCredentialStatus,
@@ -90,19 +95,17 @@ export interface WorkbuddyResourceData {
   Response?: { Data?: { Accounts?: WorkbuddyPackage[] } };
 }
 
-/** 每实例「今日已续期」内存标记：每日一刷挂每天第一次刷新链（签到同位置，ADR-0034）。
- *  失败不设标记——旧 token 原样保留，下轮再试。续期/扫码授权三端点不在前端拼 URL：
- *  由 Rust 侧 workbuddy_token_refresh / workbuddy_qr_* 直连授权域
- *  （国区 https://copilot.tencent.com，国际站 https://www.workbuddy.ai） */
-const tokenRenewedToday = new Map<string, string>();
-
+/** 「今日已续期」记在 workbuddy_states 的 token_renewed 格（值为 CST 日期）。每日一刷
+ *  挂每天第一次刷新链（签到同位置，ADR-0034）；失败不写格——旧 token 原样保留，下轮再试。
+ *  续期/扫码授权三端点不在前端拼 URL：由 Rust 侧 workbuddy_token_refresh / workbuddy_qr_*
+ *  直连授权域（国区 https://copilot.tencent.com，国际站 https://www.workbuddy.ai） */
 async function renewTokenOnce(instance: ProviderInstance, today: string): Promise<void> {
   // 实例级开关默认开；关掉即「token 用到失效为止」，只有 401 即时救仍会尝试
   if (instance.tokenAutoRenew === false) return;
-  if (tokenRenewedToday.get(instance.id) === today) return;
+  if ((await readWorkbuddyState(instance.id, wbStateKind.tokenRenewed)) === today) return;
   try {
     await invoke("workbuddy_token_refresh", { instanceId: instance.id });
-    tokenRenewedToday.set(instance.id, today);
+    void writeWorkbuddyState(instance.id, wbStateKind.tokenRenewed, today);
   } catch {
     // 静默：续期失败不阻断取数（accessToken 仍可能有效），下轮刷新再试
   }
