@@ -550,12 +550,12 @@ export function Dashboard() {
                             ? () => setStatsInstance(instance)
                             : undefined
                         }
-                        // 成长中心入口：有任务区或有连登面就给（国区两块都有，国际站
-                        // 只有连登与活跃上报，ADR-0039；抽屉内部再按能力位分块渲染）
+                        // 成长中心入口：只有国区（有任务区才有这扇抽屉）。国际站的连登
+                        // 天数照常在卡片上显示、活跃照明代报，但抽屉里除了天数和一行
+                        // 状态没有别的可看——那里没有成长中心（ADR-0039）
                         onOpenTasks={
                           instance.providerId === "workbuddy" &&
-                          (workbuddyApi(workbuddySiteOf(instance)).capabilities.tasks ||
-                            workbuddyApi(workbuddySiteOf(instance)).capabilities.streak)
+                          workbuddyApi(workbuddySiteOf(instance)).capabilities.tasks
                             ? () => setTaskInstance(instance)
                             : undefined
                         }

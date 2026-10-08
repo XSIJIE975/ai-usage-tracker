@@ -202,8 +202,6 @@ export function WorkbuddyTasksSheet({
   const reload = useCallback(
     async (opts?: { reset?: boolean; silent?: boolean }) => {
       if (!instance) return;
-      // 国际站没有任务区（tasks 能力位关着）：连登区块照常，任务列表一个请求都不发
-      if (!workbuddyApi(workbuddySiteOf(instance)).capabilities.tasks) return;
       const tt = tRef.current;
       if (!opts?.silent) setPhase("loading");
       try {
@@ -270,10 +268,8 @@ export function WorkbuddyTasksSheet({
   }, [run?.running, reload]);
 
   if (!instance) return null;
-  const siteCapabilities = workbuddyApi(workbuddySiteOf(instance)).capabilities;
-  // 成长中心两块各有各的能力位：任务区要 tasks，连登区要 streak（国际站只有后者，
-  // ADR-0039）。两块都没有才兜底不渲染（入口在 Dashboard 同口径，此处防误开）
-  if (!siteCapabilities.tasks && !siteCapabilities.streak) return null;
+  // 能力位兜底：国际站入口已隐藏（没有成长中心），此处防误开空抽屉（与 StatsSheet 同例）
+  if (!workbuddyApi(workbuddySiteOf(instance)).capabilities.tasks) return null;
 
   const kindName = t(providerName(instance.providerId));
   const title = displayName(instance, kindName);
@@ -363,13 +359,11 @@ export function WorkbuddyTasksSheet({
             tierBusy={tierBusy}
             tierError={tierError}
             activity={activity}
-            activityEnabled={growthCtx?.capabilities.activity === true}
-            butlerEnabled={growthCtx?.capabilities.butler === true}
             onRunButler={() => void runButler()}
             onRedeemTier={(tier) => void redeemTierOne(tier)}
           />
 
-          {!siteCapabilities.tasks ? null : phase === "loading" && tasks === null ? (
+          {phase === "loading" && tasks === null ? (
             <div className="flex items-center justify-center gap-2 py-16 text-sm text-fg-muted">
               <LoaderCircle className="h-4 w-4 animate-spin" /> {t("正在获取任务列表")}
             </div>
@@ -599,8 +593,6 @@ function StreakSection({
   tierBusy,
   tierError,
   activity,
-  activityEnabled,
-  butlerEnabled,
   onRunButler,
   onRedeemTier,
 }: {
@@ -613,10 +605,6 @@ function StreakSection({
   tierBusy: string | null;
   tierError?: string;
   activity: ActivityStatus | null;
-  activityEnabled: boolean;
-  /** 管家写面（兑换/抽奖/补签/礼包）的能力位：国际站关着，按钮与留档都不渲染——
-   *  点了没反应的死按钮比没有按钮更糟（ADR-0039） */
-  butlerEnabled: boolean;
   onRunButler: () => void;
   onRedeemTier: (tier: string) => void;
 }) {
@@ -627,19 +615,12 @@ function StreakSection({
   const next = typeof days === "number" && days > 0 ? nextTierGap(days) : null;
   const cards = streakFull?.makeup_cards?.balance;
   const recordLines = butlerRecord ? butlerRecordLines(butlerRecord) : [];
-  // 档位胶囊只在服务端真给了 tiers 时画：本地 TIER_DEFS 那三档是国区运营的形状，
-  // 拿它给国际站画三个「锁着」的胶囊，等于替官方宣称这里有这套奖励（ADR-0039 待证项）
-  // 档位相关的三样（距档那行、进度条、档位胶囊、补签卡/抽奖计数）都属成长中心，
-  // 国际站没有这套（2026-10-08 用户确认 www.workbuddy.ai 无成长中心页面）——
-  // 按 butler 能力位整块收，不靠服务端字段猜：tiers 的形状我们至今没在真机核对过
-  const tierChips = butlerEnabled ? TIER_DEFS : [];
   const tierMeta = (tier: string) =>
     streakFull?.redemption_status?.tiers?.find((item) => item.tier === tier);
   const status = (tier: string) => (streakFull ? tierStatus(streakFull, tier) : "locked");
   /** 今日活跃那行的文案（三态分开：已上报且天数在涨 / 已上报但天数为 0 / 没报成） */
-  const activityLine = !activityEnabled
-    ? null
-    : activity?.status === "reported"
+  const activityLine =
+    activity?.status === "reported"
       ? typeof days === "number" && days > 0
         ? t("今日已上报活跃")
         : days === 0
@@ -661,23 +642,21 @@ function StreakSection({
         <p className="text-[11px] font-medium uppercase tracking-wide text-fg-muted">
           {t("连登")}
         </p>
-        {butlerEnabled && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-6.5 px-2.5 text-[11px]"
-            disabled={butlerRunning}
-            onClick={onRunButler}
-          >
-            {butlerRunning ? (
-              <>
-                <LoaderCircle className="h-3 w-3 animate-spin" /> {t("正在领取")}
-              </>
-            ) : (
-              t("领取全部奖励")
-            )}
-          </Button>
-        )}
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-6.5 px-2.5 text-[11px]"
+          disabled={butlerRunning}
+          onClick={onRunButler}
+        >
+          {butlerRunning ? (
+            <>
+              <LoaderCircle className="h-3 w-3 animate-spin" /> {t("正在领取")}
+            </>
+          ) : (
+            t("领取全部奖励")
+          )}
+        </Button>
       </header>
       <div className="flex flex-col gap-2.5 px-4 pb-3.5 pt-2">
         {streakFull && typeof days === "number" && days > 0 ? (
@@ -686,17 +665,17 @@ function StreakSection({
               <span className="text-lg font-semibold leading-none tnum">
                 {renderTemplate(t("连登 {days} 天"), { days }, t)}
               </span>
-              {butlerEnabled && next && (
+              {next && (
                 <span className="text-xs text-fg-muted tnum">
                   {renderTemplate(t("距 {tier} 天档还差 {gap} 天"), { tier: next.tier, gap: next.gap }, t)}
                 </span>
               )}
             </div>
-            {butlerEnabled && next && (
+            {next && (
               <Progress value={(days / next.tier) * 100} aria-label={t("距下一档进度")} />
             )}
             <div className="flex gap-1.5">
-              {tierChips.map((tier) => {
+              {TIER_DEFS.map((tier) => {
                 const state = status(tier);
                 const meta = tierMeta(tier);
                 const busy = tierBusy === tier;
@@ -740,15 +719,13 @@ function StreakSection({
                 );
               })}
             </div>
-            {butlerEnabled && (
-              <p className="text-xs text-fg-muted tnum">
-                {renderTemplate(
-                  t("补签卡 ×{cards} · 抽奖次数 {chances}"),
-                  { cards: cards ?? 0, chances: lotteryChances ?? 0 },
-                  t,
-                )}
-              </p>
-            )}
+            <p className="text-xs text-fg-muted tnum">
+              {renderTemplate(
+                t("补签卡 ×{cards} · 抽奖次数 {chances}"),
+                { cards: cards ?? 0, chances: lotteryChances ?? 0 },
+                t,
+              )}
+            </p>
           </>
         ) : (
           <p className="text-xs text-fg-muted">
