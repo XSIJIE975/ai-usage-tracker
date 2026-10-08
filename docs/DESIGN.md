@@ -182,12 +182,6 @@
 - 输入框聚焦态已内置 brand 描边 + 焦点环。
 - 开关开启 = brand，关闭 = line-strong，无需自定义颜色。
 
-### 标签页 `ui/tabs`
-
-下划线式 Tabs，用于**页面级模块切换**（如统计页的供应商模块）。  
-与 Segmented 的分工：Tabs 切换整页内容模块；Segmented 切换小范围互斥选项。  
-两者都不用在主窗口顶层——主窗口不设顶层页签，页签承载的内容一律下沉为弹层（ADR-0040）。
-
 ### 下拉选择 `ui/select` 与可搜索选择器 `ui/command`
 
 少量固定选项的筛选器仍用原生 `<select>` 封装（键盘可达、系统级交互），如密钥/模型切换。  
@@ -360,4 +354,4 @@
 - [ ] 图例序列 >4 时用 `type: "scroll"`；`grid.bottom` 按行数动态计算
 - [ ] 大数据量表格设 `maxHeight`，分页用 `Pagination` 组件
 - [ ] 统计页接入 `useAutoRefresh`；刷新走局部 overlay，不全屏替换
-- [ ] 页面级模块切换用 `Tabs`，小范围选项用 `Segmented`，筛选用 `Select`
+- [ ] 小范围互斥选项用 `Segmented`，筛选用 `Select`；页面级内容不占顶层页签，一律留在总览或下沉为弹层（ADR-0040）
