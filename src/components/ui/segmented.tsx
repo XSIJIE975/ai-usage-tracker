@@ -8,7 +8,7 @@ export interface SegmentedOption<T extends string> {
 
 /**
  * 分段选择器规范（docs/DESIGN.md#分段选择器）：
- * 用于同层级 2-4 个视图的互斥切换（如 总览/设置、外观主题）。
+ * 用于同层级 2-4 个视图的互斥切换（如 主题模式、界面语言）。
  */
 export function Segmented<T extends string>({
   options,

@@ -7,7 +7,6 @@ export const en: Record<string, string> = {
   "AI 用量助手": "AI Usage Tracker",
   "最近更新": "Updated",
   "等待刷新": "Waiting for refresh",
-  "总览": "Overview",
   "统计": "Usage",
   "设置": "Settings",
   "刷新": "Refresh",

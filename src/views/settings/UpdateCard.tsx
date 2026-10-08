@@ -33,7 +33,8 @@ export function UpdateCard() {
   const percent = contentLength ? Math.min(100, (downloadedBytes / contentLength) * 100) : 0;
 
   return (
-    <Card>
+    // id 是设置抽屉的滚动锚点：顶栏「新版本」徽标开抽屉后按它定位（SettingsSheet.tsx）
+    <Card id="settings-update-card">
       <CardHeader className="flex-row items-start justify-between space-y-0">
         <div className="space-y-1.5">
             <CardTitle>{t("检查更新")}</CardTitle>
