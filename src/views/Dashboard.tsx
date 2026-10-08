@@ -550,10 +550,12 @@ export function Dashboard() {
                             ? () => setStatsInstance(instance)
                             : undefined
                         }
-                        // 成长任务入口：仅 workbuddy 国区（国际站无成长体系，ADR-0036）
+                        // 成长中心入口：有任务区或有连登面就给（国区两块都有，国际站
+                        // 只有连登与活跃上报，ADR-0039；抽屉内部再按能力位分块渲染）
                         onOpenTasks={
                           instance.providerId === "workbuddy" &&
-                          workbuddyApi(workbuddySiteOf(instance)).capabilities.tasks
+                          (workbuddyApi(workbuddySiteOf(instance)).capabilities.tasks ||
+                            workbuddyApi(workbuddySiteOf(instance)).capabilities.streak)
                             ? () => setTaskInstance(instance)
                             : undefined
                         }

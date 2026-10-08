@@ -202,6 +202,8 @@ export function WorkbuddyTasksSheet({
   const reload = useCallback(
     async (opts?: { reset?: boolean; silent?: boolean }) => {
       if (!instance) return;
+      // 国际站没有任务区（tasks 能力位关着）：连登区块照常，任务列表一个请求都不发
+      if (!workbuddyApi(workbuddySiteOf(instance)).capabilities.tasks) return;
       const tt = tRef.current;
       if (!opts?.silent) setPhase("loading");
       try {
@@ -268,8 +270,10 @@ export function WorkbuddyTasksSheet({
   }, [run?.running, reload]);
 
   if (!instance) return null;
-  // 能力位兜底：国际站入口已隐藏，此处防误开空抽屉（与 StatsSheet 同例）
-  if (!workbuddyApi(workbuddySiteOf(instance)).capabilities.tasks) return null;
+  const siteCapabilities = workbuddyApi(workbuddySiteOf(instance)).capabilities;
+  // 成长中心两块各有各的能力位：任务区要 tasks，连登区要 streak（国际站只有后者，
+  // ADR-0039）。两块都没有才兜底不渲染（入口在 Dashboard 同口径，此处防误开）
+  if (!siteCapabilities.tasks && !siteCapabilities.streak) return null;
 
   const kindName = t(providerName(instance.providerId));
   const title = displayName(instance, kindName);
@@ -364,7 +368,7 @@ export function WorkbuddyTasksSheet({
             onRedeemTier={(tier) => void redeemTierOne(tier)}
           />
 
-          {phase === "loading" && tasks === null ? (
+          {!siteCapabilities.tasks ? null : phase === "loading" && tasks === null ? (
             <div className="flex items-center justify-center gap-2 py-16 text-sm text-fg-muted">
               <LoaderCircle className="h-4 w-4 animate-spin" /> {t("正在获取任务列表")}
             </div>
@@ -621,6 +625,24 @@ function StreakSection({
   const tierMeta = (tier: string) =>
     streakFull?.redemption_status?.tiers?.find((item) => item.tier === tier);
   const status = (tier: string) => (streakFull ? tierStatus(streakFull, tier) : "locked");
+  /** 今日活跃那行的文案（三态分开：已上报且天数在涨 / 已上报但天数为 0 / 没报成） */
+  const activityLine = !activityEnabled
+    ? null
+    : activity?.status === "reported"
+      ? typeof days === "number" && days > 0
+        ? t("今日已上报活跃")
+        : days === 0
+          ? t("今日已上报活跃，但连登天数仍为 0")
+          : t("今日已上报活跃，但连登状态读不到")
+      : activity?.status === "skipped"
+        ? t("今日未上报：拿不到账号 uid，改用扫码登录即可")
+        : activity?.status === "failed"
+          ? renderTemplate(
+              t("今日未上报：{detail}"),
+              { detail: activity.detail ?? t("未知原因") },
+              t,
+            )
+          : t("今日未上报");
 
   return (
     <section className="rounded-lg border border-line bg-surface shadow-card">
@@ -723,25 +745,9 @@ function StreakSection({
           </p>
         )}
         {/* 今日活跃上报状态（ADR-0039）：连登天数由这条上报点亮，签到不记天数。
-            天数是 0 时也照说——「没上报」和「上报了没计分」必须分得开，
-            否则卡片少一行什么也解释不了 */}
-        {activityEnabled && (
-          <p className="text-[11px] text-fg-muted">
-            {activity?.status === "reported"
-              ? typeof days === "number" && days > 0
-                ? t("今日已上报活跃")
-                : t("今日已上报活跃，但连登天数仍为 0")
-              : activity?.status === "skipped"
-                ? t("今日未上报：拿不到账号 uid，改用扫码登录即可")
-                : activity?.status === "failed"
-                  ? renderTemplate(
-                      t("今日未上报：{detail}"),
-                      { detail: activity.detail ?? t("未知原因") },
-                      t,
-                    )
-                  : t("今日未上报")}
-          </p>
-        )}
+            天数是 0 或读不到时也照说——「没上报」「上报了没计分」「上报了读不回」
+            是三件事，卡片少一行什么也解释不了 */}
+        {activityLine && <p className="text-[11px] text-fg-muted">{activityLine}</p>}
         {tierError && (
           <p role="alert" className="text-[11px] text-danger">
             {tierError}

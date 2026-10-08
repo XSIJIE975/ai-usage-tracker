@@ -193,6 +193,7 @@ export const en: Record<string, string> = {
   "该档位尚未解锁，连登天数以官网为准": "This tier is not unlocked yet — the streak days on the official site is authoritative",
   "今日已上报活跃": "Activity reported today",
   "今日已上报活跃，但连登天数仍为 0": "Activity reported today, but the streak is still 0 days",
+  "今日已上报活跃，但连登状态读不到": "Activity reported today, but the streak status can't be read back",
   "今日未上报：拿不到账号 uid，改用扫码登录即可": "Not reported today: no account uid — sign in with the QR code instead",
   "今日未上报：{detail}": "Not reported today: {detail}",
   "今日未上报": "Not reported today",

@@ -245,21 +245,15 @@ function unwrapGrowthEnvelope(result: HttpResult): { ok: boolean; data?: unknown
  *  report.go 实测），所以它是这条上报的硬门槛而非可选项 */
 export const WB_UID_PLACEHOLDER = "{{WB_UID}}";
 
-/** chat 活跃上报头族（按通道）。Cookie 形态 = ADR-0036 spike 第二关的实证组合；
- *  任务层的桌面/web 事件在 Cookie 通道也复用这一族（同一域同一会话形态） */
+/** chat 活跃上报的 Cookie 通道头族（= ADR-0036 spike 第二关的实证组合）。
+ *  每日上报与国际站的分流在 chatReportTarget 里做；任务层的桌面/web 事件在
+ *  Cookie 通道复用这一族（同一域同一会话形态） */
 export const chatReportHeadersCookie = {
   Accept: "application/json",
   "Content-Type": "application/json",
   Origin: WEB_ORIGIN,
   Referer: `${WEB_ORIGIN}/profile/plans-usage`,
   "x-client-platform": "web",
-};
-/** token 通道形态（billing 头族） */
-const chatReportHeadersToken = {
-  Accept: "application/json",
-  "Content-Type": "application/json",
-  "X-CodeBuddy-Request": "1",
-  "X-Domain": "www.codebuddy.cn",
 };
 
 /** 事件上报的凭据（Cookie 走会话 Cookie，token 走 Rust 的 report 分支——那一支同时
@@ -318,22 +312,55 @@ export function chatActivityEvent(
   };
 }
 
-/** chat 活跃上报的出站本体：两通道都打 codebuddy.cn/v2/report（ADR-0036 两轮真机
- *  修正的口径——copilot 域对 POST 一律要 Bearer，而 Cookie 会话只在 codebuddy 侧
- *  实证过计分；计分判据在事件体的指纹字段，不在域）。
+/** 上报的域与头族按 (站点, 通道) 装配：
+ *  - 国区两通道都打 codebuddy.cn/v2/report（ADR-0036 两轮真机修正：copilot 域对 POST
+ *    一律要 Bearer，Cookie 会话只在 codebuddy 侧实证过计分）
+ *  - 国际站打本站 www.workbuddy.ai/v2/report（参考项目 billingBase 的 realm 分流同口径；
+ *    2026-10-08 无凭据探测该路由存在）
+ *  X-Domain 与 Origin/Referer 跟着域走：把国际站账号的事件发到国区域，服务端即使回
+ *  code 0 也计不到国际站那套连登上——上报端点对空 body 都回 code 0，成功响应本身
+ *  从来不是计分证据，判据只有连登天数回读 */
+function chatReportTarget(ctx: GrowthContext): { url: string; headers: Record<string, string> } {
+  const siteOrigin = workbuddyApi(ctx.site).origin;
+  const base = ctx.site === "international" ? siteOrigin : BILLING_ORIGIN;
+  if (ctx.channel === "cookie") {
+    return {
+      url: `${base}/v2/report`,
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Origin: siteOrigin,
+        Referer: `${siteOrigin}/profile/plans-usage`,
+        "x-client-platform": "web",
+      },
+    };
+  }
+  return {
+    url: `${base}/v2/report`,
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "X-CodeBuddy-Request": "1",
+      "X-Domain": new URL(base).host,
+    },
+  };
+}
+
+/** chat 活跃上报的出站本体（域与头族见 chatReportTarget）。
  *  返回信封判定而不抛错：任务层要把它转成动作错误，每日例程要把上游原文留进
  *  activity_status 格给抽屉看——两种消费共用同一个本体，不再各写一份请求 */
 export async function sendChatActivity(
   ctx: GrowthContext,
   event: Record<string, unknown>,
 ): Promise<{ ok: boolean; msg: string }> {
+  const target = chatReportTarget(ctx);
   const raw = JSON.stringify([event]);
   const result = await invoke<HttpResult>("provider_request", {
     instanceId: ctx.instance.id,
-    url: `${BILLING_ORIGIN}/v2/report`,
+    url: target.url,
     method: "POST",
     auth: reportAuthFor(ctx),
-    headers: ctx.channel === "cookie" ? chatReportHeadersCookie : chatReportHeadersToken,
+    headers: target.headers,
     bodyText:
       ctx.channel === "cookie" && ctx.account
         ? raw.split(WB_UID_PLACEHOLDER).join(ctx.account.uid)

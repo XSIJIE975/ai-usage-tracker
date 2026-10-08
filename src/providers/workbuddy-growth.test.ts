@@ -530,6 +530,24 @@ describe("runDailyActivityReport（活跃上报点亮连登，ADR-0039）", () =
     expect(sent[0].headers["x-client-platform"]).toBe("web");
   });
 
+  it("国际站：上报打本站 workbuddy.ai，X-Domain 跟着域走（发到国区域等于白报）", async () => {
+    const ctx = makeCtx("token", "international");
+    const sent = mockReport();
+    expect(await runDailyActivityReport(ctx, today)).toEqual({ status: "reported" });
+    expect(sent).toHaveLength(1);
+    expect(sent[0].url).toBe("https://www.workbuddy.ai/v2/report");
+    expect(sent[0].headers["X-Domain"]).toBe("www.workbuddy.ai");
+  });
+
+  it("Cookie 通道国际站：Origin/Referer 也随域切换", async () => {
+    const ctx = makeCtx("cookie", "international");
+    const sent = mockReport();
+    await runDailyActivityReport(ctx, today);
+    expect(sent[0].url).toBe("https://www.workbuddy.ai/v2/report");
+    expect(sent[0].headers.Origin).toBe("https://www.workbuddy.ai");
+    expect(sent[0].headers.Referer).toBe("https://www.workbuddy.ai/profile/plans-usage");
+  });
+
   it("拿不到 uid 就不发：不发出站、记 skipped、不写 acted（缺 uid 的上报不计分，白发）", async () => {
     const ctx = { ...makeCtx("cookie"), account: null };
     const sent = mockReport();
