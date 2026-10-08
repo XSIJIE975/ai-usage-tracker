@@ -5,7 +5,8 @@ import { cn } from "../../lib/utils";
 
 /**
  * 对话框规范（docs/DESIGN.md §6.9）：
- * Dialog 承载表单类内容（如实例配置），max-w-lg、内容超高时内部滚动。
+ * Dialog 承载一屏放得下的短表单（如实例配置、重置卡），max-w-lg、内容超高时内部滚动；
+ * 需要滚动的长内容改用 Sheet（ADR-0040）。
  */
 const Dialog = DialogPrimitive.Root;
 const DialogTrigger = DialogPrimitive.Trigger;
@@ -16,11 +17,11 @@ const DialogContent = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
 >(({ className, children, ...props }, ref) => (
   <DialogPrimitive.Portal>
-    <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-canvas/60 backdrop-blur-[1px]" />
+    <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-canvas/60 backdrop-blur-[1px] data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        "fixed left-1/2 top-1/2 z-50 flex max-h-[85vh] w-full max-w-lg -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-line bg-surface shadow-pop outline-none",
+        "fixed left-1/2 top-1/2 z-50 flex max-h-[85vh] w-full max-w-lg -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-line bg-surface shadow-pop outline-none data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out",
         className,
       )}
       {...props}

@@ -15,7 +15,8 @@
 2. **语义化**：只用语义 Token（`fg` / `surface` / `brand` / `success`…），不用具体色号  
    （`slate-500`、`#fff` 等一律禁止出现在组件代码中）。
 3. **双主题同源**：浅色/深色共用一套语义 Token，写一次即可同时适配两个主题。
-4. **克制的动效**：只做 120–200ms 的颜色、宽度过渡，不做花哨动画。
+4. **克制的动效**：微反馈只做 120–200ms 的颜色、宽度过渡；弹层进出允许 120–200ms 的位移与淡入（§7），
+   除此之外不做花哨动画。
 
 ## 2. 主题
 
@@ -336,12 +337,20 @@
 
 ## 7. 动效
 
-- 时长：`duration-fast`(120ms) 用于 hover 变色；`duration-normal`(200ms) 用于宽度/阴影；
+- 时长：`duration-fast`(120ms) 用于 hover 变色与弹层**离场**；`duration-normal`(200ms) 用于宽度/阴影与弹层**进场**；
   卡片 3D 翻面使用组件级 `--flip-duration: 650ms` + `--flip-ease: cubic-bezier(0.32, 0.72, 0, 1)`
   强缓出（对齐参考稿，无过冲），翻面按钮图标同步旋转 500ms。
+- 缓动只有两个 Token：`--ease-enter: cubic-bezier(0.22, 1, 0.36, 1)`（进场，强缓出无过冲）、
+  `--ease-exit: cubic-bezier(0.4, 0, 1, 1)`（离场，加速离开）。`.panel-enter` 与新弹层共用它们，不另造曲线。
+- **弹层进出**（`ui/dialog` `ui/sheet` `ui/alert-dialog`，由 Radix 的 `data-state` 驱动，关闭动画跑完才卸载）：
+  遮罩淡入淡出；Sheet 自右边缘整宽滑入（`--animate-sheet-*`）；居中弹窗 `scale(.97)→1` 配淡入（`--animate-dialog-*`）。
+  进场用 normal、离场用 fast——关闭比打开快，否则觉得拖沓。居中弹窗的定位走 Tailwind 的 `translate` 属性，
+  动画只动 `transform`（两者相乘），别把动画改写成 `translate`，那会抢掉居中。
 - 加载：统一使用旋转细环  
   `h-5 w-5 animate-spin rounded-full border-2 border-line-strong border-t-brand`。
-- `prefers-reduced-motion: reduce`：翻面等位移动画关闭过渡直接切换，颜色/阴影过渡保留。
+- `prefers-reduced-motion: reduce`：翻面等位移动画关闭过渡直接切换，颜色/阴影过渡保留。  
+  **弹层进出与 `.panel-enter` 刻意不响应该查询**：系统关掉「显示动画」时 WebView2 恒定上报 reduce，
+  在这里让步等于这两类反馈在用户机器上永远不播（已实际发生，见 `src/styles.css` 注释）。
 
 ## 8. 新页面检查清单
 
