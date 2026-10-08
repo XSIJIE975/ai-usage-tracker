@@ -13,6 +13,8 @@ import type {
   ProviderSite,
 } from "../types/ipc";
 import {
+  BILLING_ORIGIN,
+  WEB_ORIGIN,
   cstDateString,
   isEnvelopeOk,
   parseCheckinResult,
@@ -233,6 +235,191 @@ function unwrapGrowthEnvelope(result: HttpResult): { ok: boolean; data?: unknown
     return { ok: false, msg: json.msg || "invalid response" };
   } catch {
     return { ok: false, msg: "invalid response" };
+  }
+}
+
+// ─── 活跃上报（chat_request_send 事件；点亮连登的唯一日常入口，ADR-0039）───
+
+/** 事件体里的 uid 占位符：token 通道由 Rust 的 workbuddy_report 分支换成 vault 里的
+ *  明文，Cookie 通道前端替换。缺 uid 的上报服务端返回成功但静默不计分（参考项目
+ *  report.go 实测），所以它是这条上报的硬门槛而非可选项 */
+export const WB_UID_PLACEHOLDER = "{{WB_UID}}";
+
+/** chat 活跃上报头族（按通道）。Cookie 形态 = ADR-0036 spike 第二关的实证组合；
+ *  任务层的桌面/web 事件在 Cookie 通道也复用这一族（同一域同一会话形态） */
+export const chatReportHeadersCookie = {
+  Accept: "application/json",
+  "Content-Type": "application/json",
+  Origin: WEB_ORIGIN,
+  Referer: `${WEB_ORIGIN}/profile/plans-usage`,
+  "x-client-platform": "web",
+};
+/** token 通道形态（billing 头族） */
+const chatReportHeadersToken = {
+  Accept: "application/json",
+  "Content-Type": "application/json",
+  "X-CodeBuddy-Request": "1",
+  "X-Domain": "www.codebuddy.cn",
+};
+
+/** 事件上报的凭据（Cookie 走会话 Cookie，token 走 Rust 的 report 分支——那一支同时
+ *  负责占位符替换）。任务层的其它上报共用这里 */
+export function reportAuthFor(ctx: GrowthContext): string {
+  return ctx.channel === "cookie" ? "session_cookie" : "workbuddy_report";
+}
+
+/** chat 活跃上报事件（照参考实现 report.go 的 chatRequestEvent 完整形状，三十余个
+ *  字段一个不删——参考项目点名「勿用最小 3 字段，防上游加严」）。conversationId 由
+ *  调用方自造即可：服务端不校验它对应一场真实会话，这正是「不打开客户端也算活跃」的
+ *  机制根据（参考项目 README「其余全部为行为事件上报，零对话消耗」） */
+export function chatActivityEvent(
+  conversationId: string,
+  modelId?: string,
+  modelName?: string,
+): Record<string, unknown> {
+  const timestamp = Date.now();
+  return {
+    eventCode: "chat_request_send",
+    timestamp,
+    reportDelay: 0,
+    mode: "craft",
+    conversationId,
+    requestId: conversationId,
+    inputLength: 12,
+    requestModelId: modelId ?? "deepseek-v4-flash",
+    requestModelName: modelName ?? "DeepSeek V4 Flash",
+    isPlan: false,
+    isAutoExecuteTerminal: false,
+    isAutoModify: false,
+    codebaseEnable: false,
+    maxToken: 0,
+    maxSteps: 0,
+    temperature: 0,
+    maxRetries: 0,
+    mentionContexts: [],
+    knowledgeId: [],
+    knowledgeName: [],
+    codebaseId: "",
+    mentionContextCount: 0,
+    command: "",
+    expertId: "",
+    recommendId: "",
+    skillId: "",
+    skillCount: 0,
+    totalCount: 0,
+    fileUri: "",
+    presentAt: timestamp,
+    traceId: "",
+    rootRequestId: conversationId,
+    parentConversationId: conversationId,
+    agentName: "default",
+    agentType: "conversation",
+    userId: WB_UID_PLACEHOLDER,
+  };
+}
+
+/** chat 活跃上报的出站本体：两通道都打 codebuddy.cn/v2/report（ADR-0036 两轮真机
+ *  修正的口径——copilot 域对 POST 一律要 Bearer，而 Cookie 会话只在 codebuddy 侧
+ *  实证过计分；计分判据在事件体的指纹字段，不在域）。
+ *  返回信封判定而不抛错：任务层要把它转成动作错误，每日例程要把上游原文留进
+ *  activity_status 格给抽屉看——两种消费共用同一个本体，不再各写一份请求 */
+export async function sendChatActivity(
+  ctx: GrowthContext,
+  event: Record<string, unknown>,
+): Promise<{ ok: boolean; msg: string }> {
+  const raw = JSON.stringify([event]);
+  const result = await invoke<HttpResult>("provider_request", {
+    instanceId: ctx.instance.id,
+    url: `${BILLING_ORIGIN}/v2/report`,
+    method: "POST",
+    auth: reportAuthFor(ctx),
+    headers: ctx.channel === "cookie" ? chatReportHeadersCookie : chatReportHeadersToken,
+    bodyText:
+      ctx.channel === "cookie" && ctx.account
+        ? raw.split(WB_UID_PLACEHOLDER).join(ctx.account.uid)
+        : raw,
+  });
+  return unwrapGrowthEnvelope(result);
+}
+
+/** 本轮活跃上报的结果（null=能力位整段门掉，不显示这一行） */
+export interface ActivityReportOutcome {
+  status: "reported" | "already" | "skipped" | "failed";
+  /** failed 时的上游原文（语言中性写法，进 {detail} 不翻译） */
+  detail?: string;
+}
+
+/** activity_status 格的形状：给抽屉说清「今天为什么没有上报」。
+ *  与 activity_acted 分工：那格只在成功时写（动作判据），这格每轮都写（展示用） */
+export interface ActivityStatus {
+  date: string;
+  status: ActivityReportOutcome["status"];
+  detail?: string;
+}
+
+/** 每日活跃上报（挂每天第一次刷新链，签到之后、连登回读之前，ADR-0039）：
+ *  每实例每天发一条 chat_request_send 点亮当日连登。成功才写 activity_acted 格——
+ *  失败的下轮刷新重试（与签到同口径）；参考项目的风控自律是「每号每天 1 次」，
+ *  activity_acted 格正是把这条落到跨重启都成立的约束上。
+ *  拿不到 uid 就不发：发了也不计分，白多一条无归属的埋点，还把「没做」和「做了没效」
+ *  弄成同一个样子（ADR-0024 错误必须可见） */
+export async function runDailyActivityReport(
+  ctx: GrowthContext,
+  today: string,
+): Promise<ActivityReportOutcome | null> {
+  if (!ctx.capabilities.activity) return null;
+  if ((await readWorkbuddyState(ctx.instance.id, wbStateKind.activityActed)) === today) {
+    return { status: "already" };
+  }
+  const uid = ctx.channel === "token" || ctx.account?.uid;
+  if (!uid) {
+    await writeActivityStatus(ctx.instance.id, { date: today, status: "skipped" });
+    return { status: "skipped" };
+  }
+  try {
+    const envelope = await sendChatActivity(ctx, chatActivityEvent(freshConversationId(today)));
+    if (envelope.ok) {
+      void writeWorkbuddyState(ctx.instance.id, wbStateKind.activityActed, today);
+      await writeActivityStatus(ctx.instance.id, { date: today, status: "reported" });
+      return { status: "reported" };
+    }
+    await writeActivityStatus(ctx.instance.id, {
+      date: today,
+      status: "failed",
+      detail: envelope.msg,
+    });
+    return { status: "failed", detail: envelope.msg };
+  } catch (error) {
+    // 调用层失败（网络/命令异常）：与信封失败同处理——留原因、不写 acted，下轮再试。
+    // 上报是辅助源，任何形态的失败都不能拖垮快照
+    const detail = error instanceof Error ? error.message : String(error);
+    await writeActivityStatus(ctx.instance.id, { date: today, status: "failed", detail });
+    return { status: "failed", detail };
+  }
+}
+
+/** 会话 id：`wb2api-` 前缀沿用参考项目形状，带当天日期便于对账 */
+function freshConversationId(today: string): string {
+  return `wb2api-${today}-${Date.now().toString(36)}`;
+}
+
+async function writeActivityStatus(instanceId: string, status: ActivityStatus): Promise<void> {
+  await writeWorkbuddyState(instanceId, wbStateKind.activityStatus, JSON.stringify(status));
+}
+
+/** 读今日活跃上报状态（抽屉那一行的数据源；无格或日期不是今天按「未上报」处理） */
+export async function loadActivityStatus(
+  instanceId: string,
+  today: string,
+): Promise<ActivityStatus | null> {
+  const stored = await readWorkbuddyState(instanceId, wbStateKind.activityStatus);
+  if (!stored) return null;
+  try {
+    const parsed = JSON.parse(stored) as Partial<ActivityStatus>;
+    if (parsed.date !== today || typeof parsed.status !== "string") return null;
+    return { date: today, status: parsed.status, detail: parsed.detail };
+  } catch {
+    return null;
   }
 }
 

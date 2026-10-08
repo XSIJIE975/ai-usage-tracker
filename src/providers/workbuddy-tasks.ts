@@ -6,7 +6,12 @@ import {
   WEB_ORIGIN,
 } from "./workbuddy-channel";
 import {
+  WB_UID_PLACEHOLDER,
+  chatActivityEvent,
+  chatReportHeadersCookie,
   createGrowthContext,
+  reportAuthFor,
+  sendChatActivity,
   type GrowthContext,
   type WorkbuddyAccount,
 } from "./workbuddy-growth";
@@ -35,8 +40,8 @@ import {
 // - 领奖 POST www.workbuddy.cn/activity/growth/tasks/{code}/claim（web 头，幂等，
 //   already_claimed 不算错）；mp 任务走 copilot 域 + miniprogram 头，400 时降级 web 路径
 
-/** 事件体里的凭据占位符（token 通道由 Rust 替换；Cookie 通道前端替换） */
-const UID_PLACEHOLDER = "{{WB_UID}}";
+/** 事件体里的凭据占位符（token 通道由 Rust 替换；Cookie 通道前端替换）。
+ *  uid 那一个与活跃上报共用 growth 层的常量——事件里的 userId 是同一个格 */
 const NICKNAME_PLACEHOLDER = "{{WB_NICKNAME}}";
 const MACHINE_ID_PLACEHOLDER = "{{WB_MACHINE_ID}}";
 const SESSION_ID_PLACEHOLDER = "{{WB_SESSION_ID}}";
@@ -77,21 +82,6 @@ const desktopReportHeaders = {
   "Content-Type": "application/json;charset=UTF-8",
   "X-Domain": GROWTH_ORIGIN,
   "X-Product": "SaaS",
-};
-/** chat 活跃上报（billing 域；Cookie 通道形态 = spike 第二关实证组合） */
-const chatReportHeadersCookie = {
-  Accept: "application/json",
-  "Content-Type": "application/json",
-  Origin: WEB_ORIGIN,
-  Referer: `${WEB_ORIGIN}/profile/plans-usage`,
-  "x-client-platform": "web",
-};
-/** chat 活跃上报（token 通道形态，billing 头族） */
-const chatReportHeadersToken = {
-  Accept: "application/json",
-  "Content-Type": "application/json",
-  "X-CodeBuddy-Request": "1",
-  "X-Domain": "www.codebuddy.cn",
 };
 /** mp 指纹上报（codebuddy.cn；参考 ReportMPEvent 头组） */
 const mpReportHeaders = {
@@ -161,7 +151,7 @@ async function fillPlaceholders(body: string, account: WorkbuddyAccount): Promis
     deriveDeviceId(account.uid, "webmachine"),
   ]);
   return body
-    .split(UID_PLACEHOLDER).join(account.uid)
+    .split(WB_UID_PLACEHOLDER).join(account.uid)
     .split(NICKNAME_PLACEHOLDER).join(escapedNickname)
     .split(MACHINE_ID_PLACEHOLDER).join(machineId)
     .split(SESSION_ID_PLACEHOLDER).join(sessionId)
@@ -217,10 +207,6 @@ async function taskRequest(
  *  （Rust 替换占位符 + 按域注入桌面/billing UA），其余走 workbuddy_token */
 function authFor(ctx: TaskContext): string {
   return ctx.channel === "cookie" ? "session_cookie" : "workbuddy_token";
-}
-
-function reportAuthFor(ctx: TaskContext): string {
-  return ctx.channel === "cookie" ? "session_cookie" : "workbuddy_report";
 }
 
 // ─── 信封与任务解析 ───
@@ -354,7 +340,7 @@ function desktopFingerprint(): Record<string, unknown> {
   return {
     timezone: "Asia/Shanghai",
     reportDelay: 2000,
-    userId: UID_PLACEHOLDER,
+    userId: WB_UID_PLACEHOLDER,
     username: NICKNAME_PLACEHOLDER,
     userNickname: NICKNAME_PLACEHOLDER,
     product: "SaaS",
@@ -393,50 +379,8 @@ function mpFingerprint(): Record<string, unknown> {
     arch: "x64",
     machineId: "0655736a-607f-4d9d-b430-58176ee9a090",
     timezone: "Asia/Shanghai",
-    userId: UID_PLACEHOLDER,
+    userId: WB_UID_PLACEHOLDER,
     userNickname: NICKNAME_PLACEHOLDER,
-  };
-}
-
-/** chat 活跃上报事件（参考 chatRequestEvent 完整形状——勿删字段，防上游加严） */
-function chatRequestEvent(conversationId: string, requestId: string): Record<string, unknown> {
-  return {
-    eventCode: "chat_request_send",
-    timestamp: now(),
-    reportDelay: 0,
-    mode: "craft",
-    conversationId,
-    requestId,
-    inputLength: 12,
-    requestModelId: "deepseek-v4-flash",
-    requestModelName: "DeepSeek V4 Flash",
-    isPlan: false,
-    isAutoExecuteTerminal: false,
-    isAutoModify: false,
-    codebaseEnable: false,
-    maxToken: 0,
-    maxSteps: 0,
-    temperature: 0,
-    maxRetries: 0,
-    mentionContexts: [],
-    knowledgeId: [],
-    knowledgeName: [],
-    codebaseId: "",
-    mentionContextCount: 0,
-    command: "",
-    expertId: "",
-    recommendId: "",
-    skillId: "",
-    skillCount: 0,
-    totalCount: 0,
-    fileUri: "",
-    presentAt: now(),
-    traceId: "",
-    rootRequestId: requestId,
-    parentConversationId: conversationId,
-    agentName: "default",
-    agentType: "conversation",
-    userId: UID_PLACEHOLDER,
   };
 }
 
@@ -661,33 +605,19 @@ async function reportDesktopEvents(
 }
 
 /** chat 活跃上报（billing 域 /v2/report，chat_5 计数与领养前置；Sequential_Tasks_5
- *  的 PC 兜底走同端点带模型字段——缺省模型与参考 chatRequestEvent 一致） */
+ *  的 PC 兜底走同端点带模型字段——缺省模型与参考 chatRequestEvent 一致）。
+ *  事件形状与出站本体在 growth 层（每日活跃上报走同一条路，一处实现），这里只把
+ *  信封失败转成任务动作错误给行内反馈 */
 async function reportChatActivity(
   ctx: TaskContext,
   conversationId: string,
   modelId?: string,
   modelName?: string,
 ): Promise<void> {
-  const event = {
-    ...chatRequestEvent(conversationId, conversationId),
-    ...(modelId ? { requestModelId: modelId } : {}),
-    ...(modelName ? { requestModelName: modelName } : {}),
-  };
-  const headers =
-    ctx.channel === "cookie" ? chatReportHeadersCookie : chatReportHeadersToken;
-  const raw = JSON.stringify([event]);
-  const result = await invoke<HttpResult>("provider_request", {
-    instanceId: ctx.instance.id,
-    url: `${BILLING_ORIGIN}/v2/report`,
-    method: "POST",
-    auth: reportAuthFor(ctx),
-    headers,
-    bodyText:
-      ctx.channel === "cookie" && ctx.account
-        ? await fillPlaceholders(raw, ctx.account)
-        : raw,
-  });
-  const envelope = unwrapEnvelope(result);
+  const envelope = await sendChatActivity(
+    ctx,
+    chatActivityEvent(conversationId, modelId, modelName),
+  );
   if (!envelope.ok) throw envelopeError("活跃上报失败：{detail}", envelope.msg);
 }
 
@@ -712,7 +642,7 @@ async function reportWebEvent(
     osVersion: "10.0",
     userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
     machineId: WEB_MACHINE_ID_PLACEHOLDER,
-    userId: UID_PLACEHOLDER,
+    userId: WB_UID_PLACEHOLDER,
     userNickname: NICKNAME_PLACEHOLDER,
     enterpriseId: "",
   };

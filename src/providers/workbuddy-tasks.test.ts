@@ -43,7 +43,7 @@ const makeCtx = (channel: "token" | "cookie", account: { uid: string; nickname: 
   instance: makeInstance(),
   channel,
   site: "china" as const,
-  capabilities: { checkin: true, streak: true, travel: true, stats: true, tasks: true, butler: true, trial: false },
+  capabilities: { checkin: true, streak: true, activity: true, travel: true, stats: true, tasks: true, butler: true, trial: false },
   account,
 });
 

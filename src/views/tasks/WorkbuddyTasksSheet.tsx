@@ -42,10 +42,12 @@ import {
   createGrowthContext,
   fetchLotterySummaryForDisplay,
   fetchStreakFull,
+  loadActivityStatus,
   loadLastButlerRecord,
   redeemSingleTier,
   runGrowthButler,
   tierStatus,
+  type ActivityStatus,
   type ButlerRecordDetail,
   type GrowthContext,
 } from "../../providers/workbuddy-growth";
@@ -110,18 +112,23 @@ export function WorkbuddyTasksSheet({
   const [butlerRecord, setButlerRecord] = useState<ButlerRecordDetail | undefined>(undefined);
   const [tierBusy, setTierBusy] = useState<string | null>(null);
   const [tierError, setTierError] = useState<string | undefined>(undefined);
+  /** 今日活跃上报的状态（ADR-0039）：连登天数由这条上报点亮，所以这块要说清
+   *  「今天报了没有、没报是为啥」——抽屉打开时从 workbuddy_states 读，不另设事实源 */
+  const [activity, setActivity] = useState<ActivityStatus | null>(null);
 
-  /** 拉连登完整状态与抽奖次数（区块数据；失败静默标记，区块给失败文案） */
+  /** 拉连登完整状态、抽奖次数与今日活跃状态（区块数据；失败静默标记，区块给失败文案） */
   const reloadStreak = useCallback(async (ctx: GrowthContext | null) => {
     if (!ctx) return;
     setStreakFailed(false);
-    const [full, summary] = await Promise.all([
+    const [full, summary, activityStatus] = await Promise.all([
       fetchStreakFull(ctx),
       fetchLotterySummaryForDisplay(ctx),
+      loadActivityStatus(ctx.instance.id, cstDateString()),
     ]);
     setStreakFull(full);
     setStreakFailed(full === null);
     setLotteryChances(summary?.chances ?? null);
+    setActivity(activityStatus);
   }, []);
 
   useEffect(() => {
@@ -143,6 +150,7 @@ export function WorkbuddyTasksSheet({
       setButlerRecord(undefined);
       setLotteryChances(null);
       setTierError(undefined);
+      setActivity(null);
     }
   }, [open, instance, reloadStreak]);
 
@@ -350,6 +358,8 @@ export function WorkbuddyTasksSheet({
             butlerRunning={butlerRunning}
             tierBusy={tierBusy}
             tierError={tierError}
+            activity={activity}
+            activityEnabled={growthCtx?.capabilities.activity === true}
             onRunButler={() => void runButler()}
             onRedeemTier={(tier) => void redeemTierOne(tier)}
           />
@@ -583,6 +593,8 @@ function StreakSection({
   butlerRunning,
   tierBusy,
   tierError,
+  activity,
+  activityEnabled,
   onRunButler,
   onRedeemTier,
 }: {
@@ -594,6 +606,8 @@ function StreakSection({
   butlerRunning: boolean;
   tierBusy: string | null;
   tierError?: string;
+  activity: ActivityStatus | null;
+  activityEnabled: boolean;
   onRunButler: () => void;
   onRedeemTier: (tier: string) => void;
 }) {
@@ -706,6 +720,26 @@ function StreakSection({
               : streakLoading
                 ? t("正在获取连登状态")
                 : t("暂无连登数据")}
+          </p>
+        )}
+        {/* 今日活跃上报状态（ADR-0039）：连登天数由这条上报点亮，签到不记天数。
+            天数是 0 时也照说——「没上报」和「上报了没计分」必须分得开，
+            否则卡片少一行什么也解释不了 */}
+        {activityEnabled && (
+          <p className="text-[11px] text-fg-muted">
+            {activity?.status === "reported"
+              ? typeof days === "number" && days > 0
+                ? t("今日已上报活跃")
+                : t("今日已上报活跃，但连登天数仍为 0")
+              : activity?.status === "skipped"
+                ? t("今日未上报：拿不到账号 uid，改用扫码登录即可")
+                : activity?.status === "failed"
+                  ? renderTemplate(
+                      t("今日未上报：{detail}"),
+                      { detail: activity.detail ?? t("未知原因") },
+                      t,
+                    )
+                  : t("今日未上报")}
           </p>
         )}
         {tierError && (

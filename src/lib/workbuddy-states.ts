@@ -32,8 +32,11 @@ export const wbStateKind = {
   trialNotified: "trial_notified",
   /** 今日已自动续期过 token */
   tokenRenewed: "token_renewed",
-  /** 今日已发过活跃上报（点亮连登那条） */
+  /** 今日已发过活跃上报（点亮连登那条；成功才写） */
   activityActed: "activity_acted",
+  /** 今日活跃上报的状态与原因（JSON：{date, status, detail}），抽屉那一行的数据源；
+   *  与 activity_acted 分工：那格是动作判据，这格是给使用者看的原因说明 */
+  activityStatus: "activity_status",
   /** Cookie 通道的账号信息 JSON（uid/nickname）——uid 是活跃上报的硬门槛，
    *  取到过一次就永久复用，不再受 console/account 偶发失败影响 */
   cookieAccount: "cookie_account",

@@ -28,6 +28,7 @@ import {
 import {
   createGrowthContext,
   fetchStreakFull,
+  runDailyActivityReport,
   runDailyCheckin,
   runGrowthButler,
   runTravelMachine,
@@ -361,12 +362,15 @@ function butlerHasEvents(butler: GrowthButlerOutcome): boolean {
   );
 }
 
-/** 成长例程包（签到 → 旅行 → 连登 → 管家 → trial）：每步独立容错，任何失败静默——
+/** 成长例程包（签到 → 活跃上报 → 旅行 → 连登 → 管家 → trial）：每步独立容错，任何失败静默——
  *  余额主源才是快照成败的判定者。返回值喂快照瞬时字段（checkin/travel 喂各自检测器、
  *  growthNotice 喂管家通知、trial 喂试用通知）与连登卡片行 */
 async function runGrowthRituals(ctx: NonNullable<Awaited<ReturnType<typeof createGrowthContext>>>, today: string) {
   // 先签到后取数（ADR-0029）：签到到账的积分当轮即可见
   const checkin = await runDailyCheckin(ctx, today);
+  // 活跃上报紧跟签到（ADR-0039）：连登天数由这条事件点亮，签到只发积分。必须在下面的
+  // 连登回读之前发——本轮读到的天数才是「上报之后」的值，抽屉那行的判定靠这个顺序
+  await runDailyActivityReport(ctx, today);
   // 旅行（领奖 → 出发 → 回查）：领到的积分当轮余额可见
   const { travel, travelLine } = await runTravelMachine(ctx);
   // 连登完整状态（辅助源：失败无行）；管家闭环消费同一份数据省一次 GET

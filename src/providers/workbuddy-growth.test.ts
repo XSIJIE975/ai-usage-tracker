@@ -6,8 +6,11 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 import { wbStateKind, type WorkbuddyStateRecord } from "../lib/workbuddy-states";
 import { cstDateString } from "./workbuddy-channel";
 import {
+  createGrowthContext,
   fetchStreakFull,
+  loadActivityStatus,
   loadLastButlerRecord,
+  runDailyActivityReport,
   runGrowthButler,
   runTrialClaim,
   tierStatus,
@@ -80,8 +83,8 @@ const makeCtx = (channel: "token" | "cookie", site: ProviderSite = "china"): Gro
   site,
   capabilities:
     site === "china"
-      ? { checkin: true, streak: true, travel: true, stats: true, tasks: true, butler: true, trial: false }
-      : { checkin: false, streak: false, travel: false, stats: true, tasks: false, butler: false, trial: true },
+      ? { checkin: true, streak: true, activity: true, travel: true, stats: true, tasks: true, butler: true, trial: false }
+      : { checkin: false, streak: true, activity: true, travel: false, stats: true, tasks: false, butler: false, trial: true },
   account: channel === "cookie" ? { uid: "uid-x", nickname: "nick" } : null,
 });
 
@@ -460,6 +463,180 @@ describe("runTrialClaim（国际站试用加油包，ADR-0037）", () => {
     const ctx = makeCtx("cookie");
     expect(await runTrialClaim(ctx)).toBeUndefined();
     expect(mockInvoke).not.toHaveBeenCalled();
+  });
+});
+
+describe("runDailyActivityReport（活跃上报点亮连登，ADR-0039）", () => {
+  /** 活跃上报的出站替身：判据落到 states 表，report 族请求记录下来供断言 */
+  const mockReport = (opts: { report?: HttpResult; account?: HttpResult } = {}) => {
+    const sent: { url: string; bodyText: string; headers: Record<string, string>; auth: string }[] = [];
+    mockInvoke.mockImplementation(async (cmd: string, payload?: unknown) => {
+      const state = handleStateCommand(cmd, payload);
+      if (state.handled) return state.value;
+      if (cmd === "vault_credential_status") {
+        return { session: true, session2: true, userAgent: true };
+      }
+      if (cmd !== "provider_request") throw new Error(`意外的命令：${cmd}`);
+      const args = payload as {
+        url: string;
+        bodyText?: string;
+        headers?: Record<string, string>;
+        auth?: string;
+      };
+      if (args.url.endsWith("/v2/report")) {
+        sent.push({
+          url: args.url,
+          bodyText: args.bodyText ?? "",
+          headers: args.headers ?? {},
+          auth: args.auth ?? "",
+        });
+        return opts.report ?? httpResult({ code: 0, msg: "OK" });
+      }
+      if (args.url.endsWith("/console/account")) {
+        return (
+          opts.account ??
+          httpResult({ code: 0, msg: "OK", data: { uid: "u-live", nickname: "nick" } })
+        );
+      }
+      throw new Error(`意外的 provider_request：${args.url}`);
+    });
+    return sent;
+  };
+
+  const readStatus = (instanceId: string) =>
+    JSON.parse(String(states.get(stateKey(instanceId, "activity_status"))));
+
+  it("token 通道：一条 chat_request_send 打 codebuddy.cn/v2/report，uid 留占位符交 Rust 替换", async () => {
+    const ctx = makeCtx("token");
+    const sent = mockReport();
+    expect(await runDailyActivityReport(ctx, today)).toEqual({ status: "reported" });
+    expect(sent).toHaveLength(1);
+    expect(sent[0].url).toBe("https://www.codebuddy.cn/v2/report");
+    expect(sent[0].auth).toBe("workbuddy_report");
+    const event = JSON.parse(sent[0].bodyText)[0];
+    expect(event.eventCode).toBe("chat_request_send");
+    expect(event.userId).toBe("{{WB_UID}}");
+    expect(states.get(stateKey(ctx.instance.id, "activity_acted"))).toBe(today);
+    expect(readStatus(ctx.instance.id)).toEqual({ date: today, status: "reported" });
+  });
+
+  it("Cookie 通道：前端把 uid 替进事件体，走 web 头族（ADR-0036 spike 实证组合）", async () => {
+    const ctx = makeCtx("cookie");
+    const sent = mockReport();
+    expect(await runDailyActivityReport(ctx, today)).toEqual({ status: "reported" });
+    const event = JSON.parse(sent[0].bodyText)[0];
+    expect(event.userId).toBe("uid-x");
+    expect(sent[0].auth).toBe("session_cookie");
+    expect(sent[0].headers["x-client-platform"]).toBe("web");
+  });
+
+  it("拿不到 uid 就不发：不发出站、记 skipped、不写 acted（缺 uid 的上报不计分，白发）", async () => {
+    const ctx = { ...makeCtx("cookie"), account: null };
+    const sent = mockReport();
+    expect(await runDailyActivityReport(ctx, today)).toEqual({ status: "skipped" });
+    expect(sent).toHaveLength(0);
+    expect(states.get(stateKey(ctx.instance.id, "activity_acted"))).toBeUndefined();
+    expect(readStatus(ctx.instance.id).status).toBe("skipped");
+  });
+
+  it("同一天再刷短路：每号每天 1 次的风控口径跨重启成立", async () => {
+    const ctx = makeCtx("token");
+    const sent = mockReport();
+    await runDailyActivityReport(ctx, today);
+    expect(await runDailyActivityReport(ctx, today)).toEqual({ status: "already" });
+    expect(sent).toHaveLength(1);
+  });
+
+  it("上报失败：不写 acted（下轮真的重试），上游原文进 activity_status 格给抽屉看", async () => {
+    const ctx = makeCtx("token");
+    const sent = mockReport({ report: httpResult("unauthorized", 401) });
+    expect(await runDailyActivityReport(ctx, today)).toEqual({
+      status: "failed",
+      detail: "HTTP 401",
+    });
+    expect(states.get(stateKey(ctx.instance.id, "activity_acted"))).toBeUndefined();
+    expect(readStatus(ctx.instance.id)).toEqual({
+      date: today,
+      status: "failed",
+      detail: "HTTP 401",
+    });
+    await runDailyActivityReport(ctx, today);
+    expect(sent).toHaveLength(2);
+  });
+
+  it("事件体保持参考实现的完整形状（三十余字段一个不删，防上游加严）", async () => {
+    const ctx = makeCtx("token");
+    const sent = mockReport();
+    await runDailyActivityReport(ctx, today);
+    const event = JSON.parse(sent[0].bodyText)[0];
+    for (const field of [
+      "mode",
+      "conversationId",
+      "requestId",
+      "inputLength",
+      "requestModelId",
+      "requestModelName",
+      "isPlan",
+      "isAutoExecuteTerminal",
+      "mentionContexts",
+      "knowledgeId",
+      "skillCount",
+      "agentName",
+      "agentType",
+      "presentAt",
+      "rootRequestId",
+      "parentConversationId",
+      "userId",
+    ]) {
+      expect(event, field).toHaveProperty(field);
+    }
+    expect(Object.keys(event).length).toBeGreaterThanOrEqual(30);
+  });
+
+  it("loadActivityStatus：今天的格子读回；昨天/坏 JSON/无格都不算今天的状态", async () => {
+    const instance = makeInstance();
+    mockReport();
+    states.set(
+      stateKey(instance.id, "activity_status"),
+      JSON.stringify({ date: today, status: "failed", detail: "HTTP 401" }),
+    );
+    expect(await loadActivityStatus(instance.id, today)).toEqual({
+      date: today,
+      status: "failed",
+      detail: "HTTP 401",
+    });
+    states.set(
+      stateKey(instance.id, "activity_status"),
+      JSON.stringify({ date: "2026-01-01", status: "reported" }),
+    );
+    expect(await loadActivityStatus(instance.id, today)).toBeNull();
+    states.set(stateKey(instance.id, "activity_status"), "{坏");
+    expect(await loadActivityStatus(instance.id, today)).toBeNull();
+    states.clear();
+    expect(await loadActivityStatus(instance.id, today)).toBeNull();
+  });
+
+  it("Cookie 通道 console/account 失败时回落 cookie_account 格：uid 取到过一次就复用", async () => {
+    const instance = makeInstance();
+    states.set(stateKey(instance.id, "cookie_account"), JSON.stringify({ uid: "u-stored", nickname: "旧昵称" }));
+    mockReport({ account: httpResult("gateway down", 503) });
+    const ctx = await createGrowthContext(instance);
+    expect(ctx?.channel).toBe("cookie");
+    expect(ctx?.account).toEqual({ uid: "u-stored", nickname: "旧昵称" });
+    // 回落成功不等于覆盖：本轮没取到新值，格子里还是原来那一份
+    expect(JSON.parse(String(states.get(stateKey(instance.id, "cookie_account")))).uid).toBe(
+      "u-stored",
+    );
+  });
+
+  it("Cookie 通道取到 uid 即落格：下一次刷新不再依赖 console/account 活着", async () => {
+    const instance = makeInstance();
+    mockReport();
+    const ctx = await createGrowthContext(instance);
+    expect(ctx?.account?.uid).toBe("u-live");
+    expect(JSON.parse(String(states.get(stateKey(instance.id, "cookie_account")))).uid).toBe(
+      "u-live",
+    );
   });
 });
 
