@@ -24,6 +24,7 @@ import { IconButton } from "../../components/ui/icon-button";
 import { EmptyState } from "../../components/ui/empty-state";
 import { Progress } from "../../components/ui/progress";
 import { SiteBadge } from "../../components/SiteBadge";
+import { useRetained } from "../../hooks/use-retained";
 import { TASKS_OPENED_EVENT, tasksOpenedKey } from "../../components/ProviderCard";
 import { renderTemplate, useT } from "../../i18n";
 import { displayName } from "../../lib/instance";
@@ -76,7 +77,7 @@ interface RowFeedback {
 /** 成长任务抽屉（ADR-0036）：三层展示（可自动完成 / 可领取 / 已完成折叠），
  *  执行走 workbuddyTaskStore——关闭抽屉不中止执行，重开可见结果 */
 export function WorkbuddyTasksSheet({
-  instance,
+  instance: incoming,
   open,
   onOpenChange,
 }: {
@@ -85,6 +86,7 @@ export function WorkbuddyTasksSheet({
   onOpenChange: (open: boolean) => void;
 }) {
   const t = useT();
+  const instance = useRetained(incoming);
   // t 存 ref：reload 不依赖 t 引用，语言切换不触发重拉/清会话
   const tRef = useRef(t);
   tRef.current = t;

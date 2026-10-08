@@ -8,6 +8,7 @@ import { SiteBadge } from "../../components/SiteBadge";
 import { displayName } from "../../lib/instance";
 import { providerName } from "../../providers";
 import { workbuddyApi, workbuddySiteOf } from "../../providers/workbuddy";
+import { useRetained } from "../../hooks/use-retained";
 import { useT } from "../../i18n";
 import type { ProviderInstance } from "../../types/ipc";
 
@@ -37,7 +38,7 @@ export function providerHasStats(
 
 /** 实例统计抽屉：按实例种类挂载对应统计模块（卡片「查看统计」入口） */
 export function StatsSheet({
-  instance,
+  instance: incoming,
   open,
   onOpenChange,
 }: {
@@ -46,6 +47,7 @@ export function StatsSheet({
   onOpenChange: (open: boolean) => void;
 }) {
   const t = useT();
+  const instance = useRetained(incoming);
   if (!instance) return null;
   // 无统计面的实例（qoder，或本站没有明细数据源的 workbuddy 国际站）入口已隐藏；
   // 此处兜底直接不渲染，防误开空抽屉

@@ -119,7 +119,8 @@
   --animate-overlay-in: overlay-in var(--transition-duration-normal) var(--ease-enter) both;
   --animate-overlay-out: overlay-out var(--transition-duration-fast) var(--ease-exit) both;
   --animate-sheet-in: sheet-in var(--transition-duration-normal) var(--ease-enter) both;
-  --animate-sheet-out: sheet-out var(--transition-duration-fast) var(--ease-exit) both;
+  /* Sheet 走完整宽位移，120ms 内跑完等于看不见，进出同档 */
+  --animate-sheet-out: sheet-out var(--transition-duration-normal) var(--ease-exit) both;
   --animate-dialog-in: dialog-in var(--transition-duration-normal) var(--ease-enter) both;
   --animate-dialog-out: dialog-out var(--transition-duration-fast) var(--ease-exit) both;
 }

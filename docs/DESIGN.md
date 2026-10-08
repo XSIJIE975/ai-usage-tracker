@@ -281,6 +281,10 @@
 - 内容结构：头部（标题 `text-[15px] font-semibold` + 描述）/ 滚动区 / 页脚（取消在左、主操作在右，
   主按钮一个视口一个 `primary`）。
 - 所有弹层必须可用 Esc 关闭且带焦点环；标题/描述供屏幕阅读器（Radix Title/Description）。
+- **宿主别把出场动画吃掉**：`onOpenChange` 里常写的 `setInstance(null)` 会让 `open` 与载荷同一次渲染置空，
+  带 `if (!instance) return null` 的宿主（统计抽屉、成长中心抽屉、删除确认）就此提前卸载整个 Radix Root，
+  而 Presence 是要等 `animationend` 才允许卸载的。载荷一律经 `hooks/use-retained` 留到动画结束，
+  滑出过程中内容不变（`views/settings/SettingsSheet` 只吃 `open`，没有这个问题）。
 
 ## 6.10 可排序卡片网格（总览）
 
@@ -344,7 +348,8 @@
   `--ease-exit: cubic-bezier(0.4, 0, 1, 1)`（离场，加速离开）。`.panel-enter` 与新弹层共用它们，不另造曲线。
 - **弹层进出**（`ui/dialog` `ui/sheet` `ui/alert-dialog`，由 Radix 的 `data-state` 驱动，关闭动画跑完才卸载）：
   遮罩淡入淡出；Sheet 自右边缘整宽滑入（`--animate-sheet-*`）；居中弹窗 `scale(.97)→1` 配淡入（`--animate-dialog-*`）。
-  进场用 normal、离场用 fast——关闭比打开快，否则觉得拖沓。居中弹窗的定位走 Tailwind 的 `translate` 属性，
+  进场用 normal、离场用 fast——关闭比打开快，否则觉得拖沓；唯一的例外是 Sheet 的离场，
+  它要跑完整宽位移，120ms 内等于看不见，故与进场同为 normal。居中弹窗的定位走 Tailwind 的 `translate` 属性，
   动画只动 `transform`（两者相乘），别把动画改写成 `translate`，那会抢掉居中。
 - 加载：统一使用旋转细环  
   `h-5 w-5 animate-spin rounded-full border-2 border-line-strong border-t-brand`。
