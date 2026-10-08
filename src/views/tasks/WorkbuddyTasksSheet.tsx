@@ -364,6 +364,7 @@ export function WorkbuddyTasksSheet({
             tierError={tierError}
             activity={activity}
             activityEnabled={growthCtx?.capabilities.activity === true}
+            butlerEnabled={growthCtx?.capabilities.butler === true}
             onRunButler={() => void runButler()}
             onRedeemTier={(tier) => void redeemTierOne(tier)}
           />
@@ -599,6 +600,7 @@ function StreakSection({
   tierError,
   activity,
   activityEnabled,
+  butlerEnabled,
   onRunButler,
   onRedeemTier,
 }: {
@@ -612,6 +614,9 @@ function StreakSection({
   tierError?: string;
   activity: ActivityStatus | null;
   activityEnabled: boolean;
+  /** 管家写面（兑换/抽奖/补签/礼包）的能力位：国际站关着，按钮与留档都不渲染——
+   *  点了没反应的死按钮比没有按钮更糟（ADR-0039） */
+  butlerEnabled: boolean;
   onRunButler: () => void;
   onRedeemTier: (tier: string) => void;
 }) {
@@ -622,8 +627,11 @@ function StreakSection({
   const next = typeof days === "number" && days > 0 ? nextTierGap(days) : null;
   const cards = streakFull?.makeup_cards?.balance;
   const recordLines = butlerRecord ? butlerRecordLines(butlerRecord) : [];
-  const tierMeta = (tier: string) =>
-    streakFull?.redemption_status?.tiers?.find((item) => item.tier === tier);
+  // 档位胶囊只在服务端真给了 tiers 时画：本地 TIER_DEFS 那三档是国区运营的形状，
+  // 拿它给国际站画三个「锁着」的胶囊，等于替官方宣称这里有这套奖励（ADR-0039 待证项）
+  const serverTiers = streakFull?.redemption_status?.tiers ?? [];
+  const tierChips = serverTiers.length > 0 ? TIER_DEFS : [];
+  const tierMeta = (tier: string) => serverTiers.find((item) => item.tier === tier);
   const status = (tier: string) => (streakFull ? tierStatus(streakFull, tier) : "locked");
   /** 今日活跃那行的文案（三态分开：已上报且天数在涨 / 已上报但天数为 0 / 没报成） */
   const activityLine = !activityEnabled
@@ -650,21 +658,23 @@ function StreakSection({
         <p className="text-[11px] font-medium uppercase tracking-wide text-fg-muted">
           {t("连登")}
         </p>
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-6.5 px-2.5 text-[11px]"
-          disabled={butlerRunning}
-          onClick={onRunButler}
-        >
-          {butlerRunning ? (
-            <>
-              <LoaderCircle className="h-3 w-3 animate-spin" /> {t("正在领取")}
-            </>
-          ) : (
-            t("领取全部奖励")
-          )}
-        </Button>
+        {butlerEnabled && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-6.5 px-2.5 text-[11px]"
+            disabled={butlerRunning}
+            onClick={onRunButler}
+          >
+            {butlerRunning ? (
+              <>
+                <LoaderCircle className="h-3 w-3 animate-spin" /> {t("正在领取")}
+              </>
+            ) : (
+              t("领取全部奖励")
+            )}
+          </Button>
+        )}
       </header>
       <div className="flex flex-col gap-2.5 px-4 pb-3.5 pt-2">
         {streakFull && typeof days === "number" && days > 0 ? (
@@ -683,7 +693,7 @@ function StreakSection({
               <Progress value={(days / next.tier) * 100} aria-label={t("距下一档进度")} />
             )}
             <div className="flex gap-1.5">
-              {TIER_DEFS.map((tier) => {
+              {tierChips.map((tier) => {
                 const state = status(tier);
                 const meta = tierMeta(tier);
                 const busy = tierBusy === tier;
@@ -727,13 +737,15 @@ function StreakSection({
                 );
               })}
             </div>
-            <p className="text-xs text-fg-muted tnum">
-              {renderTemplate(
-                t("补签卡 ×{cards} · 抽奖次数 {chances}"),
-                { cards: cards ?? 0, chances: lotteryChances ?? 0 },
-                t,
-              )}
-            </p>
+            {(cards != null || lotteryChances != null) && (
+              <p className="text-xs text-fg-muted tnum">
+                {renderTemplate(
+                  t("补签卡 ×{cards} · 抽奖次数 {chances}"),
+                  { cards: cards ?? 0, chances: lotteryChances ?? 0 },
+                  t,
+                )}
+              </p>
+            )}
           </>
         ) : (
           <p className="text-xs text-fg-muted">

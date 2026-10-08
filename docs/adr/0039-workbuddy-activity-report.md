@@ -31,10 +31,13 @@
 ## 真机发现（2026-10-08）
 
 - `POST https://www.workbuddy.ai/v2/report` 与 `POST https://www.codebuddy.cn/v2/report` 对**空数组 body、不带任何凭据**都返回 `{"code":0,"msg":"OK"}`。上报端点是来者不拒的埋点收集口，**成功响应完全不构成计分证据**——回读连登天数是唯一的判据（决策 5 那行状态因此不是多余的界面装饰）。
-- `www.workbuddy.ai/activity/growth/streak` 无凭据返回 401（路由存在、需鉴权），与 workbuddy.cn / copilot.tencent.com 同形态。所以国际站有没有这套连登运营，取决于带凭据读回什么，而不是路由在不在。
+- `www.workbuddy.ai/activity/growth/streak` 无凭据返回 openresty 的 401，与 workbuddy.cn / copilot.tencent.com 同形态。
 - dev 库实测：四号 `activity_acted` 均写入 `2026-10-08`、`activity_status=reported`，但国际站卡片无连登行——上报发到了国区域（决策 8 修的就是这条）。
-- 修完重启后再读：**国际站 `GET /activity/growth/streak` 带凭据能读回 `streak.days = 0`**（信封 ok、天数字段确值为 0，不是取不到）。所以 ADR-0031 那句「国际站没有签到、连登、旅行、成长任务」要收窄为：**国际站没有成长中心界面与档位兑换，但连登的读面与上报端点都是活的**。国际站要不要放开兑换/抽奖，取决于把天数报上去之后它涨不涨（下一条）。
-- 待证：国际站上报后 `days` 会不会从 0 起算。参考项目对 global 的 `Accept-Language`（en-US）、`X-Domain`、UA 平台段（`WorkBuddy AI` 而非 `WorkBuddy`）都按 realm 切，其中 `Accept-Language` 我们此前漏了（已改为复用本站 billing 头族）；UA 平台段我们送的是单段 `WorkBuddy/5.5.4`，与参考的三段式不同，是否影响计分未知。
+- 修完域之后：**国际站 streak 从 `days=0` 涨到 `days=1`**（2026-10-08 用户真机）。连登的读面与上报两路都通，且官方把我们代发的这条事件记成了活跃。ADR-0031 的「国际站没有连登」据此作废；该条当时依据的是官网页面没有成长中心入口，属界面观察，不代表接口不存在。
+- **无凭据探测在 growth 前缀上不成立**：`www.workbuddy.ai/activity/growth/zzz-not-a-route` 与真实的 `/activity/growth/streak` 一样回 openresty 的 401，而 `www.workbuddy.ai/zzz` 回 APISIX 的 `404 Route Not Found`。也就是说 `/activity/growth/*` 整段被一个要求鉴权的兜底路由罩住，**401 只能证明「前缀被网关接管」，不能证明具体端点存在**。ADR-0034/0036 那套「401=路由在 / 404=不在」的判别法在这个前缀上要停用。
+- 国际站连登的**唯一有效证据是带凭据读回**：修完域之后，`www.workbuddy.ai` 的 streak 从 `days=0` 变到 `days=1`（2026-10-08 用户真机），说明读面与上报两路都真的通、且官方把这条代发事件记成了活跃。
+- 国际站的**奖励面（档位兑换 / 抽奖 / 补签卡 / 礼包补偿）至今没有任何证据**：参考项目按 D4 门控把 global 的 `RunStreakBonusNow` 整段跳过（`scheduler/streak.go:29`），他们也没验过。我们的能力位维持 `butler:false`、`tasks:false`、`checkin:false`、`travel:false` 是有意的保守，不是实测结论。
+- 待证：国际站上报后 `days` 会不会继续涨到 7（连登天数已证会涨）。剩下可能的差异是参考项目对 global 的 UA 平台段（国际版要 `WorkBuddy AI`，我们送单段 `WorkBuddy/5.5.4`）——上报既已计分，这条只影响要不要进一步放开写面，不影响本期结论。
 
 ## Considered Options
 
@@ -47,9 +50,10 @@
 
 ## 真机验证清单
 
+- [x] 「当天上报、当天计入」——国际站已实证：修完域当天 `days` 从 0 变 1
+- [x] 国际站连登读面是否出数——出数，且上报计分
 - [ ] 国区两号自 2026-10-08 起连登天数是否真的从 0 开始累加（这是本决策成立与否的唯一判据）
-- [ ] 「当天上报、当天计入」——上报后同轮回读 `streak.days` 是否已含今天
-- [ ] 国际站 `GET /activity/growth/streak` 是否出数（决定要不要给它开档位兑换与抽屉入口）
+- [ ] 国际站的奖励面（档位兑换 / 抽奖 / 补签卡 / 礼包补偿）到底有没有——无凭据探测证不了（见真机发现），需要带凭据读 `redemption_status` 或官网成长中心页面确认
 - [ ] Cookie 通道 `console/account` 失败时回落 `cookie_account` 格的真实行为
 - [ ] 常驻代报会不会引起官方侧异常（观察项：天数正常累加、账号未被要求重新登录、消耗明细无多余条目）
 
