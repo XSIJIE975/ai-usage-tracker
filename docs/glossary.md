@@ -39,7 +39,7 @@ provider 的一扇用量限制，如「5 小时请求配额」「每周请求配
 
 ## 托盘方案（Tray Scheme）
 
-托盘图标呈现的可切换、可扩展方案：`default`（静态图标 + 告警换图）/ `usage-ring`（多层嵌套环）/ `usage-bars`（双横向胶囊条）。设置页选择、切换即生效，Rust 侧 tiny-skia 光栅化（ADR-0016/0017）。
+托盘图标呈现的可切换、可扩展方案：`default`（静态图标 + 告警换图）/ `usage-ring`（多层嵌套环）/ `usage-bars`（双横向胶囊条）。设置抽屉选择、切换即生效，Rust 侧 tiny-skia 光栅化（ADR-0016/0017）。
 
 ## 候选实例（Candidate）
 
