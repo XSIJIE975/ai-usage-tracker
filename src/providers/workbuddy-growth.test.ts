@@ -530,13 +530,25 @@ describe("runDailyActivityReport（活跃上报点亮连登，ADR-0039）", () =
     expect(sent[0].headers["x-client-platform"]).toBe("web");
   });
 
-  it("国际站：上报打本站 workbuddy.ai，X-Domain 跟着域走（发到国区域等于白报）", async () => {
+  it("国际站：上报打本站 workbuddy.ai，头族随站点切（X-Domain/Accept-Language）", async () => {
     const ctx = makeCtx("token", "international");
     const sent = mockReport();
     expect(await runDailyActivityReport(ctx, today)).toEqual({ status: "reported" });
     expect(sent).toHaveLength(1);
     expect(sent[0].url).toBe("https://www.workbuddy.ai/v2/report");
     expect(sent[0].headers["X-Domain"]).toBe("www.workbuddy.ai");
+    // 参考项目 BillingHeaders 按 realm 切 Accept-Language，送错语言标识会被上游按
+    // 缺省语言误判——这条是国际站计分的候选差异项之一
+    expect(sent[0].headers["Accept-Language"]).toBe("en-US");
+  });
+
+  it("国区 token 通道：仍打 codebuddy.cn，语言标识 zh-CN", async () => {
+    const ctx = makeCtx("token");
+    const sent = mockReport();
+    await runDailyActivityReport(ctx, today);
+    expect(sent[0].url).toBe("https://www.codebuddy.cn/v2/report");
+    expect(sent[0].headers["X-Domain"]).toBe("www.codebuddy.cn");
+    expect(sent[0].headers["Accept-Language"]).toBe("zh-CN");
   });
 
   it("Cookie 通道国际站：Origin/Referer 也随域切换", async () => {

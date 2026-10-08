@@ -335,15 +335,10 @@ function chatReportTarget(ctx: GrowthContext): { url: string; headers: Record<st
       },
     };
   }
-  return {
-    url: `${base}/v2/report`,
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      "X-CodeBuddy-Request": "1",
-      "X-Domain": new URL(base).host,
-    },
-  };
+  // token 通道：复用本站的 billing 头族（含 Accept-Language 按站点切、X-Domain 随域走），
+  // 与签到/余额同一族——参考项目 report.go 走的正是 BillingHeaders 这一族。
+  // 自己拼一份头表就会漏掉按站点变化的那几项（国际站要 en-US，2026-10-08 对表发现）
+  return { url: `${base}/v2/report`, headers: workbuddyTokenApi(ctx.site).headers.billing };
 }
 
 /** chat 活跃上报的出站本体（域与头族见 chatReportTarget）。

@@ -33,6 +33,8 @@
 - `POST https://www.workbuddy.ai/v2/report` 与 `POST https://www.codebuddy.cn/v2/report` 对**空数组 body、不带任何凭据**都返回 `{"code":0,"msg":"OK"}`。上报端点是来者不拒的埋点收集口，**成功响应完全不构成计分证据**——回读连登天数是唯一的判据（决策 5 那行状态因此不是多余的界面装饰）。
 - `www.workbuddy.ai/activity/growth/streak` 无凭据返回 401（路由存在、需鉴权），与 workbuddy.cn / copilot.tencent.com 同形态。所以国际站有没有这套连登运营，取决于带凭据读回什么，而不是路由在不在。
 - dev 库实测：四号 `activity_acted` 均写入 `2026-10-08`、`activity_status=reported`，但国际站卡片无连登行——上报发到了国区域（决策 8 修的就是这条）。
+- 修完重启后再读：**国际站 `GET /activity/growth/streak` 带凭据能读回 `streak.days = 0`**（信封 ok、天数字段确值为 0，不是取不到）。所以 ADR-0031 那句「国际站没有签到、连登、旅行、成长任务」要收窄为：**国际站没有成长中心界面与档位兑换，但连登的读面与上报端点都是活的**。国际站要不要放开兑换/抽奖，取决于把天数报上去之后它涨不涨（下一条）。
+- 待证：国际站上报后 `days` 会不会从 0 起算。参考项目对 global 的 `Accept-Language`（en-US）、`X-Domain`、UA 平台段（`WorkBuddy AI` 而非 `WorkBuddy`）都按 realm 切，其中 `Accept-Language` 我们此前漏了（已改为复用本站 billing 头族）；UA 平台段我们送的是单段 `WorkBuddy/5.5.4`，与参考的三段式不同，是否影响计分未知。
 
 ## Considered Options
 
