@@ -20,6 +20,9 @@ import type { ProviderModule } from "./types";
 // - 两格各存用户填的**值**原文，键名与 Cookie 头由 Rust 端 mimo_cookie 通道拼（与 qoder 的
 //   qoder_cookie、workbuddy 的 session_cookie 同法）；前端只过字符集白名单，不加工输入
 // - UA 不占格：网关不绑定登录时 UA（CodexBar 硬编码 Chrome UA 实证），后端按编译目标给常量
+// - 扫码通道（ADR-0042）多一个目的地域：`https://account.xiaomi.com`（及其轮转子域
+//   `https://c3.account.xiaomi.com` / `https://ak.lp.account.xiaomi.com` 等，白名单按
+//   `*.account.xiaomi.com` 放行）。铸票三步都在 Rust 侧，前端不出这个域的 URL
 // - 响应是 {code, message, data} 信封，code=0 才取 data；未订阅账号的 data 里那些字段是
 //   **null** 而不是空数组/空串（2026-10-03 真机），所以逐项判空而不是假设形状
 //
@@ -32,6 +35,27 @@ const PROVIDER_NAME = "小米 MiMo";
 /** 两个凭据槽（值原文），键名见下方 Cookie 常量 */
 export const SERVICE_TOKEN_SLOT = "serviceToken";
 export const USER_ID_SLOT = "userId";
+/** 扫码通道的槽位（ADR-0042）：passToken 是 30 天的小米账号凭据，deviceId 是发起扫码时
+ *  自造并绑进票据与 sts 链的设备标识；serviceToken 不入库——它是会话级 Cookie，每轮刷新
+ *  由 Rust 用这两格现铸 */
+export const PASS_TOKEN_SLOT = "passToken";
+export const DEVICE_ID_SLOT = "deviceId";
+export const MIMO_PASS_SLOTS = [PASS_TOKEN_SLOT, USER_ID_SLOT, DEVICE_ID_SLOT] as const;
+/** 净切换到 Cookie 登录 / 退出扫码登录时要清除的**独占**槽。`userId` 不在其中：它是两条
+ *  通道共用的一格（Cookie 通道必填），把它一起清掉会让用户刚填的那格凭空变空、存完就
+ *  needs_config（代码审查 2026-10-10 指出）。互斥性由 resolveMimoChannel 优先看 passToken
+ *  保证，Rust 侧 claim 也只清 serviceToken，两边口径一致 */
+export const MIMO_PASS_CLEAR_SLOTS = [PASS_TOKEN_SLOT, DEVICE_ID_SLOT] as const;
+
+/** 通道判定（ADR-0035 互斥模型）：passToken 非空即扫码通道，否则两格齐走 Cookie 通道，
+ *  两者都缺返回 null（needs_config，文案同时给出两种出路） */
+export function resolveMimoChannel(
+  status: InstanceCredentialStatus,
+): "pass" | "cookie" | null {
+  if (status[PASS_TOKEN_SLOT]) return "pass";
+  if (status[SERVICE_TOKEN_SLOT] && status[USER_ID_SLOT]) return "cookie";
+  return null;
+}
 
 /** 凭据所在的 Cookie 名：槽里只有值，键名由 Rust 端拼进 Cookie 头 */
 export const SERVICE_TOKEN_COOKIE_NAME = "api-platform_serviceToken";
@@ -42,9 +66,11 @@ export const MIMO_BALANCE_URL = `${API_BASE}/balance`;
 export const MIMO_PLAN_DETAIL_URL = `${API_BASE}/tokenPlan/detail`;
 export const MIMO_PLAN_USAGE_URL = `${API_BASE}/tokenPlan/usage`;
 
-/** 凭据失效的话在卡片与设置页共用，避免两处口径漂移 */
+/** 凭据失效的话按通道给：出路不同（重扫 vs 重贴），不静默换通道（ADR-0024） */
 export const CREDENTIAL_EXPIRED_MESSAGE =
   "小米 MiMo 登录凭据无效或已过期，请在设置中重新填写 serviceToken 与 userId";
+export const PASS_EXPIRED_MESSAGE =
+  "小米账号授权已失效，请在设置中重新扫码（一次授权约可续 30 天）";
 
 /** 缺哪点点名哪点（WorkBuddy 同法）：两格都是出数前提，只补一格不会变好。返回的是
  *  Cookie 名本身（语言中性、不进字典），模板与参数见调用点 */
@@ -443,12 +469,16 @@ function settledOutcome<T>(
   return { ok: true, value };
 }
 
-async function requestMimo(url: string, instanceId: string): Promise<HttpResult> {
+async function requestMimo(
+  url: string,
+  instanceId: string,
+  auth: "mimo_cookie" | "mimo_pass",
+): Promise<HttpResult> {
   return invoke<HttpResult>("provider_request", {
     instanceId,
     url,
     method: "GET",
-    auth: "mimo_cookie",
+    auth,
     headers: mimoRequestHeaders(),
   });
 }
@@ -458,24 +488,27 @@ async function fetchMimoSnapshot(instance: ProviderInstance): Promise<ProviderSn
     instanceId: instance.id,
   });
   const updatedAt = Date.now();
-  if (!status[SERVICE_TOKEN_SLOT] || !status[USER_ID_SLOT]) {
+  const channel = resolveMimoChannel(status);
+  if (!channel) {
     return {
       instanceId: instance.id,
       providerId: "mimo",
       providerName: PROVIDER_NAME,
       status: "needs_config",
       updatedAt,
-      message: "请在设置中填写小米 MiMo 的 {slots}",
+      message: "请在设置中扫码登录小米 MiMo，或填写 {slots}",
       messageParams: { slots: mimoMissingCredentialSlots(status) },
       lines: [],
     };
   }
+  const expiredMessage = channel === "pass" ? PASS_EXPIRED_MESSAGE : CREDENTIAL_EXPIRED_MESSAGE;
+  const auth = channel === "pass" ? ("mimo_pass" as const) : ("mimo_cookie" as const);
 
   // 三路并行（GLM 同法）：余额与订阅是两回事，一个源挂了不该让另一个源的数据消失
   const [balanceSettled, detailSettled, usageSettled] = await Promise.allSettled([
-    requestMimo(MIMO_BALANCE_URL, instance.id),
-    requestMimo(MIMO_PLAN_DETAIL_URL, instance.id),
-    requestMimo(MIMO_PLAN_USAGE_URL, instance.id),
+    requestMimo(MIMO_BALANCE_URL, instance.id, auth),
+    requestMimo(MIMO_PLAN_DETAIL_URL, instance.id, auth),
+    requestMimo(MIMO_PLAN_USAGE_URL, instance.id, auth),
   ]);
 
   const balance = settledOutcome<MimoBalance>(balanceSettled, "balance", (data) =>
@@ -527,7 +560,7 @@ async function fetchMimoSnapshot(instance: ProviderInstance): Promise<ProviderSn
       ...snapshotBase,
       status: "error",
       // 凭据失效优先：三源同因，拼三份相同的话只会把真正要做的动作埋掉
-      message: credentialExpired ? CREDENTIAL_EXPIRED_MESSAGE : messages.join("；"),
+      message: credentialExpired ? expiredMessage : messages.join("；"),
       ...(credentialExpired ? {} : { messageParams }),
       lines: [],
     };

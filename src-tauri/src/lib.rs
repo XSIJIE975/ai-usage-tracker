@@ -14,6 +14,7 @@ mod instances;
 mod tray_scheme;
 mod vault;
 
+use commands::QrLoginSession;
 use commands::WorkbuddyLoginSession;
 use db::Db;
 use vault::{KeyringKeyStore, Vault};
@@ -26,6 +27,9 @@ pub struct AppState {
     /// WorkBuddy 扫码登录进行中的会话（instance_id → 会话，ADR-0034）：进程内存态，
     /// 上游 state 15 分钟有效；重启丢会话只是要求重扫，无持久化价值
     pub workbuddy_logins: Mutex<HashMap<String, WorkbuddyLoginSession>>,
+    /// 扫码登录进行中的会话（会话键 → 会话，ADR-0041 / ADR-0042）：Qoder 设备码与
+    /// MiMo 长轮询共用一张表，进程内存态，重启丢会话只是要求重扫
+    pub qr_logins: Mutex<HashMap<String, QrLoginSession>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -64,6 +68,7 @@ pub fn run() {
                 db: Mutex::new(db),
                 quick_shortcut: Mutex::new(None),
                 workbuddy_logins: Mutex::new(HashMap::new()),
+                qr_logins: Mutex::new(HashMap::new()),
             });
             // 托盘呈现状态（图标方案/计量快照/语言）独立于 AppState，由 tray_scheme 模块消费
             app.manage(tray_scheme::TrayState::default());
@@ -201,6 +206,13 @@ pub fn run() {
             commands::workbuddy_qr_poll,
             commands::workbuddy_qr_claim,
             commands::workbuddy_token_refresh,
+            commands::qoder_qr_start,
+            commands::qoder_qr_poll,
+            commands::qoder_qr_claim,
+            commands::qoder_token_refresh,
+            commands::mimo_qr_start,
+            commands::mimo_qr_poll,
+            commands::mimo_qr_claim,
             commands::open_main_window,
             commands::hide_quick_window,
             commands::toggle_quick_window,

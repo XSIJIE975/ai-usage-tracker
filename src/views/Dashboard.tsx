@@ -542,9 +542,10 @@ export function Dashboard() {
                     }
                     onEdit={() => setEditing(instance)}
                     onDelete={() => setDeleting(instance)}
-                    // 无统计面的实例（qoder，或国际站 workbuddy）不传入口，卡片不渲染「查看统计」
+                    // 没有统计面的实例（国际站 workbuddy 无消耗明细）不传入口；本轮取数通道
+                    // 没有明细源的（Qoder 扫码，ADR-0041）同样收掉，卡片不渲染「查看统计」
                     onOpenStats={
-                      providerHasStats(instance)
+                      providerHasStats(instance, snapshotOf(instance.id))
                         ? () => setStatsInstance(instance)
                         : undefined
                     }

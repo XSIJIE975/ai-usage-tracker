@@ -50,8 +50,17 @@ pub fn credential_label(kind: &str, slot: &str) -> Option<&'static str> {
         ("workbuddy", "expiresAt") => Some("WorkBuddy 扫码登录有效期"),
         ("workbuddy", "nickname") => Some("WorkBuddy 扫码账号昵称"),
         ("qoder", "cookie") => Some("Qoder 会话 Cookie 值"),
+        // Qoder 扫码 token 族（ADR-0041）：不进表单手填，鉴权分支与续期命令缺槽时点名
+        ("qoder", "accessToken") => Some("Qoder 扫码登录 access token"),
+        ("qoder", "refreshToken") => Some("Qoder 扫码登录 refresh token"),
+        ("qoder", "uid") => Some("Qoder 扫码账号 uid"),
+        ("qoder", "expiresAt") => Some("Qoder 扫码登录有效期"),
+        ("qoder", "nickname") => Some("Qoder 扫码账号昵称"),
         ("mimo", "serviceToken") => Some("小米 MiMo serviceToken"),
         ("mimo", "userId") => Some("小米 MiMo userId"),
+        // MiMo 扫码族（ADR-0042）：passToken 是 30 天的账号凭据，serviceToken 由它现铸
+        ("mimo", "passToken") => Some("小米账号 passToken"),
+        ("mimo", "deviceId") => Some("小米扫码设备标识"),
         _ => None,
     }
 }
@@ -175,6 +184,29 @@ pub fn workbuddy_token(credentials: &Value) -> Result<WorkbuddyToken, String> {
     })
 }
 
+/// Qoder 扫码 token 通道的鉴权材料（ADR-0041）：设备码确认后写入的 accessToken。
+/// 它是上游签发的不透明串（`dt-` 前缀，非 JWT），uid 由 poll 直接给、另存一槽供摘要
+/// 显示，鉴权用不上（真机实测：Bearer 单头即可，不需要 WorkBuddy 那套 X-User-Id 头族）。
+/// 值来自上游响应、不经用户手填，校验只挡异常值（空/超长/换行注入）
+pub fn qoder_access_token(credentials: &Value) -> Result<String, String> {
+    let access_token = instance_credential(credentials, "accessToken").ok_or_else(|| {
+        format!(
+            "缺少 {}",
+            credential_label("qoder", "accessToken").unwrap_or("accessToken")
+        )
+    })?;
+    if access_token.len() > MAX_TOKEN_LENGTH {
+        return Err("Qoder 扫码 token 异常（超长），请重新扫码登录".to_string());
+    }
+    if !access_token
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
+    {
+        return Err("Qoder 扫码 token 包含非法字符，请重新扫码登录".to_string());
+    }
+    Ok(access_token.to_string())
+}
+
 /// RFC 6265 cookie-value 字符集与长度上限。凭据是用户填的外部输入，拼进请求头之前必须先
 /// 过这关——白名单同时挡住 CRLF 头注入（字符集见 `is_cookie_value_chars`，三家共用）
 fn validate_cookie_value(value: &str) -> Result<String, String> {
@@ -242,6 +274,51 @@ pub fn mimo_cookies(credentials: &Value) -> Result<MimoCookies, String> {
     })
 }
 
+/// MiMo 扫码通道的鉴权材料（ADR-0042）：小米账号的 30 天凭据。`serviceToken` 是**会话级**
+/// Cookie（上游 Set-Cookie 既无 Max-Age 也无 Expires），所以不落盘——每轮刷新由这三格
+/// 现铸一张（`commands::mimo_mint_service_token`），用户一次扫码能撑到 passToken 过期
+#[derive(Debug)]
+pub struct MimoPass {
+    pub pass_token: String,
+    pub user_id: String,
+    /// 我们自己在发起扫码时生成的 `pc_<32hex>`：小米把它绑进票据与 sts 链，
+    /// 铸票时必须与登录时同一个（真机实测）
+    pub device_id: String,
+}
+
+pub fn mimo_pass(credentials: &Value) -> Result<MimoPass, String> {
+    let read = |name: &str, max: usize| -> Result<String, String> {
+        let raw = instance_credential(credentials, name).ok_or_else(|| {
+            format!("缺少 {}", credential_label("mimo", name).unwrap_or(name))
+        })?;
+        if raw.len() > max {
+            return Err(format!("{} 异常（超长），请重新扫码", credential_label("mimo", name).unwrap_or(name)));
+        }
+        if !is_cookie_value_chars(raw) {
+            return Err(format!(
+                "{} 包含非法字符，请重新扫码",
+                credential_label("mimo", name).unwrap_or(name)
+            ));
+        }
+        Ok(raw.to_string())
+    };
+    Ok(MimoPass {
+        pass_token: read("passToken", MAX_COOKIE_VALUE_LENGTH)?,
+        user_id: read("userId", 64)?,
+        // deviceId 是我们自己造的（pc_ + 32 hex），只允许更窄的字符集
+        device_id: {
+            let value = read("deviceId", 128)?;
+            if !value
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            {
+                return Err("小米扫码设备标识异常，请重新扫码".to_string());
+            }
+            value
+        },
+    })
+}
+
 /// UA 校验：浏览器 UA 是纯可见 ASCII；挡 CRLF 注入与误粘的整段请求
 fn validate_user_agent(value: &str) -> Result<String, String> {
     let value = value.trim();
@@ -303,10 +380,31 @@ const ALLOWED_HOSTS: &[(&str, &[&str])] = &[
             "www.codebuddy.cn",
         ],
     ),
-    ("qoder", &["qoder.com.cn", "qoder.com"]),
+    // qoder 后两条是扫码的 token 通道（ADR-0041）：openapi.qoder.com.cn 与
+    // openapi.qoder.sh 分别承载两站的设备码 poll/refresh 与 /sash/api/v2/me/usage。
+    // 前两域仍是 Cookie 通道的目的地；web 域不读 Bearer（真机实测：带设备 token 与
+    // 完全不带凭据的响应逐字相同），所以两条通道的目的地域不重叠
+    (
+        "qoder",
+        &[
+            "qoder.com.cn",
+            "qoder.com",
+            "openapi.qoder.com.cn",
+            "openapi.qoder.sh",
+        ],
+    ),
     // 小米 MiMo：mimo.mi.com 是同一账号空间的另一个前置域名（裸探 401 的 loginUrl 指向
-    // 同一个 account.xiaomi.com STS 会话），登录态种在 xiaomimimo.com 侧，故只登记这一条
-    ("mimo", &["platform.xiaomimimo.com"]),
+    // 同一个 account.xiaomi.com STS 会话），登录态种在 xiaomimimo.com 侧，故只登记这一条。
+    // 扫码通道（ADR-0042）另放行小米账号域：票据主机每次轮转（ak.account.xiaomi.com /
+    // c3.account.xiaomi.com / ak.lp.account.xiaomi.com），无法精确枚举，故用 `*.` 开子域
+    (
+        "mimo",
+        &[
+            "platform.xiaomimimo.com",
+            "account.xiaomi.com",
+            "*.account.xiaomi.com",
+        ],
+    ),
 ];
 
 /// 该种类允许的目标域名；未登记的种类返回 None，调用方按拒绝处理
@@ -318,28 +416,42 @@ pub fn allowed_hosts(kind: &str) -> Option<&'static [&'static str]> {
         .map(|(_, hosts)| *hosts)
 }
 
-/// 目的地面校验：只放 https、只放登记表内的精确主机名，且不接受 userinfo 与端口。
-/// 主机名精确比对而非后缀匹配——`www.workbuddy.cn.evil.com` 这类以允许域结尾的地址
-/// 必须被拒；带尾点的 FQDN 同样不匹配即拒，属 fail-closed（前端常量里不存在这种写法）
+/// 目的地面校验：只放 https、只放登记表内的主机名，且不接受 userinfo 与端口。
+/// 默认精确比对；表里写成 `*.域` 的条目额外放行该域本身与它**点边界**下的子域
+/// （见 `host_allowed`）。带尾点的 FQDN 不匹配即拒，属 fail-closed（前端常量里不存在这种写法）
 fn check_request_url(url: &str, allowed: &[&str]) -> Result<(), String> {
-    let parsed = reqwest::Url::parse(url).map_err(|_| format!("请求地址无法解析：{url}"))?;
+    // 失败文案里**不回显整条 URL**：这里的输入有一部分来自上游响应（小米的 loginUrl 与
+    // sts location 带着服务方现签的 sign/auth/ticket），原样带出去就是把它写进界面与
+    // 错误快照。只报 host，解析不出就报「无法解析」
+    let parsed = reqwest::Url::parse(url)
+        .map_err(|_| "请求地址无法解析（已拒绝）".to_string())?;
+    let host = parsed.host_str().unwrap_or_default();
     if parsed.scheme() != "https" {
-        return Err(format!("只允许 https 请求：{url}"));
+        return Err(format!("只允许 https 请求：{host}"));
     }
     if !parsed.username().is_empty() || parsed.password().is_some() {
-        return Err(format!("请求地址不允许携带用户名或密码：{url}"));
+        return Err(format!("请求地址不允许携带用户名或密码：{host}"));
     }
     if parsed.port().is_some() {
-        return Err(format!("请求地址不允许指定端口：{url}"));
+        return Err(format!("请求地址不允许指定端口：{host}"));
     }
-    let host = parsed.host_str().unwrap_or_default();
-    if !allowed.iter().any(|item| *item == host) {
+    if !allowed.iter().any(|item| host_allowed(host, item)) {
         return Err(format!(
             "拒绝向 {host} 发请求：不在允许的域名表内（{}）",
             allowed.join("、")
         ));
     }
     Ok(())
+}
+
+/// 单个表项与主机名的比对。`*.域` 放行「该域本身」与「.<域> 结尾且前缀是若干 DNS 标签」
+/// 的子域；点边界是必须的——少了它 `notaccount.xiaomi.com` 会被 `account.xiaomi.com`
+/// 误放。反过来 `account.xiaomi.com.evil.com` 不以该域结尾，两种写法都进不来
+fn host_allowed(host: &str, item: &str) -> bool {
+    match item.strip_prefix("*.") {
+        Some(suffix) => host == suffix || host.ends_with(&format!(".{suffix}")),
+        None => item == host,
+    }
 }
 
 /// provider_request 用：按实例所属种类收窄。跨种类端点（拿 glm 的 key 去打
@@ -1006,8 +1118,25 @@ mod tests {
     }
 
     #[test]
+    fn qr_derived_credentials_are_charset_checked_before_hedering() {
+        // 这两族的值都来自上游响应、不经用户手填，但一样要拼进请求头：字符集关挡的是
+        // CRLF 注入与异常长度，收紧过头则会误伤真机凭据（`dt-` 含 `-`、passToken 含 `:`）
+        assert!(qoder_access_token(&json!({ "accessToken": "dt-U7Kf2p_xQ9r.abc" })).is_ok());
+        assert!(qoder_access_token(&json!({ "accessToken": "dt-bad\r\nX: 1" })).is_err());
+        assert!(qoder_access_token(&json!({ "accessToken": "" })).is_err());
+        assert!(qoder_access_token(&json!({})).is_err());
+
+        let pass = json!({ "passToken": "V1:stub+tok/==", "userId": "123456789", "deviceId": "pc_ab12" });
+        let parsed = mimo_pass(&pass).expect("真机形态应通过");
+        assert_eq!(parsed.user_id, "123456789");
+        assert!(mimo_pass(&json!({ "passToken": "a", "userId": "7", "deviceId": "pc a" })).is_err());
+        assert!(mimo_pass(&json!({ "passToken": "a\r\nX: 1", "userId": "7", "deviceId": "pc_a" })).is_err());
+        assert!(mimo_pass(&json!({ "userId": "7", "deviceId": "pc_a" })).is_err());
+    }
+
+    #[test]
     fn request_url_rejects_lookalike_and_downgrade_targets() {
-        // 以允许域结尾的第三方主机名（后缀匹配会误放行，所以只做精确比对）
+        // 以允许域结尾的第三方主机名（前缀拼 evil.com，精确比对与子域规则都进不来）
         assert!(validate_request_url("workbuddy", "https://www.workbuddy.cn.evil.com/x").is_err());
         // 允许域写进 userinfo，目的地其实是 evil.com
         assert!(validate_request_url("workbuddy", "https://www.workbuddy.cn@evil.com/x").is_err());
@@ -1016,6 +1145,29 @@ mod tests {
         assert!(validate_request_url("qoder", "https://qoder.com:8443/api").is_err());
         assert!(validate_request_url("qoder", "不是地址").is_err());
         assert!(validate_request_url("skynet", "https://qoder.com/api").is_err());
+    }
+
+    #[test]
+    fn wildcard_host_entry_opens_the_domain_and_its_subdomains_only() {
+        // 小米的扫码票据主机每次轮转（ADR-0042）：`*.account.xiaomi.com` 要放行域本身与
+        // 它点边界下的子域，长轮询主机也在内
+        assert!(validate_request_url("mimo", "https://account.xiaomi.com/pass/serviceLogin").is_ok());
+        assert!(validate_request_url("mimo", "https://c3.account.xiaomi.com/longPolling/login").is_ok());
+        assert!(validate_request_url("mimo", "https://ak.lp.account.xiaomi.com/lp/s?k=lp_x").is_ok());
+        // 少了点边界就不是子域：这条是子域放行唯一真正新增的风险面
+        assert!(validate_request_url("mimo", "https://notaccount.xiaomi.com/x").is_err());
+        assert!(validate_request_url("mimo", "https://account.xiaomi.com.evil.com/x").is_err());
+        // 子域规则只属于 mimo：qoder 的表项仍是精确比对
+        assert!(validate_request_url("qoder", "https://c3.account.xiaomi.com/x").is_err());
+        assert!(
+            validate_request_url("qoder", "https://openapi.qoder.com.cn/sash/api/v2/me/usage").is_ok()
+        );
+        // 两站的 openapi 都登记（国际站扫码走 openapi.qoder.sh，ADR-0041）
+        assert!(
+            validate_request_url("qoder", "https://openapi.qoder.sh/api/v1/deviceToken/poll").is_ok()
+        );
+        // 但精确比对不放子域：拼一个前缀进来照样进不去
+        assert!(validate_request_url("qoder", "https://evil-openapi.qoder.sh/x").is_err());
     }
 
     #[test]

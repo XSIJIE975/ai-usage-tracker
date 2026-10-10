@@ -85,12 +85,22 @@ export const en: Record<string, string> = {
   "退出扫码登录": "Sign out of QR login",
   "发起扫码": "Start QR sign-in",
   "扫码账号：{name} · 有效期至 {date}": "Signed in as {name} · valid until {date}",
+  "扫码账号：{name}": "Signed in as {name}",
+  "有效期至 {date}": "Valid until {date}",
   "未知账号": "unknown account",
   "未知": "unknown",
   "手机扫码完成 WorkBuddy 登录，自动获取凭据并每日续期。":
     "Scan with your phone to sign in to WorkBuddy — credentials are fetched and renewed daily.",
   "用手机浏览器或微信扫码，完成登录后此处自动继续。":
     "Scan with your phone browser or WeChat; this continues automatically once you sign in.",
+  "手机扫码完成 Qoder 登录，自动获取凭据并按有效期续期。":
+    "Scan with your phone to sign in to Qoder — credentials are fetched and renewed before they expire.",
+  "用手机浏览器扫码打开授权页，完成登录后此处自动继续。":
+    "Open the sign-in page from your phone browser; this continues automatically once you sign in.",
+  "扫码或另一台设备登录小米账号完成授权，一次约可续 30 天。":
+    "Scan, or sign in to your Xiaomi account on another device — one authorisation lasts about 30 days.",
+  "用小米手机「设置 > 小米账号」扫码，或在另一台设备打开链接登录小米账号。":
+    "Scan with Settings > Xiaomi Account on a Xiaomi device, or open the link on another device and sign in.",
   "复制登录链接": "Copy sign-in link",
   "换一个": "New code",
   "二维码已过期，请重新发起扫码。": "The QR code has expired — start a new one.",
@@ -115,6 +125,10 @@ export const en: Record<string, string> = {
     "Qoder credentials are invalid or expired — paste the qoder_session_cookie value again in Settings",
   "请在设置中粘贴 Qoder 会话 Cookie（qoder_session_cookie）的值":
     "Paste the Qoder session cookie value (qoder_session_cookie) in Settings",
+  "请在设置中扫码登录 Qoder，或粘贴会话 Cookie（qoder_session_cookie）的值":
+    "Scan to sign in to Qoder in Settings, or paste the session cookie value (qoder_session_cookie)",
+  "Qoder 扫码登录已失效，请在设置中重新扫码；或改用 Cookie 登录":
+    "The Qoder scan-in session is invalid or expired — re-scan in Settings, or switch to cookie sign-in",
   "积分接口返回 HTTP {status}{detail}": "Credits API returned HTTP {status}{detail}",
   "积分接口查询失败：{detail}": "Credits query failed: {detail}",
   "积分接口返回数据解析失败：{detail}": "Failed to parse credits response: {detail}",
@@ -814,6 +828,10 @@ export const en: Record<string, string> = {
   "查询小米 MiMo 的 Token Plan 额度与账户余额":
     "Track the Xiaomi MiMo Token Plan quota and account balance",
   "请在设置中填写小米 MiMo 的 {slots}": "Enter the Xiaomi MiMo {slots} in Settings",
+  "请在设置中扫码登录小米 MiMo，或填写 {slots}":
+    "Scan to sign in to Xiaomi MiMo in Settings, or enter {slots}",
+  "小米账号授权已失效，请在设置中重新扫码（一次授权约可续 30 天）":
+    "The Xiaomi account authorisation has expired — re-scan in Settings (one scan lasts about 30 days)",
   "小米 MiMo 登录凭据无效或已过期，请在设置中重新填写 serviceToken 与 userId":
     "Xiaomi MiMo sign-in credential is invalid or expired — re-enter serviceToken and userId in Settings",
   "请先填写小米 MiMo 的 serviceToken 与 userId":

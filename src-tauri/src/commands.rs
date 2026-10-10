@@ -1113,6 +1113,36 @@ pub async fn provider_request(
                 .or_insert_with(|| MIMO_DEFAULT_UA.to_string());
         }
         Some("mimo_cookie") => return Err("不支持的 provider mimo_cookie auth".to_string()),
+        Some("qoder_device") if kind == "qoder" => {
+            // 扫码 token 通道（ADR-0041）：Bearer 设备 token 打 openapi 上的 /sash 族。
+            // 逆向实现附带的 Cosy-ClientType 与 UA "Qoder" 对用量端点是无效变量
+            // （真机 A/B：10 / 5 / 不发 三份 body 逐字相同），所以这里只发 Bearer
+            let token = instances::qoder_access_token(&instance_credentials)?;
+            headers.insert("Authorization".to_string(), format!("Bearer {token}"));
+        }
+        Some("qoder_device") => {
+            return Err("不支持的 provider qoder_device auth".to_string())
+        }
+        Some("mimo_pass") if kind == "mimo" => {
+            // 扫码通道（ADR-0042）：vault 里存的是 30 天的 passToken，而 serviceToken 是
+            // 会话级 Cookie（上游 Set-Cookie 不给 Max-Age），所以每轮刷新在这里现铸一张
+            // 再拼头——铸票三步都在 mimo_mint_service_token，前端全程不接触小米凭据
+            let pass = instances::mimo_pass(&instance_credentials)?;
+            let service_token = mimo_mint_service_token(&pass).await?;
+            headers.insert(
+                "Cookie".to_string(),
+                format!(
+                    "{}={service_token}; {}={}",
+                    instances::MIMO_SERVICE_TOKEN_COOKIE,
+                    instances::MIMO_USER_ID_COOKIE,
+                    pass.user_id
+                ),
+            );
+            headers
+                .entry("User-Agent".to_string())
+                .or_insert_with(|| MIMO_DEFAULT_UA.to_string());
+        }
+        Some("mimo_pass") => return Err("不支持的 provider mimo_pass auth".to_string()),
         Some("cookie") => return Err("不支持的 provider cookie auth".to_string()),
         _ => {}
     }
@@ -1652,6 +1682,719 @@ pub async fn workbuddy_token_refresh(
     Ok(true)
 }
 
+// ─── 扫码登录：Qoder 设备码与小米 MiMo 长轮询（ADR-0041 / ADR-0042）───
+
+/// 进行中的扫码会话（进程内存态，与 WorkBuddy 的 workbuddy_logins 同法但三家共用一张表）。
+/// 键是我们自己生成的 uuid——上游的 state/nonce/ticket 只存在会话里，不外泄成前端可见的
+/// 会话键（ADR-0035 当年用 state 当键，理由是「已在二维码里曝光」；uuid 更省事也更干净）
+#[derive(Clone)]
+pub struct QrLoginSession {
+    pub kind: String,
+    pub site: String,
+    pub created_at: i64,
+    /// 本会话的等待窗口：Qoder 沿用 WorkBuddy 的 15 分钟，MiMo 用上游给的 timeout
+    pub ttl_ms: i64,
+    /// 等待凭据：Qoder 是本地生成的 code_verifier，MiMo 是我们自造的 deviceId
+    pub secret: String,
+    /// 轮询地址：Qoder 由本地参数拼好，MiMo 是上游回的 lp
+    pub poll_url: String,
+    /// 确认后暂存的凭据（槽位 json）；None = 尚未确认
+    pub credentials: Option<Value>,
+}
+
+const QR_LOGIN_DEFAULT_TTL_MS: i64 = 15 * 60 * 1000;
+
+fn qr_session(state: &State<'_, AppState>, session_key: &str) -> Result<Option<QrLoginSession>, String> {
+    let now = db::chrono_utc_now();
+    let mut logins = state.qr_logins.lock().expect("qr login lock poisoned");
+    match logins.get(session_key) {
+        Some(session) if now - session.created_at <= session.ttl_ms => Ok(Some(session.clone())),
+        Some(_) => {
+            logins.remove(session_key);
+            Ok(None)
+        }
+        None => Ok(None),
+    }
+}
+
+fn qr_session_store(state: &State<'_, AppState>, session_key: &str, session: QrLoginSession) {
+    state
+        .qr_logins
+        .lock()
+        .expect("qr login lock poisoned")
+        .insert(session_key.to_string(), session);
+}
+
+/// 小米 MiMo 的扫码产物只有 passToken 能落盘（30 天），serviceToken 每轮现铸
+fn qr_staged_credentials(state: &State<'_, AppState>, session_key: &str) -> Result<Value, String> {
+    let session = qr_session(state, session_key)?
+        .ok_or_else(|| "扫码会话不存在或已过期，请重新发起扫码".to_string())?;
+    session
+        .credentials
+        .clone()
+        .ok_or_else(|| "扫码会话尚未确认，请等待手机完成登录".to_string())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QrStartResponse {
+    /// 授权链接：整段编码为二维码或复制到浏览器打开，截断即失效
+    pub auth_url: String,
+    /// 会话键（我们自造的 uuid）：后续 poll 与 claim 都用它
+    pub session_key: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QrPollResponse {
+    /// pending=等待另一侧完成登录；confirmed=已换到凭据并暂存；expired=会话过期需重扫
+    pub status: String,
+    pub nickname: Option<String>,
+    pub expires_at_ms: Option<i64>,
+}
+
+/// Qoder 设备码的两站常量。CN 的 client_id/redirect_uri 是 2026-10-09 真机扫码实证的
+/// （QoderWork CN 桌面端那一个）；国际站那一对出自 yetone/magpie（注释标 verified against
+/// live captures），端点存在性另经零凭据探测确认，2026-10-10 也已应用内扫码实证。
+/// 同站可以有多个合法 client_id：`e883ade2-…` 是 Qoder CLI 两家共用的那一个
+struct QoderDeviceSite {
+    website: &'static str,
+    openapi: &'static str,
+    client_id: &'static str,
+    redirect_uri: &'static str,
+}
+
+const QODER_DEVICE_CHINA: QoderDeviceSite = QoderDeviceSite {
+    website: "qoder.com.cn",
+    openapi: "openapi.qoder.com.cn",
+    // QoderWork CN prod 的 OAuth client_id（逆向实现同款，真机扫码实证可用）
+    client_id: "1c5e33e1-364d-4ce6-b02c-acaa81274a5c",
+    redirect_uri: "qoder-work-cn://",
+};
+
+const QODER_DEVICE_INTERNATIONAL: QoderDeviceSite = QoderDeviceSite {
+    website: "qoder.com",
+    openapi: "openapi.qoder.sh",
+    client_id: "732aef47-9cf2-46a2-95fe-4cebb5d0d1fa",
+    redirect_uri: "qoder-app://",
+};
+
+fn qoder_device_site(site: &str) -> &'static QoderDeviceSite {
+    if site == "international" {
+        &QODER_DEVICE_INTERNATIONAL
+    } else {
+        &QODER_DEVICE_CHINA
+    }
+}
+
+/// 发起 Qoder 扫码：**不打任何上游请求**——设备码流程的 PKCE 对、nonce、machine_id 全部
+/// 本地生成，授权链接拼出来就能开始轮询。所以「用户还没打开授权页」时 poll 只会拿到
+/// 404 NotFound（服务端还不认识这个 nonce），那是等待态而不是错误
+#[tauri::command]
+pub async fn qoder_qr_start(state: State<'_, AppState>, site: String) -> Result<QrStartResponse, String> {
+    let device = qoder_device_site(&site);
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use base64::Engine as _;
+    use sha2::{Digest, Sha256};
+
+    let mut raw_verifier = [0u8; 32];
+    rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut raw_verifier);
+    let verifier = URL_SAFE_NO_PAD.encode(raw_verifier);
+    let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+    let nonce = uuid::Uuid::new_v4().to_string();
+    // 每次扫码新生成（逆向实现同款设备隔离：池内多账号不该被上游看成同一台设备）
+    let machine_id = uuid::Uuid::new_v4().to_string();
+
+    let auth_url = format!(
+        "https://{}/device/selectAccounts?challenge={}&challenge_method=S256&nonce={}&machine_id={}&client_id={}&redirect_uri={}",
+        device.website,
+        urlencoding(&challenge),
+        urlencoding(&nonce),
+        urlencoding(&machine_id),
+        urlencoding(device.client_id),
+        urlencoding(device.redirect_uri),
+    );
+    let poll_url = format!(
+        "https://{}/api/v1/deviceToken/poll?nonce={}&verifier={}&challenge_method=S256",
+        device.openapi,
+        urlencoding(&nonce),
+        urlencoding(&verifier),
+    );
+    let session_key = uuid::Uuid::new_v4().to_string();
+    qr_session_store(
+        &state,
+        &session_key,
+        QrLoginSession {
+            kind: "qoder".to_string(),
+            site,
+            created_at: db::chrono_utc_now(),
+            ttl_ms: QR_LOGIN_DEFAULT_TTL_MS,
+            secret: verifier,
+            poll_url,
+            credentials: None,
+        },
+    );
+    Ok(QrStartResponse { auth_url, session_key })
+}
+
+/// 极简百分号编码：授权链接与轮询地址里的参数值都是我们自己生成的（uuid / base64url，
+/// 只可能带 `+` `/` `=` `-` `_`），`+` 在 query 里会被解成空格，故必须编。
+/// 不用 urlencoding crate：为三五个字符引一个新依赖不值当
+fn urlencoding(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char);
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
+/// 轮询 Qoder 设备码：200 且带 token = 确认；401/403 = 硬错误（client_id/参数被拒）；
+/// **其余（404/425/429/5xx）一律 pending**——未授权时上游就是回 404 NotFound
+#[tauri::command]
+pub async fn qoder_qr_poll(
+    state: State<'_, AppState>,
+    session_key: String,
+) -> Result<QrPollResponse, String> {
+    let Some(session) = qr_session(&state, &session_key)? else {
+        return Ok(QrPollResponse { status: "expired".to_string(), nickname: None, expires_at_ms: None });
+    };
+    if let Some(credentials) = &session.credentials {
+        // 已确认过：device token 是一次性换发的，重复轮询只回放结果，不再打上游。
+        // 有效期不在这里回——它按上游的 ISO 串原样存在 expiresAt 槽，摘要行由前端格式化
+        let nickname = instances::instance_credential(credentials, "nickname").map(String::from);
+        return Ok(QrPollResponse { status: "confirmed".to_string(), nickname, expires_at_ms: None });
+    }
+    let device = qoder_device_site(&session.site);
+    let response = http_client()
+        .get(&session.poll_url)
+        .header("Accept", "application/json, text/plain, */*")
+        .send()
+        .await
+        .map_err(|error| network_error_text(&error))?;
+    let status = response.status();
+    let body = response.text().await.map_err(|error| network_error_text(&error))?;
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return Err(format!(
+            "Qoder 设备码被上游拒绝（HTTP {}）：{}",
+            status.as_u16(),
+            truncate_error_body(&body)
+        ));
+    }
+    if !status.is_success() {
+        return Ok(QrPollResponse { status: "pending".to_string(), nickname: None, expires_at_ms: None });
+    }
+    let json: Value = serde_json::from_str(&body)
+        .map_err(|error| format!("Qoder 设备码响应不是 JSON：{error}"))?;
+    let access_token = json["token"].as_str().or_else(|| json["device_token"].as_str()).unwrap_or("");
+    if access_token.is_empty() {
+        // 2xx 但没 token：与逆向实现一致，按「还没完成」继续等
+        return Ok(QrPollResponse { status: "pending".to_string(), nickname: None, expires_at_ms: None });
+    }
+    let refresh_token = json["refresh_token"].as_str().unwrap_or_default().to_string();
+    // 有效期只信绝对时刻 expires_at（ISO 串）：同响应里的 expires_in 实测是 2591999998
+    // （按秒算是 82 年），是坏值——逆向实现那句「优先用 expires_in」不能照抄
+    let expires_at_raw = json["expires_at"].as_str().unwrap_or_default().to_string();
+    let uid = json["user_id"].as_str().unwrap_or_default().trim().to_string();
+    if uid.is_empty()
+        || uid.len() > 64
+        || !uid.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err("扫码账号信息异常（uid 非法），请重新扫码".to_string());
+    }
+    // 昵称只为摘要那一行；拿不到不阻断登录（uid 足够点名账号）
+    let nickname = match http_client()
+        .get(format!("https://{}/api/v1/userinfo", device.openapi))
+        .header("Accept", "application/json")
+        .header("Authorization", format!("Bearer {access_token}"))
+        .send()
+        .await
+    {
+        Ok(response) => match response.text().await {
+            Ok(body) => serde_json::from_str::<Value>(&body)
+                .ok()
+                .and_then(|info| info["name"].as_str().map(String::from))
+                .unwrap_or_default(),
+            Err(_) => String::new(),
+        },
+        Err(_) => String::new(),
+    };
+
+    let mut credentials = serde_json::json!({
+        "accessToken": access_token,
+        "uid": uid,
+    });
+    if let Some(object) = credentials.as_object_mut() {
+        for (slot, value) in [
+            ("refreshToken", refresh_token),
+            ("nickname", nickname.clone()),
+            ("expiresAt", expires_at_raw),
+        ] {
+            if !value.is_empty() {
+                object.insert(slot.to_string(), Value::String(value));
+            }
+        }
+    }
+    qr_session_store(
+        &state,
+        &session_key,
+        // 确认即重置 TTL：claim 窗口自确认时刻重新计（用户扫完还要填备注/阈值再点保存，
+        // 不该被发起时刻的窗口挤掉——与 WorkBuddy 的 qr_poll 同一处理）
+        QrLoginSession { credentials: Some(credentials), created_at: db::chrono_utc_now(), ..session },
+    );
+    Ok(QrPollResponse {
+        status: "confirmed".to_string(),
+        nickname: if nickname.is_empty() { None } else { Some(nickname) },
+        expires_at_ms: None,
+    })
+}
+
+/// 上游错误体可能很长（HTML 页），点名用截断
+fn truncate_error_body(body: &str) -> String {
+    let trimmed = body.trim();
+    if trimmed.chars().count() > 200 {
+        format!("{}…", trimmed.chars().take(200).collect::<String>())
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// 认领 Qoder 扫码产物：写 token 族并清空 Cookie 槽（登录方式互斥，ADR-0035 同款）
+#[tauri::command]
+pub async fn qoder_qr_claim(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    instance_id: String,
+    session_key: String,
+) -> Result<(), String> {
+    let instance = qr_instance_of(&state, &instance_id, "qoder")?;
+    let mut credentials = qr_staged_credentials(&state, &session_key)?;
+    if let Some(object) = credentials.as_object_mut() {
+        object.insert("cookie".to_string(), Value::Null);
+    }
+    save_instance_credentials(state.clone(), &instance.id, &credentials)?;
+    state
+        .qr_logins
+        .lock()
+        .expect("qr login lock poisoned")
+        .remove(&session_key);
+    let _ = app.emit("credentials-changed", ());
+    Ok(())
+}
+
+/// Qoder token 续期（ADR-0041）：`POST deviceToken/refresh {refresh_token}`，上游把
+/// access 与 refresh **双双轮换**，所以两个槽必须一起写回；响应不含 user_id，
+/// 首扫拿到的 uid 原样保留。失败返回 Err，旧 token 保留下轮再试
+#[tauri::command]
+pub async fn qoder_token_refresh(
+    state: State<'_, AppState>,
+    instance_id: String,
+) -> Result<bool, String> {
+    let instance = qr_instance_of(&state, &instance_id, "qoder")?;
+    let device = qoder_device_site(&instance.site);
+    let instance_credentials = {
+        let vault = state.vault.lock().expect("vault lock poisoned");
+        vault
+            .credentials()?
+            .get(&instance_id)
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    let refresh_token = instances::instance_credential(&instance_credentials, "refreshToken")
+        .ok_or_else(|| {
+            format!(
+                "缺少 {}，请重新扫码登录",
+                instances::credential_label("qoder", "refreshToken").unwrap_or("refreshToken")
+            )
+        })?
+        .to_string();
+    let response = http_client()
+        .post(format!("https://{}/api/v1/deviceToken/refresh", device.openapi))
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json")
+        .header("Authorization", format!("Bearer {refresh_token}"))
+        // 用 serde 拼体：refresh_token 是上游签发的值，手写转义一旦它含引号/反斜杠就成坏
+        // JSON（该槽此前从没经过 qoder_access_token 那套字符集校验）
+        .body(serde_json::json!({ "refresh_token": refresh_token }).to_string())
+        .send()
+        .await
+        .map_err(|error| network_error_text(&error))?;
+    let status = response.status();
+    let body = response.text().await.map_err(|error| network_error_text(&error))?;
+    if !status.is_success() {
+        return Err(format!(
+            "Qoder token 续期失败（HTTP {}）：{}",
+            status.as_u16(),
+            truncate_error_body(&body)
+        ));
+    }
+    let json: Value = serde_json::from_str(&body)
+        .map_err(|error| format!("Qoder token 续期响应不是 JSON：{error}"))?;
+    let access_token = json["device_token"].as_str().or_else(|| json["token"].as_str()).unwrap_or("");
+    if access_token.is_empty() {
+        return Err("Qoder token 续期响应缺少 token，旧 token 已保留".to_string());
+    }
+    let mut credentials = serde_json::json!({ "accessToken": access_token });
+    if let Some(object) = credentials.as_object_mut() {
+        for (slot, key) in [("refreshToken", "refresh_token"), ("expiresAt", "expires_at")] {
+            if let Some(value) = json[key].as_str() {
+                object.insert(slot.to_string(), Value::String(value.to_string()));
+            }
+        }
+    }
+    save_instance_credentials(state, &instance_id, &credentials)?;
+    Ok(true)
+}
+
+/// 校验实例属于某个种类并返回它（三家扫码命令的公共前置，替代 WorkBuddy 那个同名私有函数）
+fn qr_instance_of(
+    state: &State<'_, AppState>,
+    instance_id: &str,
+    kind: &str,
+) -> Result<db::StoredInstance, String> {
+    let db = state.db.lock().expect("db lock poisoned");
+    let instance = db
+        .get_instance(instance_id)?
+        .ok_or_else(|| "供应商实例不存在，请刷新后重试".to_string())?;
+    if instance.provider_id != kind {
+        return Err(format!("扫码登录仅支持 {kind} 实例"));
+    }
+    Ok(instance)
+}
+
+// ─── 小米 MiMo 扫码（ADR-0042）───
+
+const MIMO_CONSOLE_ORIGIN: &str = "https://platform.xiaomimimo.com";
+const MIMO_ACCOUNT_SITE: &str = "https://account.xiaomi.com";
+const MIMO_SID: &str = "api-platform";
+
+/// 小米的 JSON 响应带 `&&&START&&&` 前缀（真机实测），从第一个 `{` 起解
+fn mimo_json(body: &str) -> Result<Value, String> {
+    let start = body.find('{').ok_or_else(|| "小米响应不是 JSON".to_string())?;
+    serde_json::from_str(&body[start..]).map_err(|error| format!("小米响应不是 JSON：{error}"))
+}
+
+/// 扫码会话用的 Cookie：deviceId 是我们自造的 `pc_<32hex>`，铸票与轮询都必须与
+/// 登录时同一个（真机实测：sts 链里的 `d=` 参数就是它）
+fn mimo_device_cookie(device_id: &str) -> String {
+    format!("deviceId={device_id}; pass_ua=pc; uLocale=zh_CN")
+}
+
+fn mimo_new_device_id() -> String {
+    let mut raw = [0u8; 16];
+    rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut raw);
+    let hex: String = raw.iter().map(|byte| format!("{byte:02x}")).collect();
+    format!("pc_{hex}")
+}
+
+/// 发起 MiMo 扫码：serviceLogin 拿 qs/_sign → longPolling/loginUrl 签票据。
+/// 票据主机每次轮转（ak. / c3. 前缀），故 lp 地址整条存进会话，不在本地重拼
+#[tauri::command]
+pub async fn mimo_qr_start(state: State<'_, AppState>, site: String) -> Result<QrStartResponse, String> {
+    let device_id = mimo_new_device_id();
+    let cookie = mimo_device_cookie(&device_id);
+    let callback = format!("{MIMO_CONSOLE_ORIGIN}/sts");
+    let login = http_client()
+        .get(format!(
+            "{MIMO_ACCOUNT_SITE}/pass/serviceLogin?sid={MIMO_SID}&_group=DEFAULT&_json=true&callback={}",
+            urlencoding(&callback)
+        ))
+        .header("Accept", "application/json, text/plain, */*")
+        .header("Cookie", &cookie)
+        .send()
+        .await
+        .map_err(|error| network_error_text(&error))?;
+    let login_body = login.text().await.map_err(|error| network_error_text(&error))?;
+    let login_json = mimo_json(&login_body)?;
+    // 裸探时这一趟回 code 70016「登录验证失败」是正常态（还没登录），qs/_sign/callback 照发
+    let ticket_response = http_client()
+        .get(format!("{MIMO_ACCOUNT_SITE}/longPolling/loginUrl"))
+        .header("Accept", "application/json, text/plain, */*")
+        .header("Cookie", &cookie)
+        .query(&[
+            ("_group", "DEFAULT"),
+            ("_qrsize", "240"),
+            ("qs", login_json["qs"].as_str().unwrap_or_default()),
+            ("bizDeviceType", ""),
+            ("callback", login_json["callback"].as_str().unwrap_or(&callback)),
+            ("theme", ""),
+            ("sid", MIMO_SID),
+            ("needTheme", "false"),
+            ("showActiveX", "false"),
+            ("serviceParam", login_json["serviceParam"].as_str().unwrap_or_default()),
+            ("_locale", "zh_CN"),
+            ("_sign", login_json["_sign"].as_str().unwrap_or_default()),
+        ])
+        .send()
+        .await
+        .map_err(|error| network_error_text(&error))?;
+    let ticket_body = ticket_response.text().await.map_err(|error| network_error_text(&error))?;
+    let ticket = mimo_json(&ticket_body)?;
+    let login_url = ticket["loginUrl"].as_str().unwrap_or_default();
+    let poll_url = ticket["lp"].as_str().unwrap_or_default();
+    if ticket["code"].as_i64() != Some(0) || login_url.is_empty() || poll_url.is_empty() {
+        return Err(format!(
+            "小米扫码票据签发失败：{}",
+            ticket["description"]
+                .as_str()
+                .or(ticket["desc"].as_str())
+                .filter(|value| !value.is_empty())
+                .unwrap_or("上游未说明原因")
+        ));
+    }
+    // 票据主机每次轮转（ak. / c3. / ak.lp.），这两个地址都来自上游响应：先过目的地面
+    // 再存进会话，不给后面「带着 deviceId 打任意主机」留口子
+    instances::validate_request_url("mimo", login_url)?;
+    instances::validate_request_url("mimo", poll_url)?;
+    // 票据有效期由上游给（实测 300 秒），加 30 秒余量覆盖最后一轮挂起；上限 15 分钟，
+    // 不无条件信上游（会话是内存态，被拉长只会让放弃的凭据多驻留一阵）
+    let ttl_ms = (ticket["timeout"].as_i64().unwrap_or(300).max(60) * 1000 + 30_000)
+        .min(QR_LOGIN_DEFAULT_TTL_MS);
+    let session_key = uuid::Uuid::new_v4().to_string();
+    qr_session_store(
+        &state,
+        &session_key,
+        QrLoginSession {
+            kind: "mimo".to_string(),
+            site,
+            created_at: db::chrono_utc_now(),
+            ttl_ms,
+            secret: device_id,
+            poll_url: poll_url.to_string(),
+            credentials: None,
+        },
+    );
+    Ok(QrStartResponse { auth_url: login_url.to_string(), session_key })
+}
+
+/// 轮询 MiMo 的 lp：这是**挂起式**长连接（上游一直挂着直到扫码确认或票据自身超时），
+/// 所以一次调用最多等 75 秒，前端拿到 pending 就立刻再调一次，不需要固定间隔
+#[tauri::command]
+pub async fn mimo_qr_poll(
+    state: State<'_, AppState>,
+    session_key: String,
+) -> Result<QrPollResponse, String> {
+    let Some(session) = qr_session(&state, &session_key)? else {
+        return Ok(QrPollResponse { status: "expired".to_string(), nickname: None, expires_at_ms: None });
+    };
+    if let Some(credentials) = &session.credentials {
+        let nickname = instances::instance_credential(credentials, "nickname").map(String::from);
+        return Ok(QrPollResponse { status: "confirmed".to_string(), nickname, expires_at_ms: None });
+    }
+    // 挂起连接被客户端超时掐断是**常态**（共享客户端 30 秒，上游票据 300 秒）：
+    // 那一类错误按 pending 处理、由前端立刻续挂下一次；其余网络错误才可见报错。
+    // 早先这里用 tokio 包一层 75 秒再给请求压一个 74 秒超时，结果 74 秒先到期
+    // 把 pending 变成了硬错误，扫码慢一点就必然停表（代码审查 2026-10-10 指出）
+    let response = match http_client()
+        .get(&session.poll_url)
+        .header("Accept", "application/json, text/plain, */*")
+        .header("Cookie", mimo_device_cookie(&session.secret))
+        .send()
+        .await
+    {
+        Ok(response) => response,
+        Err(error) if error.is_timeout() => {
+            return Ok(QrPollResponse { status: "pending".to_string(), nickname: None, expires_at_ms: None })
+        }
+        Err(error) => return Err(network_error_text(&error)),
+    };
+    let body = response.text().await.map_err(|error| network_error_text(&error))?;
+    let json = mimo_json(&body)?;
+    let pass_token = json["passToken"].as_str().unwrap_or_default();
+    if pass_token.is_empty() {
+        return if json["code"].as_i64() == Some(0) {
+            Ok(QrPollResponse { status: "pending".to_string(), nickname: None, expires_at_ms: None })
+        } else {
+            Ok(QrPollResponse { status: "expired".to_string(), nickname: None, expires_at_ms: None })
+        };
+    }
+    let user_id = json["userId"].as_i64().map(|value| value.to_string()).unwrap_or_default();
+    if user_id.is_empty() {
+        return Err("小米登录成功但响应缺少 userId，请重新扫码".to_string());
+    }
+    let credentials = serde_json::json!({
+        "passToken": pass_token,
+        "userId": user_id,
+        "deviceId": session.secret,
+    });
+    qr_session_store(
+        &state,
+        &session_key,
+        // 确认即重置 TTL（同 qoder_qr_poll）：票据本身只有 300 秒，不重置的话用户从
+        // 扫码到点保存的这几分钟里，已经拿到的 passToken 可能先到期被清掉
+        QrLoginSession { credentials: Some(credentials), created_at: db::chrono_utc_now(), ..session },
+    );
+    Ok(QrPollResponse { status: "confirmed".to_string(), nickname: None, expires_at_ms: None })
+}
+
+/// 认领 MiMo 扫码产物：写 passToken 族并清空手贴的 serviceToken 槽（互斥，ADR-0035 同款）
+#[tauri::command]
+pub async fn mimo_qr_claim(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    instance_id: String,
+    session_key: String,
+) -> Result<(), String> {
+    let instance = qr_instance_of(&state, &instance_id, "mimo")?;
+    let mut credentials = qr_staged_credentials(&state, &session_key)?;
+    if let Some(object) = credentials.as_object_mut() {
+        object.insert("serviceToken".to_string(), Value::Null);
+    }
+    save_instance_credentials(state.clone(), &instance.id, &credentials)?;
+    state
+        .qr_logins
+        .lock()
+        .expect("qr login lock poisoned")
+        .remove(&session_key);
+    let _ = app.emit("credentials-changed", ());
+    Ok(())
+}
+
+/// 从一组 `Set-Cookie` 头里取 MiMo 的 serviceToken，**原样**返回（含 quoted-string 的引号）。
+/// 取不到或内容过不了 cookie-value 字符集就回空串，由调用方判失败。
+///
+/// 小米落这个 Cookie 时用的是 RFC 6265 的 quoted-string（值带首尾双引号），而字符集白名单
+/// 按标准排除 `"`——所以校验看的是剥掉引号的内部，返回的是上游原样。真机 200 的那次回发的
+/// 就是带引号的值，剥引号发送未验证过，不擅自改。
+fn pick_mimo_service_token<'a>(lines: impl Iterator<Item = &'a str>) -> String {
+    for text in lines {
+        let Some((name, rest)) = text.split_once('=') else {
+            continue;
+        };
+        if name.trim() != instances::MIMO_SERVICE_TOKEN_COOKIE {
+            continue;
+        }
+        let raw = rest.split(';').next().unwrap_or_default().trim();
+        let inner = raw
+            .strip_prefix('"')
+            .and_then(|value| value.strip_suffix('"'))
+            .unwrap_or(raw);
+        if inner.is_empty() || inner.len() > 65_536 || !instances::is_cookie_value_chars(inner) {
+            continue;
+        }
+        return raw.to_string();
+    }
+    String::new()
+}
+
+/// MiMo 扫码通道的铸票：passToken → `api-platform_serviceToken`。三步都是真机实测的形状，
+/// 少任何一步都拿不到 cookie：
+/// ① 无凭据打一次控制台 API，取它 401 回体**自述**的 loginUrl（内含服务方现签的 sign 与
+///    followup）——自己拼一个无 sign 的 callback 只能拿到未登录态的 location，永远 401；
+/// ② 带着 passToken 那族 cookie 走这条 loginUrl，已登录态回的是 **200 JSON**，
+///    下一跳在响应体的 `location` 字段里（不是 302 头）；
+/// ③ 跟到服务方的 /sts，它才把 serviceToken 种到 xiaomimimo.com 侧（307 那一跳的
+///    Set-Cookie，会话级：既无 Max-Age 也无 Expires）。
+/// ②③ 的目标地址都来自上游响应，因此逐跳过目的地面校验后才带凭据发出去
+/// 铸票专用的 HTTP 客户端：**关掉自动重定向**。共享客户端会跟随跳转，而服务方 sts 的
+/// 307 指向的 followup 写的是 `http://`（magpie 的注释点过这条），跟下去就被
+/// `https_only` 挡成 "URL scheme is not allowed" 的 builder error——可是我们要的
+/// serviceToken 恰好落在那个 307 自己的 Set-Cookie 上，根本不需要跟到 followup。
+/// 重定向策略只能设在客户端上（RequestBuilder 没有这个开关），所以单开一个
+fn mimo_mint_client() -> &'static reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .https_only(true)
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
+            .user_agent("AI Usage Tracker/0.1.0")
+            .build()
+            .expect("MiMo 铸票客户端初始化失败")
+    })
+}
+
+async fn mimo_mint_service_token(pass: &instances::MimoPass) -> Result<String, String> {
+    let account_cookie = format!(
+        "{}; userId={}; passToken={}",
+        mimo_device_cookie(&pass.device_id),
+        pass.user_id,
+        pass.pass_token
+    );
+    // ① 服务方自述的登录入口（无凭据，不带任何 cookie）
+    let probe = mimo_mint_client()
+        .get(format!("{MIMO_CONSOLE_ORIGIN}/api/v1/balance"))
+        .header("Accept", "application/json, text/plain, */*")
+        .send()
+        .await
+        .map_err(|error| network_error_text(&error))?;
+    let probe_body = probe.text().await.map_err(|error| network_error_text(&error))?;
+    let probe_json: Value = serde_json::from_str(&probe_body)
+        .map_err(|_| "MiMo 登录入口探测失败：响应不是 JSON".to_string())?;
+    let login_url = probe_json["loginUrl"].as_str().unwrap_or_default();
+    if login_url.is_empty() {
+        return Err("MiMo 铸票失败：控制台没有给出登录入口".to_string());
+    }
+
+    // ② 带 passToken 走它，取下一跳（已登录态在 200 JSON 的 location 里，也容 302 头）
+    let separator = if login_url.contains('?') { '&' } else { '?' };
+    let authorized_url = format!("{login_url}{separator}_json=true");
+    // 校验的是**真正发出去的那条串**，不是拼接前的原料
+    instances::validate_request_url("mimo", &authorized_url)?;
+    let authorized = mimo_mint_client()
+        .get(&authorized_url)
+        .header("Accept", "application/json, text/plain, */*")
+        .header("Cookie", &account_cookie)
+        .send()
+        .await
+        .map_err(|error| network_error_text(&error))?;
+    let authorized_headers = authorized.headers().clone();
+    let authorized_body = authorized
+        .text()
+        .await
+        .map_err(|error| network_error_text(&error))?;
+    let authorized_json = mimo_json(&authorized_body).unwrap_or(Value::Null);
+    let next = authorized_json["location"]
+        .as_str()
+        .map(String::from)
+        .or_else(|| {
+            authorized_headers
+                .get(reqwest::header::LOCATION)
+                .and_then(|value| value.to_str().ok())
+                .map(String::from)
+        })
+        .unwrap_or_default();
+    // 服务方给的是 http 时按它自己的域升到 https（session cookie 只在 https 回传）
+    let sts_url = if next.starts_with("http://platform.xiaomimimo.com") {
+        next.replacen("http://", "https://", 1)
+    } else {
+        next
+    };
+    if sts_url.is_empty() {
+        return Err(
+            "MiMo 铸票失败：小米账号没有回授权跳转（passToken 可能已失效，请重新扫码）".to_string(),
+        );
+    }
+    instances::validate_request_url("mimo", &sts_url)?;
+
+    // ③ 跟到服务方 /sts，读它 Set-Cookie 里的 serviceToken（这一跳不带 cookie：
+    // 真机实测服务方按 URL 里的 sign 认，passport cookie 属于另一个域）
+    let sts_response = mimo_mint_client()
+        .get(&sts_url)
+        .header("Accept", "*/*")
+        .send()
+        .await
+        .map_err(|error| network_error_text(&error))?;
+    let service_token = pick_mimo_service_token(
+        sts_response
+            .headers()
+            .get_all(reqwest::header::SET_COOKIE)
+            .iter()
+            .filter_map(|value| value.to_str().ok()),
+    );
+    if service_token.is_empty() {
+        return Err(
+            "MiMo 铸票失败：授权跳转没有落下可用的 serviceToken（passToken 可能已失效，请重新扫码）".to_string(),
+        );
+    }
+    Ok(service_token)
+}
+
 #[tauri::command]
 pub fn open_main_window(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
@@ -1772,6 +2515,40 @@ mod tests {
         assert_eq!(tray_tooltip("en", true), format!("AI Usage Tracker — quota alert{suffix}"));
         assert_eq!(app_title("zh"), format!("AI 用量助手{suffix}"));
         assert_eq!(app_title("en"), format!("AI Usage Tracker{suffix}"));
+    }
+
+    /// 授权链接与轮询地址的百分号编码：入参是 base64url（可能带 `+` `/` `=`）与 uuid，
+    /// `+` 在 query 里会被解成空格、`=`/`&` 会截断参数，编码错就是整条流程起不来
+    #[test]
+    fn urlencoding_covers_the_characters_pkce_produces() {
+        assert_eq!(urlencoding("abcABC123-._~"), "abcABC123-._~");
+        assert_eq!(urlencoding("a+b/c=d"), "a%2Bb%2Fc%3Dd");
+        assert_eq!(urlencoding("qoder-work-cn://"), "qoder-work-cn%3A%2F%2F");
+        assert_eq!(urlencoding("e883ade2-e6e3-4d6d-adf7-f92ceff5fdcb"), "e883ade2-e6e3-4d6d-adf7-f92ceff5fdcb");
+    }
+
+    /// 铸票取 serviceToken：小米落的是 quoted-string（值带首尾引号），校验看剥引号后的
+    /// 内部、返回原样。2026-10-09 应用内首跑就是被「按白名单拒 `"`」这条自己的守卫判死的
+    #[test]
+    fn mimo_service_token_keeps_the_quoted_string_as_is() {
+        let quoted = ["api-platform_serviceToken=\"6OFabc==\"; Path=/; HttpOnly; Version=1"];
+        assert_eq!(
+            pick_mimo_service_token(quoted.iter().copied()),
+            "\"6OFabc==\"".to_string()
+        );
+        // 不带引号的形态（DevTools 里看到的就是剥了引号的）也照原样收，两种都发过
+        let bare = ["api-platform_serviceToken=6OFabc==; Path=/"];
+        assert_eq!(pick_mimo_service_token(bare.iter().copied()), "6OFabc==".to_string());
+        // 别的 Cookie 不算数（同批还有 slh/ph/userId，名字都带 api-platform_ 前缀）
+        let others = [
+            "api-platform_slh=\"PNY8=\"; Path=/",
+            "userId=123456789; Path=/",
+            "api-platform_serviceToken=; Path=/",
+        ];
+        assert_eq!(pick_mimo_service_token(others.iter().copied()), "");
+        // 值里带 CRLF 或空格的一律不收：这道关是拼头前的注入防线，不因引号而放宽
+        let dirty = ["api-platform_serviceToken=\"ab\rc\"; Path=/"];
+        assert_eq!(pick_mimo_service_token(dirty.iter().copied()), "");
     }
 
     /// 网络失败文案按类别取摘要：连接超时优先于请求超时（两个谓词同时为真是连接阶段超时），

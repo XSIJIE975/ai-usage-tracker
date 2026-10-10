@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   HttpResult,
   InstanceCredentialStatus,
+  InstanceCredentials,
   MetricLine,
   ProviderInstance,
   ProviderSite,
@@ -32,6 +33,16 @@ const PROVIDER_NAME = "Qoder";
 
 /** 凭据槽（qoder 实例存的会话 Cookie 值，见 SESSION_COOKIE_NAME） */
 export const CREDENTIAL_SLOT = "cookie";
+
+/** 扫码通道写入的槽位全集（ADR-0041）：退出扫码登录、或净切回 Cookie 登录时一并清除。
+ *  与 Rust 侧 qoder_qr_claim 清 `cookie` 槽是对称的两半——互斥不变量（ADR-0035） */
+export const QODER_TOKEN_SLOTS = [
+  "accessToken",
+  "refreshToken",
+  "expiresAt",
+  "uid",
+  "nickname",
+] as const;
 
 /** 登录态所在的 Cookie 名：界面上告诉用户取哪个键，取数时由 Rust 端拼成
  *  `Cookie: qoder_session_cookie=<值>`（凭据头只由鉴权分支注入，ADR-0030 §2） */
@@ -67,6 +78,8 @@ interface SiteConfig {
   historiesUrl: string;
   /** 近一年每日 Credits 消耗分布（官方给好分档阈值） */
   heatmapUrl: string;
+  /** 扫码 token 通道的用量端点（ADR-0041）：与 web 域不同源，走各站的 openapi */
+  deviceUsageUrl: string;
 }
 
 const SITES: Record<ProviderSite, SiteConfig> = {
@@ -76,6 +89,7 @@ const SITES: Record<ProviderSite, SiteConfig> = {
     meUrl: "https://qoder.com.cn/api/v1/me",
     historiesUrl: "https://qoder.com.cn/api/v1/me/usages/big_model_credits/histories",
     heatmapUrl: "https://qoder.com.cn/api/v1/me/ai-conversations/credits-heatmap",
+    deviceUsageUrl: "https://openapi.qoder.com.cn/sash/api/v2/me/usage",
   },
   international: {
     origin: "https://qoder.com",
@@ -83,6 +97,7 @@ const SITES: Record<ProviderSite, SiteConfig> = {
     meUrl: "https://qoder.com/api/v1/me",
     historiesUrl: "https://qoder.com/api/v1/me/usages/big_model_credits/histories",
     heatmapUrl: "https://qoder.com/api/v1/me/ai-conversations/credits-heatmap",
+    deviceUsageUrl: "https://openapi.qoder.sh/sash/api/v2/me/usage",
   },
 };
 
@@ -417,6 +432,156 @@ export function parseUsageLines(view: QoderUsageView): MetricLine[] {
   return lines;
 }
 
+/**
+ * 扫码 token 通道的读数（ADR-0041）。数据源是桌面客户端自己用的 `GET
+ * https://openapi.qoder.com.cn/sash/api/v2/me/usage`，外面套一层 `{displayMode, qoderUsage}`，
+ * 里面是 `userQuota` / `addOnQuota` / `dedicatedResourcePackages[]` 三族（每项都是
+ * `{total, used, remaining, percentage, unit}`）。与 Cookie 通道的对账口径：
+ * `userQuota`≈plan_quota、`addOnQuota`≈resource_package_quota、
+ * `dedicatedResourcePackages`≈dedicated_resource_package_quota 的逐包清单。
+ *
+ * 三条刻意选择：
+ * 1. **汇总位本地相加**，因为这一族响应里没有 `total_quota`。ADR-0030 已对账证实
+ *    `total_quota` 就是三个分容器的和（2000+1200=3200、0+666=666），所以相加不是新造口径。
+ * 2. **百分比一律本地按 used/total 算**，不取上游的 `percentage`/`totalUsagePercentage`：
+ *    真机 `0.29` 对应本地 `607/2100 = 28.9047%`，上游那个数是两位舍入的产物（同 ADR-0030 §4）。
+ * 3. **`expiresAt` 只认未来且要挡 9999 哨兵**：真机订阅已失效的号回的是
+ *    `253402214400000`（=9999-12-31），照挂就会在卡片上写一句「9999 年刷新」。
+ *    Cookie 通道的 `nextResetAt` 从未观察到这个值，故哨兵判定只加在这条通道上。
+ *
+ * 逐包到期日：只有 `dedicatedResourcePackages` 的每一项带 `expiresAt`（普通资源包在这一族
+ * 响应里被聚合成一个数，没有独立到期字段——第三方实现的解码器同口径），所以 package 行的
+ * 「· 到期日」后缀在扫码通道下自然不出现，不需要为它写特例。
+ */
+interface QoderDeviceQuota {
+  total?: unknown;
+  used?: unknown;
+  remaining?: unknown;
+  expiresAt?: unknown;
+  expires_at?: unknown;
+}
+
+interface QoderDevicePayload {
+  displayMode?: unknown;
+  qoderUsage?: {
+    expiresAt?: unknown;
+    userQuota?: QoderDeviceQuota | null;
+    addOnQuota?: QoderDeviceQuota | null;
+    dedicatedResourcePackages?: QoderDeviceQuota[] | null;
+  } | null;
+}
+
+/** 9999-12-31 那类「无期限」哨兵的分界：晚于此值一律按没有时刻处理 */
+const SENTINEL_AFTER_MS = Date.UTC(9998, 0, 1);
+
+function deviceQuota(raw: QoderDeviceQuota | null | undefined): {
+  used: number;
+  total: number;
+  remaining: number;
+} | null {
+  if (!raw || typeof raw !== "object") return null;
+  const used = toCount(raw.used);
+  const total = toCount(raw.total);
+  if (used == null || total == null) return null;
+  return { used, total, remaining: toCount(raw.remaining) ?? Math.max(0, total - used) };
+}
+
+/** 到期时刻：只认未来，且 9999 哨兵按「没有时刻」处理 */
+function deviceExpiry(raw: unknown, now: number): Date | null {
+  const parsed = parseNextReset(raw);
+  if (!parsed) return null;
+  const ms = parsed.getTime();
+  if (ms <= now || ms >= SENTINEL_AFTER_MS) return null;
+  return parsed;
+}
+
+export function parseDeviceUsageView(
+  payload: QoderDevicePayload | undefined,
+  now = Date.now(),
+): QoderUsageView | null {
+  // displayMode 不是 "qoder"（企业版）时这一族到底给不给数字，我们没有真机样本，
+  // 因此不猜形状：按解析失败报错并把 displayMode 带进文案，等真机出现再定口径
+  if (!payload || typeof payload !== "object") return null;
+  // displayMode 不是 "qoder"（企业版等）时这一族给不给数字，我们**没有真机样本**，
+  // 因此不猜形状：整体按解析失败，由调用方把实际值带进错误详情，等真机出现再定口径
+  if (payload.displayMode !== "qoder") return null;
+  const usage = payload.qoderUsage;
+  if (!usage || typeof usage !== "object") return null;
+
+  const windows: QoderQuotaWindow[] = [];
+  // 「上游声明了这个容器却读不出」与「这个号没分配这个容器」是两回事：前者整体判失败
+  // （Cookie 通道同一条规则，ADR-0024 错误可见），否则脏数据会被画成「未分配积分」
+  const plan = usage.userQuota ? deviceQuota(usage.userQuota) : null;
+  if (usage.userQuota && !plan) return null;
+  const pack = usage.addOnQuota ? deviceQuota(usage.addOnQuota) : null;
+  if (usage.addOnQuota && !pack) return null;
+  const packages = Array.isArray(usage.dedicatedResourcePackages)
+    ? usage.dedicatedResourcePackages
+    : [];
+  const dedicated = packages.map((item) => deviceQuota(item));
+  // 同上：专属包数组里有一项读不出就整体判失败，不能把脏数据当「没有专属包」
+  if (dedicated.some((item) => !item)) return null;
+  const dedicatedQuotas = dedicated.filter(
+    (item): item is { used: number; total: number; remaining: number } => !!item,
+  );
+
+  const push = (
+    key: QoderQuotaKey,
+    quota: { used: number; total: number; remaining: number } | null,
+    resetsAt: Date | null = null,
+    earliestExpiry: Date | null = null,
+  ) => {
+    if (!quota) return;
+    if (quota.total <= 0 && (quota.used > 0 || quota.remaining > 0)) return; // 矛盾数据：整窗丢弃
+    if (quota.total <= 0 && quota.used <= 0) return; // 恒零＝没分配，没窗口可画
+    windows.push({
+      key,
+      ...quota,
+      percent: (quota.used / quota.total) * 100,
+      resetsAt,
+      earliestExpiry,
+    });
+  };
+
+  const planReset = deviceExpiry(usage.expiresAt, now);
+  push("plan", plan, planReset);
+  push("package", pack);
+  // 专属包是逐包下发的，聚合成一窗（与 Cookie 通道的 dedicated 容器同形态），
+  // 到期日取「还有余量的那些包里最早的」（同 earliestActiveExpiry 的谎报防线）
+  if (dedicatedQuotas.length > 0) {
+    const sum = dedicatedQuotas.reduce(
+      (acc, item) => ({ used: acc.used + item.used, total: acc.total + item.total, remaining: acc.remaining + item.remaining }),
+      { used: 0, total: 0, remaining: 0 },
+    );
+    let earliest: Date | null = null;
+    // packages 与 dedicatedQuotas 一一对应（上面已保证没有读不出的项）
+    for (const [index, quota] of dedicatedQuotas.entries()) {
+      if (quota.remaining <= 0) continue;
+      const item = packages[index];
+      const expiry = deviceExpiry(item.expiresAt ?? item.expires_at, now);
+      if (expiry && (!earliest || expiry < earliest)) earliest = expiry;
+    }
+    push("dedicated", sum, null, earliest);
+  }
+
+  const aggregate = windows.reduce(
+    (acc, window) => ({
+      used: acc.used + window.used,
+      total: acc.total + window.total,
+      remaining: acc.remaining + window.remaining,
+    }),
+    { used: 0, total: 0, remaining: 0 },
+  );
+  return {
+    windows,
+    aggregate: {
+      ...aggregate,
+      percent: aggregate.total > 0 ? (aggregate.used / aggregate.total) * 100 : 0,
+    },
+    resetsAt: planReset,
+  };
+}
+
 export interface UsageOutcome {
   ok: boolean;
   lines: MetricLine[];
@@ -473,20 +638,171 @@ export function processUsageResult(result: HttpResult): UsageOutcome {
   }
 }
 
+/** 通道判定（ADR-0035 互斥模型在 Qoder 上的落地，ADR-0041）：accessToken 槽非空即扫码
+ *  token 通道，否则有 cookie 就走 Cookie 通道，两者都缺返回 null */
+export function resolveQoderChannel(
+  status: InstanceCredentialStatus,
+): "device" | "cookie" | null {
+  if (status.accessToken) return "device";
+  if (status.cookie) return "cookie";
+  return null;
+}
+
+/** 扫码通道的数据源按站取（ADR-0041，两站各走自己的 openapi） */
+export function qoderDeviceUsageUrl(site: ProviderSite): string {
+  return SITES[site].deviceUsageUrl;
+}
+
+/** 扫码通道的失效文案：出路是重扫，不静默换通道（ADR-0024） */
+export const QODER_DEVICE_EXPIRED_MESSAGE =
+  "Qoder 扫码登录已失效，请在设置中重新扫码；或改用 Cookie 登录";
+
+/** 提前续期的窗口：距 expiresAt 不足 7 天就在本轮刷新前先续一次。续成功后 expiresAt
+ *  往后推 30 天，天然自带节流——不需要「今天已续过」这个判据，也就不必为它建状态表
+ *  （WorkBuddy 的每日一刷用状态表，是因为它的 token 会被官方客户端互踢、必须按天重试） */
+export const QODER_RENEW_AHEAD_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** expiresAt 槽的读法：扫码时存的是上游 ISO 串，容毫秒数字串（与摘要行同一口径） */
+export function parseQoderExpiry(raw: string | undefined, now = Date.now()): number | null {
+  if (!raw) return null;
+  const ms = Number(raw);
+  const value = Number.isFinite(ms) && ms > 0 ? ms : Date.parse(raw);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return value - now;
+}
+
+/** 扫码通道的取数：Origin/Referer/Bx-V 都不需要——真机只发 Accept + Authorization: Bearer
+ *  就 200（两站各自实证：CN 2026-10-09、国际站 2026-10-10） */
+function requestQoderDeviceUsage(instanceId: string, site: ProviderSite): Promise<HttpResult> {
+  return invoke<HttpResult>("provider_request", {
+    instanceId,
+    url: qoderDeviceUsageUrl(site),
+    method: "GET",
+    auth: "qoder_device",
+    headers: { Accept: "application/json, text/plain, */*" },
+  });
+}
+
+/** 续期：失败不抛（调用方按「没续上」继续走 401 那条救火路），但原因要能被看见——
+ *  静默吞掉的话用户只会看到「请重新扫码」，而实际可能是网络或上游改了响应形状 */
+async function renewQoderToken(instanceId: string): Promise<boolean> {
+  try {
+    await invoke("qoder_token_refresh", { instanceId });
+    return true;
+  } catch (error) {
+    console.warn("Qoder token 续期失败，旧 token 保留待下轮重试", error);
+    return false;
+  }
+}
+
+/** 扫码通道的响应 → 卡片行。401/403 一律按凭据失效（与 Cookie 通道同判据） */
+export function processDeviceResult(result: HttpResult): UsageOutcome {
+  const looksHtml = result.bodyText?.trimStart().startsWith("<") === true;
+  if (result.status === 401 || result.status === 403 || (result.status === 200 && looksHtml)) {
+    return { ok: false, lines: [], error: QODER_DEVICE_EXPIRED_MESSAGE };
+  }
+  if (result.status !== 200) {
+    const detail = result.bodyText?.trim() ?? "";
+    return {
+      ok: false,
+      lines: [],
+      error: "积分接口返回 HTTP {status}{detail}",
+      errorParams: { status: result.status, detail: detail ? `：${truncate(detail)}` : "" },
+    };
+  }
+  try {
+    const payload = JSON.parse(result.bodyText ?? "") as QoderDevicePayload;
+    const view = parseDeviceUsageView(payload);
+    if (!view) {
+      // 把实际的 displayMode 带进详情：企业号形态未证实，真机出现时这句就是取证线索
+      const mode = typeof payload?.displayMode === "string" ? payload.displayMode : "(缺失)";
+      return {
+        ok: false,
+        lines: [],
+        error: "积分接口返回数据解析失败：{detail}",
+        errorParams: { detail: `displayMode=${mode}、qoderUsage 结构缺失或含读不出的配额容器` },
+      };
+    }
+    return { ok: true, lines: parseUsageLines(view) };
+  } catch (error) {
+    return {
+      ok: false,
+      lines: [],
+      error: "积分接口返回数据解析失败：{detail}",
+      errorParams: { detail: toErrorText(error) },
+    };
+  }
+}
+
+/** 扫码通道的取数：先按 expiresAt 决定要不要提前续，再打端点，401 就续一次重试一次 */
+async function fetchQoderDeviceOutcome(instance: ProviderInstance): Promise<UsageOutcome> {
+  const site = qoderSiteOf(instance);
+  const credentials = await invoke<InstanceCredentials>("vault_credentials", {
+    instanceId: instance.id,
+  });
+  const ahead = parseQoderExpiry(credentials.expiresAt);
+  if (ahead != null && ahead < QODER_RENEW_AHEAD_MS) await renewQoderToken(instance.id);
+  let result = await requestQoderDeviceUsage(instance.id, site);
+  if (result.status === 401 || result.status === 403) {
+    const renewed = await renewQoderToken(instance.id);
+    if (renewed) result = await requestQoderDeviceUsage(instance.id, site);
+  }
+  return processDeviceResult(result);
+}
+
 async function fetchQoderSnapshot(instance: ProviderInstance): Promise<ProviderSnapshot> {
   const status = await invoke<InstanceCredentialStatus>("vault_credential_status", {
     instanceId: instance.id,
   });
   const updatedAt = Date.now();
-  if (!status.cookie) {
+  const channel = resolveQoderChannel(status);
+  if (!channel) {
     return {
       instanceId: instance.id,
       providerId: "qoder",
       providerName: PROVIDER_NAME,
       status: "needs_config",
       updatedAt,
-      message: CREDENTIAL_MISSING_MESSAGE,
+      message: "请在设置中扫码登录 Qoder，或粘贴会话 Cookie（qoder_session_cookie）的值",
       lines: [],
+    };
+  }
+
+  if (channel === "device") {
+    let outcome: UsageOutcome;
+    try {
+      outcome = await fetchQoderDeviceOutcome(instance);
+    } catch (error) {
+      outcome = {
+        ok: false,
+        lines: [],
+        error: "积分接口查询失败：{detail}",
+        errorParams: { detail: toErrorText(error) },
+      };
+    }
+    if (!outcome.ok) {
+      return {
+        instanceId: instance.id,
+        providerId: "qoder",
+        providerName: PROVIDER_NAME,
+        status: "error",
+        updatedAt,
+        message: outcome.error,
+        messageParams: outcome.errorParams,
+        lines: [],
+        // 扫码通道读不到消耗明细：入口不画（ADR-0041）。失败快照也要带上，
+        // 否则上一轮 Cookie 实例的按钮会留在原地
+        statsAvailable: false,
+      };
+    }
+    return {
+      instanceId: instance.id,
+      providerId: "qoder",
+      providerName: PROVIDER_NAME,
+      status: "ok",
+      updatedAt,
+      lines: outcome.lines,
+      statsAvailable: false,
     };
   }
 

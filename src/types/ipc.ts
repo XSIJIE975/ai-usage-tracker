@@ -50,7 +50,9 @@ export interface ProviderRequestOptions {
   /** "session_cookie"：从 vault 槽位读 session 的 Value，校验后拼作 Cookie: session=<值>（workbuddy）
    *  "workbuddy_token"：从 vault 槽位读扫码所得 accessToken/uid，注入 Bearer + billing UA + X-User-Id（ADR-0034）
    *  "qoder_cookie"：从 vault 槽位读 qoder_session_cookie 的 Value，校验后拼作 Cookie: qoder_session_cookie=<值>（qoder，ADR-0030）
-   *  "mimo_cookie"：从 vault 两个槽位读 api-platform_serviceToken 与 userId 的值，拼作两条 Cookie（mimo，ADR-0038） */
+   *  "qoder_device"：从 vault 槽位读扫码所得 accessToken，注入 Authorization: Bearer（qoder，ADR-0041）
+   *  "mimo_cookie"：从 vault 两个槽位读 api-platform_serviceToken 与 userId 的值，拼作两条 Cookie（mimo，ADR-0038）
+   *  "mimo_pass"：从 vault 读 passToken 族，由 Rust 现铸 serviceToken 再拼同样的两条 Cookie（mimo，ADR-0042） */
   auth?:
     | "bearer"
     | "cookie"
@@ -58,7 +60,9 @@ export interface ProviderRequestOptions {
     | "session_cookie"
     | "workbuddy_token"
     | "qoder_cookie"
-    | "mimo_cookie";
+    | "qoder_device"
+    | "mimo_cookie"
+    | "mimo_pass";
   /** bearer/session_cookie/qoder_cookie 时的凭据槽；bearer 缺省用该种类的主鉴权键 */
   credentialSlot?: string;
 }
@@ -116,6 +120,10 @@ export interface ProviderSnapshot {
   /** 本轮在线的可用重置卡 recordId（仅智谱 fetch 填充；重置卡源失败时缺省=到账检测冻结、卡片不出入口）。
    *  供到账检测差集与卡片底部「重置卡」按钮的有无/张数用，落库属瞬时冗余，历史读回不参与检测 */
   availableResetIds?: { fiveHour: number[]; week: number[] };
+  /** 本轮取数用的通道**有没有**消耗明细这个数据源（Qoder 扫码通道读不到 histories，
+   *  ADR-0041）。缺省=按种类与站点的能力表判定，只有需要按通道收窄的实例会显式写 false，
+   *  卡片据此决定「查看统计」入口画不画——不画空位也不挂提示点 */
+  statsAvailable?: boolean;
   /** 本轮刷新实际执行且成功的签到（仅 WorkBuddy fetch 在本轮真的调了签到接口并拿到
    *  成功响应时填充）。落库属瞬时冗余、会随快照重放，通知判重权威在 Rust 端
    *  workbuddy_states 的 checkin_notified 格（按 date 每天、按实例各一次）；错误快照也携带——签到与

@@ -40,6 +40,19 @@ function hostsOf(file: URL): string[] {
 const kindOfFile = (fileName: string): string | undefined =>
   Object.keys(allowedHosts).find((kind) => fileName.startsWith(kind.split("-")[0]));
 
+/**
+ * 主机名是否被这组表项放行——与 Rust 侧 `instances::host_allowed` 同一条规则：
+ * 默认精确比对，写成 `*.域` 的条目额外放行该域本身与它点边界下的子域。
+ * 小米的扫码票据主机每次轮转（ak. / c3. 前缀 + lp 子域），只能按子域放行（ADR-0042）
+ */
+function hostAllowed(host: string, entries: string[]): boolean {
+  return entries.some((entry) =>
+    entry.startsWith("*.")
+      ? host === entry.slice(2) || host.endsWith(`.${entry.slice(2)}`)
+      : entry === host,
+  );
+}
+
 const providerFiles = readdirSync(new URL(".", import.meta.url))
   .filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts"))
   .map((name) => ({ name, url: new URL(`./${name}`, import.meta.url) }));
@@ -64,26 +77,32 @@ describe("ALLOWED_HOSTS 与前端 URL 常量对齐", () => {
       if (hosts.length === 0) continue;
       const kind = kindOfFile(file.name);
       expect(kind, `${file.name} 含 URL 常量但归不到任何种类，请补种类前缀`).toBeDefined();
-      const own = new Set(allowedHosts[kind as string]);
+      const own = allowedHosts[kind as string] ?? [];
       for (const host of hosts) {
-        expect(own.has(host), `${file.name} 打向 ${host}，不在 ${kind} 的允许域名内`).toBe(true);
+        expect(
+          hostAllowed(host, own),
+          `${file.name} 打向 ${host}，不在 ${kind} 的允许域名内`,
+        ).toBe(true);
       }
     }
   });
 
   it("探测端点落在登记域名的全集内", () => {
     for (const host of hostsOf(new URL("../diagnostics.ts", import.meta.url))) {
-      expect(allHosts.has(host), `diagnostics.ts 打向 ${host}`).toBe(true);
+      expect(hostAllowed(host, [...allHosts]), `diagnostics.ts 打向 ${host}`).toBe(true);
     }
   });
 
   it("表里没有已经用不上的域名", () => {
-    // 反方向也要对齐：端点换域或下线后忘清理，白名单会越攒越长、审计时看不出哪个还在用
-    const used = new Set([
+    // 反方向也要对齐：端点换域或下线后忘清理，白名单会越攒越长、审计时看不出哪个还在用。
+    // `*.域` 这类子域条目按「有没有前端主机命中它」判定，不看字面量
+    const used = [
       ...providerFiles.flatMap((file) => hostsOf(file.url)),
       ...hostsOf(new URL("../diagnostics.ts", import.meta.url)),
-    ]);
-    const stale = [...allHosts].filter((host) => !used.has(host));
+    ];
+    const stale = [...allHosts].filter(
+      (entry) => !used.some((host) => hostAllowed(host, [entry])),
+    );
     expect(stale, `ALLOWED_HOSTS 里的这些域名前端已经不再请求：${stale.join("、")}`).toEqual([]);
   });
 

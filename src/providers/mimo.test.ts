@@ -20,7 +20,9 @@ import {
   parseMimoPeriodEnd,
   parsePlanDetail,
   parseUsageWindow,
+  PASS_EXPIRED_MESSAGE,
   readEnvelope,
+  resolveMimoChannel,
   SERVICE_TOKEN_COOKIE_NAME,
   USER_ID_COOKIE_NAME,
 } from "./mimo";
@@ -387,7 +389,7 @@ describe("快照", () => {
     );
     const snapshot = await mimoProvider.fetch(makeInstance());
     expect(snapshot.status).toBe("needs_config");
-    expect(snapshot.message).toBe("请在设置中填写小米 MiMo 的 {slots}");
+    expect(snapshot.message).toBe("请在设置中扫码登录小米 MiMo，或填写 {slots}");
     expect(snapshot.messageParams).toEqual({ slots: "userId" });
     expect(mockInvoke.mock.calls.filter(([command]) => command === "provider_request")).toHaveLength(0);
 
@@ -516,5 +518,67 @@ describe("快照", () => {
     // message 是模板串，实参在 messageParams 上（渲染端 t+params，ADR-0022）
     expect(snapshot.message).toContain("接口查询失败：{detail}");
     expect(snapshot.messageParams?.detail).toContain("拒绝向该主机发请求");
+  });
+});
+
+// ─── 扫码通道（ADR-0042）：vault 存 passToken，serviceToken 每轮由 Rust 现铸 ───
+
+describe("resolveMimoChannel", () => {
+  it("passToken 非空即扫码通道；两格齐走 Cookie 通道；都缺为 null", () => {
+    expect(resolveMimoChannel({ passToken: true, userId: true })).toBe("pass");
+    // 两格同时在场时扫码优先：claim 会清掉手贴的 serviceToken，正常不会并存
+    expect(resolveMimoChannel({ passToken: true, serviceToken: true, userId: true })).toBe("pass");
+    expect(resolveMimoChannel({ serviceToken: true, userId: true })).toBe("cookie");
+    expect(resolveMimoChannel({ serviceToken: true })).toBeNull();
+    expect(resolveMimoChannel({})).toBeNull();
+  });
+});
+
+describe("fetchMimoSnapshot 扫码通道", () => {
+  // 合成信封：只用来把「通道选择」与「数据解析」这两件事分开测，不代表任何真机响应
+  const okEnvelope = { code: 0, message: "", data: {} };
+  // 「快照」那个 describe 里也有同名 helper：它带着默认 false 的两格，
+  // 这里要能表达 passToken/deviceId，所以在本地再定义一份而不是搬上去
+  const credentials = (slots: Record<string, boolean>) => ({
+    serviceToken: false,
+    userId: false,
+    ...slots,
+  });
+
+  it("三个端点都走 mimo_pass（铸票在 Rust 侧，前端不拼 account 域的 URL）", async () => {
+    mockInvoke.mockImplementation((command: string) => {
+      if (command === "vault_credential_status")
+        return Promise.resolve(credentials({ passToken: true, userId: true, deviceId: true }));
+      return Promise.resolve(httpResult(okEnvelope));
+    });
+    const snapshot = await mimoProvider.fetch(makeInstance());
+    const requests = mockInvoke.mock.calls.filter(([command]) => command === "provider_request");
+    expect(requests).toHaveLength(3);
+    for (const [, options] of requests) {
+      expect((options as Record<string, unknown>).auth).toBe("mimo_pass");
+    }
+    expect(snapshot.status).toBe("ok");
+  });
+
+  it("失效话术按通道给：扫码是重扫，Cookie 是重贴", async () => {
+    mockInvoke.mockImplementation((command: string) => {
+      if (command === "vault_credential_status")
+        return Promise.resolve(credentials({ passToken: true, userId: true, deviceId: true }));
+      return Promise.resolve(httpResult({ code: 401 }, 401));
+    });
+    const snapshot = await mimoProvider.fetch(makeInstance());
+    expect(snapshot.status).toBe("error");
+    expect(snapshot.message).toBe(PASS_EXPIRED_MESSAGE);
+    expect(snapshot.message).not.toBe(CREDENTIAL_EXPIRED_MESSAGE);
+  });
+
+  it("Cookie 通道的失效话术不变（不让扫码的存在把老用户指到另一条出路）", async () => {
+    mockInvoke.mockImplementation((command: string) => {
+      if (command === "vault_credential_status")
+        return Promise.resolve(credentials({ serviceToken: true, userId: true }));
+      return Promise.resolve(httpResult({ code: 401 }, 401));
+    });
+    const snapshot = await mimoProvider.fetch(makeInstance());
+    expect(snapshot.message).toBe(CREDENTIAL_EXPIRED_MESSAGE);
   });
 });
