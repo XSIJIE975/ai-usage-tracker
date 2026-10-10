@@ -365,6 +365,17 @@ export function resolveWorkbuddyChannel(
   return null;
 }
 
+/** 扫码产物槽位全集（ADR-0034）：退出扫码登录时一并清除；净切到 Cookie 登录时
+ *  表单层也用它清槽（ADR-0035 互斥） */
+export const WORKBUDDY_TOKEN_SLOTS = [
+  "accessToken",
+  "refreshToken",
+  "expiresAt",
+  "uid",
+  "nickname",
+  "enterpriseId",
+] as const;
+
 /** 签到日界按服务端时区 CST（UTC+8 固定无夏令时）计算 YYYY-MM-DD */
 export function cstDateString(atMs: number = Date.now()): string {
   return new Date(atMs + 8 * 3_600_000).toISOString().slice(0, 10);

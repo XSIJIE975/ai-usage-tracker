@@ -67,19 +67,20 @@ export interface ProviderRequestOptions {
   credentialSlot?: string;
 }
 
-/** workbuddy_qr_start 的返回（ADR-0034；无实例会话形态见 ADR-0035） */
-export interface WorkbuddyQrStartResult {
-  /** 浏览器授权链接（authUrl）：整段编码为二维码或复制打开，截断即「登录链接不完整」 */
+/**
+ * 三家扫码登录共用的返回形状（workbuddy_qr_* / qoder_qr_* / mimo_qr_*）。
+ * 会话键是我们自造的 uuid，不含上游凭据（ADR-0041/0042）
+ */
+export interface QrStartResult {
+  /** 授权链接：整段编码为二维码或复制到浏览器打开，截断即失效 */
   authUrl: string;
-  /** 会话键（上游 state 本身）：后续 poll 与 claim 都用它，已在二维码里曝光非新增敏感面 */
   sessionKey: string;
 }
 
-/** workbuddy_qr_poll 的返回 */
-export interface WorkbuddyQrPollResult {
+export interface QrPollResult {
+  /** pending=等待另一侧完成登录；confirmed=凭据已暂存后端；expired=需重新发起 */
   status: "pending" | "confirmed" | "expired";
   nickname?: string | null;
-  /** token 有效期（epoch 毫秒）；confirmed 时非空 */
   expiresAtMs?: number | null;
 }
 
