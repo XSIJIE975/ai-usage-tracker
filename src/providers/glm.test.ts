@@ -7,7 +7,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 import { invoke } from "@tauri-apps/api/core";
 import type { HttpResult } from "../types/ipc";
-import { glmProvider, countAvailableResets, extractAvailableResetIds, isNoCodingPlanEnvelope, parseBalanceLine, parseGlmBalance, parseQuotaLimits, parseResetLine } from "./glm";
+import { glmProvider, countAvailableResets, extractAvailableResetIds, isNoCodingPlanEnvelope, parseBalanceLine, parseGlmBalance, parseQuotaLimits, resetSplitOf, resetSplitTemplate } from "./glm";
 import type { GlmBalanceData, GlmQuotaData } from "./glm";
 import type { ProviderInstance } from "../types/ipc";
 
@@ -92,7 +92,8 @@ describe("glmProvider.fetch", () => {
     const snapshot = await glmProvider.fetch(glmInstance);
     expect(snapshot.status).toBe("ok");
     expect(snapshot.message).toBeUndefined();
-    expect(snapshot.lines).toHaveLength(5);
+    // 重置卡不再出行：入口是卡片底部按钮，卡目列表由弹窗按需取（ADR-0014 修订）
+    expect(snapshot.lines).toHaveLength(4);
     expect(snapshot.lines[0]).toMatchObject({ type: "badge", label: "套餐档位", value: "Lite" });
 
     const [fiveHour, weekly] = snapshot.lines.slice(1);
@@ -115,12 +116,6 @@ describe("glmProvider.fetch", () => {
     expect(weekly.resetsAt).toBe(new Date(1788362308998).toISOString());
     expect(snapshot.lines[3]).toMatchObject({ type: "text", label: "账户余额" });
     expect((snapshot.lines[3] as { value?: string }).value).toMatch(/¥42\.75/);
-    expect(snapshot.lines[4]).toMatchObject({
-      type: "text",
-      label: "可用重置卡",
-      value: "5 小时 ×{fiveHour} · 周 ×{week}",
-      valueParams: { fiveHour: 1, week: 1 },
-    });
 
     expect(mockInvoke).toHaveBeenCalledTimes(4);
     expect(mockInvoke).toHaveBeenNthCalledWith(
@@ -455,39 +450,29 @@ describe("parseBalanceLine / parseGlmBalance", () => {
   });
 });
 
-describe("parseResetLine / countAvailableResets", () => {
+describe("resetSplitOf / resetSplitTemplate / countAvailableResets", () => {
   it("counts only available cards per window", () => {
-    const data = (loadResetFixture().data ?? {}) as NonNullable<Parameters<typeof parseResetLine>[0]>;
+    const data = loadResetFixture().data ?? {};
     expect(countAvailableResets(data.fiveHourResets)).toBe(0);
     expect(countAvailableResets(data.weekResets)).toBe(0);
-    expect(parseResetLine(data)).toBeNull();
   });
 
-  it("renders one line with per-window counts when any card is available", () => {
-    const line = parseResetLine({
-      fiveHourResets: [
-        { recordId: 1, expireTime: "2026-09-30 10:00:00", available: true },
-        { recordId: 2, expireTime: "2026-09-29 10:00:00", available: false },
-      ],
-      weekResets: [{ recordId: 3, expireTime: "2026-10-01 10:00:00", available: true }],
+  it("splits the snapshot counts for the card entry button", () => {
+    expect(resetSplitOf({ availableResetIds: { fiveHour: [1], week: [2, 3] } })).toEqual({
+      fiveHour: 1,
+      week: 2,
     });
-    expect(line).toMatchObject({
-      type: "text",
-      label: "可用重置卡",
-      value: "5 小时 ×{fiveHour} · 周 ×{week}",
-      valueParams: { fiveHour: 1, week: 1 },
-    });
+    expect(resetSplitTemplate({ fiveHour: 1, week: 2 })).toBe("5 小时 ×{fiveHour} · 周 ×{week}");
+    // 单窗口有卡时整段省略另一窗口
+    expect(resetSplitTemplate({ fiveHour: 0, week: 2 })).toBe("周 ×{week}");
+    expect(resetSplitTemplate({ fiveHour: 1, week: 0 })).toBe("5 小时 ×{fiveHour}");
   });
 
-  it("hides the five-hour part when only weekly cards are available", () => {
-    const line = parseResetLine({
-      fiveHourResets: [{ recordId: 1, expireTime: "2026-09-30 10:00:00", available: false }],
-      weekResets: [{ recordId: 3, expireTime: "2026-10-01 10:00:00", available: true }],
-    });
-    expect(line?.value).toBe("周 ×{week}");
-    expect(line?.valueParams).toEqual({ fiveHour: 0, week: 1 });
-    expect(parseResetLine(undefined)).toBeNull();
-    expect(parseResetLine({})).toBeNull();
+  it("hides the entry when no card is available or the source failed", () => {
+    // 0 张：入口不出现（无卡是常态）
+    expect(resetSplitOf({ availableResetIds: { fiveHour: [], week: [] } })).toBeNull();
+    // 源本轮失败：字段缺省，同样不出现（快照 message 已报错）
+    expect(resetSplitOf({})).toBeNull();
   });
 });
 

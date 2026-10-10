@@ -527,9 +527,11 @@ describe("额度耗尽规则（ADR-0021）", () => {
   });
 
   it("盲区场景：预算窗（月 40%）远低于阈值、5h 窗撞满，仍产生耗尽告警", () => {
+    // 重置时刻用远未来固定点（与上方订阅行用例同款）：主指标按 resetsAt 选「重置最远
+    // 窗」，写死的过去日期会让 5h 窗反超成主窗、阈值规则误触发（2026-10-02 CI 实测）
     const { inst, snapshot } = windowed("opencode-go", [
-      { type: "progress", label: "本月额度", percentUsed: 40, resetsAt: "2026-09-30T00:00:00Z" },
-      { type: "progress", label: "本周额度", percentUsed: 95, resetsAt: "2026-09-14T00:00:00Z" },
+      { type: "progress", label: "本月额度", percentUsed: 40, resetsAt: "2030-01-01T00:00:00Z" },
+      { type: "progress", label: "本周额度", percentUsed: 95, resetsAt: "2029-01-01T00:00:00Z" },
       { type: "progress", label: "5 小时请求配额", percentUsed: 100 },
     ]);
     const fires = evaluateRules(inst, snapshot);
@@ -540,7 +542,7 @@ describe("额度耗尽规则（ADR-0021）", () => {
 
   it("多窗同时撞满时全部列名；阈值告警与耗尽告警互不替代", () => {
     const { inst, snapshot } = windowed("glm", [
-      { type: "progress", label: "每周请求配额", percentUsed: 100, resetsAt: "2026-09-14T00:00:00Z" },
+      { type: "progress", label: "每周请求配额", percentUsed: 100, resetsAt: "2029-01-01T00:00:00Z" },
       { type: "progress", label: "{hours} 小时请求配额", percentUsed: 100, params: { hours: 5 } },
     ]);
     const fires = evaluateRules(inst, snapshot);

@@ -1,5 +1,10 @@
 import { alertTitle } from "./evaluate";
-import type { ProviderInstance, ProviderSnapshot, StoredWorkbuddyTrial } from "../types/ipc";
+import {
+  oneShotValue,
+  wbStateKind,
+  type WorkbuddyStateRecord,
+} from "../lib/workbuddy-states";
+import type { ProviderInstance, ProviderSnapshot } from "../types/ipc";
 
 export interface TrialArrival {
   instanceId: string;
@@ -10,15 +15,16 @@ export interface TrialArrival {
 
 export interface TrialDetectorDeps {
   notify: (arrival: TrialArrival) => void;
-  onStateChange: (record: StoredWorkbuddyTrial) => void;
+  onStateChange: (record: WorkbuddyStateRecord) => void;
 }
 
 /**
  * WorkBuddy 试用加油包通知检测器（仅国际站，ADR-0037）：与签到检测器同构但判重键
- * 是实例本身——trial 是一次性事件，领取成功只可能发生一次，实例级一行即够。
- * 判定权威是 Rust 端 workbuddy_trials 行：落库快照随重启后的 reevaluate 重放时
- * （trial 字段还在），已通知过的实例直接跳过。不进告警冷却体系：一次性事件没有
- * 冷却参数。
+ * 是实例本身——trial 是一次性事件，领取成功只可能发生一次，一格即够。判定权威是
+ * workbuddy_states 的 trial_notified 格（ADR-0039 收表）：落库快照随重启后的
+ * reevaluate 重放时（trial 字段还在），已通知过的实例直接跳过。与例程那格的分工：
+ * trial_acted 说「这个端点不必再试」，trial_notified 说「这次领取已经敲过通知」。
+ * 不进告警冷却体系：一次性事件没有冷却参数。
  */
 export class TrialDetector {
   /** instanceId → 是否已通知过领取（后端事实源的内存投影） */
@@ -27,9 +33,9 @@ export class TrialDetector {
   constructor(private deps: TrialDetectorDeps) {}
 
   /** 启动/重载后从后端事实源播种；失败的水合行静默跳过（最坏重报一次） */
-  hydrate(rows: StoredWorkbuddyTrial[]): void {
+  hydrate(rows: WorkbuddyStateRecord[]): void {
     for (const row of rows) {
-      this.claimed.set(row.instance_id, row.claimed);
+      this.claimed.set(row.instance_id, true);
     }
   }
 
@@ -47,7 +53,11 @@ export class TrialDetector {
       body: credited ? "试用加油包已领取（+{credit} 积分）" : "试用加油包已领取",
       params: credited ? { ...params, credit: trial.credit } : params,
     });
-    this.deps.onStateChange({ instance_id: instance.id, claimed: true });
+    this.deps.onStateChange({
+      instance_id: instance.id,
+      kind: wbStateKind.trialNotified,
+      value: oneShotValue,
+    });
   }
 
   /** 删除实例后清理其投影；后端事实源由 delete_instance 级联清理 */

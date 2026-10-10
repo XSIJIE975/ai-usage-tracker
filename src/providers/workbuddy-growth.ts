@@ -1,13 +1,20 @@
 import { invoke } from "@tauri-apps/api/core";
+import {
+  oneShotValue,
+  readWorkbuddyState,
+  wbStateKind,
+  writeWorkbuddyState,
+} from "../lib/workbuddy-states";
 import type {
   HttpResult,
   InstanceCredentialStatus,
   MetricLine,
   ProviderInstance,
   ProviderSite,
-  StoredWorkbuddyGrowthNotice,
 } from "../types/ipc";
 import {
+  BILLING_ORIGIN,
+  WEB_ORIGIN,
   cstDateString,
   isEnvelopeOk,
   parseCheckinResult,
@@ -116,10 +123,25 @@ const ACCOUNT_CACHE_TTL_MS = 10 * 60 * 1000;
  *  uid 要进 X-User-Id 请求头与事件体 JSON，必须先排除 CRLF/引号/非 ASCII */
 const UID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
-/** console/account（网页控制台自己的账号接口，Cookie 会话配套；用户 spike 实证） */
+/** console/account（网页控制台自己的账号接口，Cookie 会话配套；用户 spike 实证）。
+ *  成功即把这份账号摘要落进 cookie_account 格：uid 是账号固有属性、不随会话变化，
+ *  而它又是活跃上报的硬门槛（缺 uid 的上报会被服务端静默不计分），取到过一次之后
+ *  这一轮拉取偶发失败不该让当天那次上报作废 */
 async function fetchCookieAccount(instance: ProviderInstance): Promise<WorkbuddyAccount | null> {
   const cached = accountCache.get(instance.id);
   if (cached && Date.now() - cached.fetchedAt < ACCOUNT_CACHE_TTL_MS) return cached.account;
+  const fetched = await requestConsoleAccount(instance);
+  if (fetched) {
+    accountCache.set(instance.id, { account: fetched, fetchedAt: Date.now() });
+    void writeWorkbuddyState(instance.id, wbStateKind.cookieAccount, JSON.stringify(fetched));
+    return fetched;
+  }
+  return readStoredCookieAccount(instance.id);
+}
+
+/** 本轮 console/account 的实际请求与解析；任何失败形态（非 200、WAF 挑战页、
+ *  uid 不合白名单）都返回 null，绝不向上抛 */
+async function requestConsoleAccount(instance: ProviderInstance): Promise<WorkbuddyAccount | null> {
   let result: HttpResult;
   try {
     result = await invoke<HttpResult>("provider_request", {
@@ -152,9 +174,21 @@ async function fetchCookieAccount(instance: ProviderInstance): Promise<Workbuddy
     return null;
   }
   if (!UID_PATTERN.test(uid)) return null;
-  const account = { uid, nickname };
-  accountCache.set(instance.id, { account, fetchedAt: Date.now() });
-  return account;
+  return { uid, nickname };
+}
+
+/** 读库里留存的 Cookie 通道账号；没有、或留下的 uid 已不合白名单都算没有 */
+async function readStoredCookieAccount(instanceId: string): Promise<WorkbuddyAccount | null> {
+  const stored = await readWorkbuddyState(instanceId, wbStateKind.cookieAccount);
+  if (!stored) return null;
+  try {
+    const parsed = JSON.parse(stored) as Partial<WorkbuddyAccount>;
+    const uid = typeof parsed.uid === "string" ? parsed.uid : "";
+    if (!UID_PATTERN.test(uid)) return null;
+    return { uid, nickname: typeof parsed.nickname === "string" ? parsed.nickname : "" };
+  } catch {
+    return null;
+  }
 }
 
 /** 建立成长中心上下文：token 槽非空即 token 通道（ADR-0035 互斥读出）。Cookie 通道
@@ -204,25 +238,233 @@ function unwrapGrowthEnvelope(result: HttpResult): { ok: boolean; data?: unknown
   }
 }
 
-// ─── 签到例程（自取数链双份实现收敛；幂等标记与解析判据逐字保留）───
+// ─── 活跃上报（chat_request_send 事件；点亮连登的唯一日常入口，ADR-0039）───
 
-/** 每实例的「今日已签」内存标记（每个 webview 独立；标记缺失最多多发一次幂等请求，
- *  服务端按账号当日判重，不会重复发积分——ADR-0029） */
-const checkedInToday = new Map<string, string>();
+/** 事件体里的 uid 占位符：token 通道由 Rust 的 workbuddy_report 分支换成 vault 里的
+ *  明文，Cookie 通道前端替换。缺 uid 的上报服务端返回成功但静默不计分（参考项目
+ *  report.go 实测），所以它是这条上报的硬门槛而非可选项 */
+export const WB_UID_PLACEHOLDER = "{{WB_UID}}";
 
+/** chat 活跃上报的 Cookie 通道头族（= ADR-0036 spike 第二关的实证组合）。
+ *  每日上报与国际站的分流在 chatReportTarget 里做；任务层的桌面/web 事件在
+ *  Cookie 通道复用这一族（同一域同一会话形态） */
+export const chatReportHeadersCookie = {
+  Accept: "application/json",
+  "Content-Type": "application/json",
+  Origin: WEB_ORIGIN,
+  Referer: `${WEB_ORIGIN}/profile/plans-usage`,
+  "x-client-platform": "web",
+};
+
+/** 事件上报的凭据（Cookie 走会话 Cookie，token 走 Rust 的 report 分支——那一支同时
+ *  负责占位符替换）。任务层的其它上报共用这里 */
+export function reportAuthFor(ctx: GrowthContext): string {
+  return ctx.channel === "cookie" ? "session_cookie" : "workbuddy_report";
+}
+
+/** chat 活跃上报事件（照参考实现 report.go 的 chatRequestEvent 完整形状，三十余个
+ *  字段一个不删——参考项目点名「勿用最小 3 字段，防上游加严」）。conversationId 由
+ *  调用方自造即可：服务端不校验它对应一场真实会话，这正是「不打开客户端也算活跃」的
+ *  机制根据（参考项目 README「其余全部为行为事件上报，零对话消耗」） */
+export function chatActivityEvent(
+  conversationId: string,
+  modelId?: string,
+  modelName?: string,
+): Record<string, unknown> {
+  const timestamp = Date.now();
+  return {
+    eventCode: "chat_request_send",
+    timestamp,
+    reportDelay: 0,
+    mode: "craft",
+    conversationId,
+    requestId: conversationId,
+    inputLength: 12,
+    requestModelId: modelId ?? "deepseek-v4-flash",
+    requestModelName: modelName ?? "DeepSeek V4 Flash",
+    isPlan: false,
+    isAutoExecuteTerminal: false,
+    isAutoModify: false,
+    codebaseEnable: false,
+    maxToken: 0,
+    maxSteps: 0,
+    temperature: 0,
+    maxRetries: 0,
+    mentionContexts: [],
+    knowledgeId: [],
+    knowledgeName: [],
+    codebaseId: "",
+    mentionContextCount: 0,
+    command: "",
+    expertId: "",
+    recommendId: "",
+    skillId: "",
+    skillCount: 0,
+    totalCount: 0,
+    fileUri: "",
+    presentAt: timestamp,
+    traceId: "",
+    rootRequestId: conversationId,
+    parentConversationId: conversationId,
+    agentName: "default",
+    agentType: "conversation",
+    userId: WB_UID_PLACEHOLDER,
+  };
+}
+
+/** 上报的域与头族按 (站点, 通道) 装配：
+ *  - 国区两通道都打 codebuddy.cn/v2/report（ADR-0036 两轮真机修正：copilot 域对 POST
+ *    一律要 Bearer，Cookie 会话只在 codebuddy 侧实证过计分）
+ *  - 国际站打本站 www.workbuddy.ai/v2/report（参考项目 billingBase 的 realm 分流同口径；
+ *    2026-10-08 无凭据探测该路由存在）
+ *  X-Domain 与 Origin/Referer 跟着域走：把国际站账号的事件发到国区域，服务端即使回
+ *  code 0 也计不到国际站那套连登上——上报端点对空 body 都回 code 0，成功响应本身
+ *  从来不是计分证据，判据只有连登天数回读 */
+function chatReportTarget(ctx: GrowthContext): { url: string; headers: Record<string, string> } {
+  const siteOrigin = workbuddyApi(ctx.site).origin;
+  const base = ctx.site === "international" ? siteOrigin : BILLING_ORIGIN;
+  if (ctx.channel === "cookie") {
+    return {
+      url: `${base}/v2/report`,
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Origin: siteOrigin,
+        Referer: `${siteOrigin}/profile/plans-usage`,
+        "x-client-platform": "web",
+      },
+    };
+  }
+  // token 通道：复用本站的 billing 头族（含 Accept-Language 按站点切、X-Domain 随域走），
+  // 与签到/余额同一族——参考项目 report.go 走的正是 BillingHeaders 这一族。
+  // 自己拼一份头表就会漏掉按站点变化的那几项（国际站要 en-US，2026-10-08 对表发现）
+  return { url: `${base}/v2/report`, headers: workbuddyTokenApi(ctx.site).headers.billing };
+}
+
+/** chat 活跃上报的出站本体（域与头族见 chatReportTarget）。
+ *  返回信封判定而不抛错：任务层要把它转成动作错误，每日例程要把上游原文留进
+ *  activity_status 格给抽屉看——两种消费共用同一个本体，不再各写一份请求 */
+export async function sendChatActivity(
+  ctx: GrowthContext,
+  event: Record<string, unknown>,
+): Promise<{ ok: boolean; msg: string }> {
+  const target = chatReportTarget(ctx);
+  const raw = JSON.stringify([event]);
+  const result = await invoke<HttpResult>("provider_request", {
+    instanceId: ctx.instance.id,
+    url: target.url,
+    method: "POST",
+    auth: reportAuthFor(ctx),
+    headers: target.headers,
+    bodyText:
+      ctx.channel === "cookie" && ctx.account
+        ? raw.split(WB_UID_PLACEHOLDER).join(ctx.account.uid)
+        : raw,
+  });
+  return unwrapGrowthEnvelope(result);
+}
+
+/** 本轮活跃上报的结果（null=能力位整段门掉，不显示这一行） */
+export interface ActivityReportOutcome {
+  status: "reported" | "already" | "skipped" | "failed";
+  /** failed 时的上游原文（语言中性写法，进 {detail} 不翻译） */
+  detail?: string;
+}
+
+/** activity_status 格的形状：给抽屉说清「今天为什么没有上报」。
+ *  与 activity_acted 分工：那格只在成功时写（动作判据），这格每轮都写（展示用） */
+export interface ActivityStatus {
+  date: string;
+  status: ActivityReportOutcome["status"];
+  detail?: string;
+}
+
+/** 每日活跃上报（挂每天第一次刷新链，签到之后、连登回读之前，ADR-0039）：
+ *  每实例每天发一条 chat_request_send 点亮当日连登。成功才写 activity_acted 格——
+ *  失败的下轮刷新重试（与签到同口径）；参考项目的风控自律是「每号每天 1 次」，
+ *  activity_acted 格正是把这条落到跨重启都成立的约束上。
+ *  拿不到 uid 就不发：发了也不计分，白多一条无归属的埋点，还把「没做」和「做了没效」
+ *  弄成同一个样子（ADR-0024 错误必须可见） */
+export async function runDailyActivityReport(
+  ctx: GrowthContext,
+  today: string,
+): Promise<ActivityReportOutcome | null> {
+  if (!ctx.capabilities.activity) return null;
+  if ((await readWorkbuddyState(ctx.instance.id, wbStateKind.activityActed)) === today) {
+    return { status: "already" };
+  }
+  const uid = ctx.channel === "token" || ctx.account?.uid;
+  if (!uid) {
+    await writeActivityStatus(ctx.instance.id, { date: today, status: "skipped" });
+    return { status: "skipped" };
+  }
+  try {
+    const envelope = await sendChatActivity(ctx, chatActivityEvent(freshConversationId(today)));
+    if (envelope.ok) {
+      void writeWorkbuddyState(ctx.instance.id, wbStateKind.activityActed, today);
+      await writeActivityStatus(ctx.instance.id, { date: today, status: "reported" });
+      return { status: "reported" };
+    }
+    await writeActivityStatus(ctx.instance.id, {
+      date: today,
+      status: "failed",
+      detail: envelope.msg,
+    });
+    return { status: "failed", detail: envelope.msg };
+  } catch (error) {
+    // 调用层失败（网络/命令异常）：与信封失败同处理——留原因、不写 acted，下轮再试。
+    // 上报是辅助源，任何形态的失败都不能拖垮快照
+    const detail = error instanceof Error ? error.message : String(error);
+    await writeActivityStatus(ctx.instance.id, { date: today, status: "failed", detail });
+    return { status: "failed", detail };
+  }
+}
+
+/** 会话 id：`wb2api-` 前缀沿用参考项目形状，带当天日期便于对账 */
+function freshConversationId(today: string): string {
+  return `wb2api-${today}-${Date.now().toString(36)}`;
+}
+
+async function writeActivityStatus(instanceId: string, status: ActivityStatus): Promise<void> {
+  await writeWorkbuddyState(instanceId, wbStateKind.activityStatus, JSON.stringify(status));
+}
+
+/** 读今日活跃上报状态（抽屉那一行的数据源；无格或日期不是今天按「未上报」处理） */
+export async function loadActivityStatus(
+  instanceId: string,
+  today: string,
+): Promise<ActivityStatus | null> {
+  const stored = await readWorkbuddyState(instanceId, wbStateKind.activityStatus);
+  if (!stored) return null;
+  try {
+    const parsed = JSON.parse(stored) as Partial<ActivityStatus>;
+    if (parsed.date !== today || typeof parsed.status !== "string") return null;
+    return { date: today, status: parsed.status, detail: parsed.detail };
+  } catch {
+    return null;
+  }
+}
+
+// ─── 签到例程（自取数链双份实现收敛；解析判据逐字保留，幂等标记改为库判据）───
+
+/** 「今日已签」判据在 workbuddy_states 表的 checkin_acted 格（ADR-0039）：旧版是每
+ *  webview 一份内存 Map，重启即失效——签到本身服务端按日幂等，最坏多发一次请求；
+ *  但同一张表里还存着那些「多发一次就不再成立」的判据，判定与留痕从此走同一处 */
 export interface DailyCheckinResult {
   date: string;
   credited: number;
 }
 
 /** 每日签到（挂每天第一次刷新链，ADR-0029）：done 返回到账积分，already/fail 静默——
- *  fail 不设标记，下轮刷新重试；能力位门控（国际站无签到）整段跳过 */
+ *  fail 不写标记，下轮刷新重试；能力位门控（国际站无签到）整段跳过 */
 export async function runDailyCheckin(
   ctx: GrowthContext,
   today: string,
 ): Promise<DailyCheckinResult | undefined> {
   if (!ctx.capabilities.checkin) return undefined;
-  if (checkedInToday.get(ctx.instance.id) === today) return undefined;
+  if ((await readWorkbuddyState(ctx.instance.id, wbStateKind.checkinActed)) === today) {
+    return undefined;
+  }
   const endpoints = endpointsFor(ctx);
   try {
     const result = await growthRequest(ctx, endpoints, `${endpoints.meterBase}/daily-checkin`, {
@@ -231,25 +473,22 @@ export async function runDailyCheckin(
       bodyText: "{}",
     });
     const outcome = parseCheckinResult(result);
-    if (outcome.kind === "done") {
-      checkedInToday.set(ctx.instance.id, today);
-      return { date: today, credited: outcome.credit };
+    // 「已签」与「刚签成功」都算今日已做过：都是不必再发一次的结果
+    if (outcome.kind === "done" || outcome.kind === "already") {
+      void writeWorkbuddyState(ctx.instance.id, wbStateKind.checkinActed, today);
     }
-    if (outcome.kind === "already") {
-      checkedInToday.set(ctx.instance.id, today);
-    }
+    if (outcome.kind === "done") return { date: today, credited: outcome.credit };
   } catch {
-    // 网络/调用层失败：不设标记，下轮刷新重试
+    // 网络/调用层失败：不写标记，下轮刷新重试
   }
   return undefined;
 }
 
-// ─── 喵喵旅行状态机（自取数链迁入；判重标记与静默语义逐字保留）───
+// ─── 喵喵旅行状态机（自取数链迁入；判据改为 workbuddy_states 的 travel_tried 格）───
 
-/** 每实例最近一次领奖的行程键（depart_at）内存投影；通知判重权威在 Rust 端
- *  workbuddy_travel_claims 行，这里只省同轮重复请求。标记缺失最多多发一次领奖，
- *  服务端按到站记录判重（已领返回「无可领取」措辞，不会重复发积分） */
-const buddyClaimedKeys = new Map<string, string>();
+/** 每实例「这趟行程已尝试过领奖」记在 travel_tried 格（值为行程键 depart_at）；
+ *  通知那一路另存 travel_notified 格。标记缺失最多多发一次领奖，服务端按到站记录
+ *  判重（已领返回「无可领取」措辞，不会重复发积分） */
 
 /** 派出喵喵（location_id 1~4 收益/时长区间相同，workbuddy2api 实测，固定 1）；
  *  结果静默——失败不重试不标记，服务端 daily_limit 与行程状态天然节流 */
@@ -298,7 +537,7 @@ export async function runTravelMachine(
       // 领奖只对到站记录发起（idle 无 record_id，跳过）；同一行程只尝试一次
       if (travelStatus.record_id != null) {
         const tripKey = String(travelStatus.depart_at ?? travelStatus.record_id);
-        if (buddyClaimedKeys.get(ctx.instance.id) !== tripKey) {
+        if ((await readWorkbuddyState(ctx.instance.id, wbStateKind.travelTried)) !== tripKey) {
           const claim = await growthRequest(ctx, endpoints, `${travelBase}/claim`, {
             method: "POST",
             headers: endpoints.growthHeaders,
@@ -306,7 +545,7 @@ export async function runTravelMachine(
           });
           const outcome = parseClaimResult(claim);
           if (outcome.kind !== "fail") {
-            buddyClaimedKeys.set(ctx.instance.id, tripKey);
+            void writeWorkbuddyState(ctx.instance.id, wbStateKind.travelTried, tripKey);
             if (outcome.kind === "claimed") {
               travel = { tripKey, credited: outcome.credit };
             }
@@ -359,8 +598,8 @@ export interface ButlerRedeem {
   chances: number;
 }
 
-/** 一轮闭环里值得留档的到账明细：抽屉「最近一次领取」的数据形状，也是 Rust 端
- *  workbuddy_growth_notices.detail_json 的内容（与快照 growthNotice 字段同形） */
+/** 一轮闭环里值得留档的到账明细：抽屉「最近一次领取」的数据形状，也是
+ *  workbuddy_states 的 butler_detail 格里的内容（与快照 growthNotice 字段同形） */
 export interface ButlerRecordDetail {
   date: string;
   /** 本轮用补签卡补签的张数（0/1——只补昨日） */
@@ -381,9 +620,9 @@ export interface GrowthButlerOutcome extends ButlerRecordDetail {
   streakFull: WorkbuddyStreakFullData | null;
 }
 
-/** 每实例「当日管家已完整跑过」标记：只有整轮无任何可重试失败才打上——半失败
- *  （网络抖动/单步异常）下轮刷新自动补跑，locked/claimed/无卡/无礼包幂等跳过 */
-const butlerRanToday = new Map<string, string>();
+/** 「当日管家已完整跑过」记在 workbuddy_states 的 butler_acted 格：只有整轮无任何
+ *  可重试失败才写——半失败（网络抖动/单步异常）下轮刷新自动补跑，
+ *  locked/claimed/无卡/无礼包幂等跳过 */
 
 /** 前端幂等令牌（参考 clientToken：randomUUID 同款语义）。crypto.randomUUID 在
  *  webview 不可用时退化为时间+随机拼 UUID 形态（服务端只要求全局唯一形态） */
@@ -558,7 +797,12 @@ export async function runGrowthButler(
   options?: { force?: boolean },
 ): Promise<GrowthButlerOutcome | null> {
   if (!ctx.capabilities.butler) return null;
-  if (!options?.force && butlerRanToday.get(ctx.instance.id) === today) return null;
+  if (
+    !options?.force &&
+    (await readWorkbuddyState(ctx.instance.id, wbStateKind.butlerActed)) === today
+  ) {
+    return null;
+  }
   const endpoints = endpointsFor(ctx);
   const outcome: GrowthButlerOutcome = {
     date: today,
@@ -638,22 +882,20 @@ export async function runGrowthButler(
   outcome.streakFull = finalFull ?? full;
   outcome.streakDays = finalFull?.streak?.days ?? full?.streak?.days ?? null;
 
-  if (!failed) butlerRanToday.set(ctx.instance.id, today);
+  if (!failed) void writeWorkbuddyState(ctx.instance.id, wbStateKind.butlerActed, today);
   return outcome;
 }
 
-/** 读抽屉「最近一次领取」的留档：Rust 端 workbuddy_growth_notices 行里的当轮明细
- *  （由通知检测器在自动闭环发通知时写入）。手动当场跑的那轮不进这里——它的结果在
- *  抽屉会话内即时可见。老库升级后明细列为空、读不到留档时返回 null，区块照旧不显示 */
+/** 读抽屉「最近一次领取」的留档：workbuddy_states 的 butler_detail 格（自动闭环发通知
+ *  时由通知检测器写入当轮明细）。手动当场跑的那轮不进这里——它的结果在抽屉会话内
+ *  即时可见。升级当天旧留档不搬，读不到留档返回 null，区块照旧不显示 */
 export async function loadLastButlerRecord(
   instanceId: string,
 ): Promise<ButlerRecordDetail | null> {
+  const stored = await readWorkbuddyState(instanceId, wbStateKind.butlerDetail);
+  if (!stored) return null;
   try {
-    const row = await invoke<StoredWorkbuddyGrowthNotice | null>("get_workbuddy_growth_notice", {
-      instanceId,
-    });
-    if (!row?.detail_json) return null;
-    return JSON.parse(row.detail_json) as ButlerRecordDetail;
+    return JSON.parse(stored) as ButlerRecordDetail;
   } catch {
     // 留档是展示用的辅助源：读失败不报错、不阻断抽屉其余部分
     return null;
@@ -686,21 +928,20 @@ export async function fetchLotterySummaryForDisplay(
 
 // ─── 国际站试用加油包（ADR-0037：仅 trial 能力位站点；一次性，已领永久静默）───
 
-/** trial 已处理标记（进程内）：claimed/已领/4xx 都标记——一次性端点，反复试探无意义；
- *  网络类失败不标记，下轮刷新再试。领取成功只有一次，重启后重试只会拿到幂等静默，
- *  因此通知无需按日期判重的事实源行 */
-const trialAttempted = new Map<string, true>();
-
 export interface TrialClaimResult {
   /** 到账积分（端点未返回时 0；加油包本体随余额套餐行出现） */
   credit: number;
 }
 
-/** 试用加油包领取：成功返回到账；已领（幂等码 14051/措辞）与 4xx 永久静默；
- *  网络/5xx 不标记下轮再试。端点响应形状未真机验证（实施前置项），credit 缺失按 0 */
+/** 试用加油包领取：成功返回到账；已领（幂等码 14051/措辞）与 4xx 永久静默——
+ *  这三种都写 trial_acted 格（恒 '1'），一次性端点反复试探没有意义；网络/5xx 不写格，
+ *  下轮再试。写格即写库，重启后「已经处理过」依然成立，不再每轮重启都重试一次。
+ *  端点响应形状未真机验证（实施前置项），credit 缺失按 0 */
 export async function runTrialClaim(ctx: GrowthContext): Promise<TrialClaimResult | undefined> {
   if (!ctx.capabilities.trial) return undefined;
-  if (trialAttempted.has(ctx.instance.id)) return undefined;
+  if ((await readWorkbuddyState(ctx.instance.id, wbStateKind.trialActed)) === oneShotValue) {
+    return undefined;
+  }
   const endpoints = endpointsFor(ctx);
   try {
     const result = await growthRequest(ctx, endpoints, `${endpoints.ideBase}/trial`, {
@@ -710,15 +951,15 @@ export async function runTrialClaim(ctx: GrowthContext): Promise<TrialClaimResul
     });
     const envelope = unwrapGrowthEnvelope(result);
     if (envelope.ok) {
-      trialAttempted.set(ctx.instance.id, true);
+      void writeWorkbuddyState(ctx.instance.id, wbStateKind.trialActed, oneShotValue);
       return { credit: toCount((envelope.data as { credit?: number | string } | undefined)?.credit) ?? 0 };
     }
     // 已领取过（幂等）：永久静默——「已领取」措辞与幂等码 14051 双判据
     if (/14051|已领取|已经领取|already/i.test(envelope.msg) || (result.status >= 400 && result.status < 500)) {
-      trialAttempted.set(ctx.instance.id, true);
+      void writeWorkbuddyState(ctx.instance.id, wbStateKind.trialActed, oneShotValue);
     }
   } catch {
-    // 网络/调用层失败：不标记，下轮刷新再试
+    // 网络/调用层失败：不写格，下轮刷新再试
   }
   return undefined;
 }

@@ -53,7 +53,7 @@ describe("testQoderCookie", () => {
     expect(
       describeDiagnosis({ ok: false, status: 0, latencyMs: 0, code: "invalid-credential-format" }, t),
     ).toBe(
-      "只粘贴 qoder_session_cookie 的值：不要带「Cookie:」前缀或键名，也不能包含分号、空格、换行或中文",
+      "只粘贴该 Cookie 的值：不要带「Cookie:」前缀或键名，也不能包含分号、空格、换行或中文",
     );
   });
 });

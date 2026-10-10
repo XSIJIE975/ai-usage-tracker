@@ -18,7 +18,7 @@ Status: accepted
 
 **目的地面在 Rust 侧按供应商种类收敛，前端不参与。**
 
-1. `instances.rs` 新增 `ALLOWED_HOSTS`：`kind → 主机名列表`，与既有的槽位表 `credential_label(kind, slot)` 同形并排。9 个 host 覆盖五个种类（deepseek 2 / opencode-go 1 / glm 2 / workbuddy 2 / qoder 2）。
+1. `instances.rs` 新增 `ALLOWED_HOSTS`：`kind → 主机名列表`，与既有的槽位表 `credential_label(kind, slot)` 同形并排。9 个 host 覆盖五个种类（deepseek 2 / opencode-go 1 / glm 2 / workbuddy 2 / qoder 2）。**2026-10-03 现状：12 个 host 覆盖六个种类**——WorkBuddy 的 token 通道又登记了 copilot.tencent.com 与 www.codebuddy.cn（ADR-0034），小米 MiMo 接入时登记了 platform.xiaomimimo.com（ADR-0038）。
 2. `provider_request` 取出实例种类后、拼请求前调 `validate_request_url(kind, url)`；`diagnose_request` 没有实例上下文（凭据是用户刚粘贴、尚未保存的那一份），用五类全集 `validate_probe_url`。跨种类一律拒——拿 glm 的 key 去打 workbuddy.cn 也算凭据离开所属供应商。
 3. 校验口径：`Url::parse` 必须成功、方案必须是 https、主机名与表内条目**精确相等**（不做后缀匹配，`www.workbuddy.cn.evil.com` 必须被拒；带尾点的 FQDN 不匹配即拒，属 fail-closed）、拒 userinfo、拒显式端口。种类未登记一律硬拒——接第 6 个供应商时漏登记会直接报错，而不是静默放行。
 4. HTTP 客户端加 `.https_only(true)`：实测 reqwest 对初始请求（`async_impl/client.rs` 的 `execute_request`）与重定向（`redirect.rs` 的 `check`）两处都校验方案，挡掉合法域被劫持成 `http://` 的降级。跨 host 重定向时 reqwest 自己会剥 `Cookie`/`Authorization`（`redirect.rs` 的 `remove_sensitive_headers`），所以白名单不必为跳转再补一层。

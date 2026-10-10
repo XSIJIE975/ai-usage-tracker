@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { ProviderInstance, ProviderSnapshot, StoredWorkbuddyTravelClaim } from "../types/ipc";
+import type { ProviderInstance, ProviderSnapshot } from "../types/ipc";
+import { wbStateKind, type WorkbuddyStateRecord } from "../lib/workbuddy-states";
 import { TravelDetector, type TravelArrival } from "./travel-detector";
 
 const makeInstance = (id = "wb-1"): ProviderInstance => ({
@@ -29,7 +30,7 @@ const makeSnapshot = (travel?: { tripKey: string; credited: number }): ProviderS
 /** 捕获 notify / onStateChange 的检测器，便于逐条断言 */
 const makeDetector = () => {
   const notifications: TravelArrival[] = [];
-  const saved: StoredWorkbuddyTravelClaim[] = [];
+  const saved: WorkbuddyStateRecord[] = [];
   const detector = new TravelDetector({
     notify: (arrival) => notifications.push(arrival),
     onStateChange: (record) => saved.push(record),
@@ -44,7 +45,9 @@ describe("TravelDetector", () => {
     expect(notifications).toHaveLength(1);
     expect(notifications[0].body).toBe("旅行积分 +{credit} 已到账");
     expect(notifications[0].params).toMatchObject({ credit: 9 });
-    expect(saved).toEqual([{ instance_id: "wb-1", claimed_key: "1789370635" }]);
+    expect(saved).toEqual([
+      { instance_id: "wb-1", kind: wbStateKind.travelNotified, value: "1789370635" },
+    ]);
   });
 
   it("同一行程的快照重放（重启后 reevaluate）不重复通知", () => {
@@ -62,7 +65,7 @@ describe("TravelDetector", () => {
     detector.observe(makeInstance(), makeSnapshot({ tripKey: "1789957341", credited: 8 }));
     expect(notifications).toHaveLength(2);
     expect(saved).toHaveLength(2);
-    expect(saved[1].claimed_key).toBe("1789957341");
+    expect(saved[1].value).toBe("1789957341");
   });
 
   it("credit=0（响应缺到账数）照发通知，body 不带数量占位", () => {
@@ -75,7 +78,9 @@ describe("TravelDetector", () => {
 
   it("hydrate 播种后同行程的重放直接跳过（后端事实源恢复）", () => {
     const { detector, notifications } = makeDetector();
-    detector.hydrate([{ instance_id: "wb-1", claimed_key: "1789370635" }]);
+    detector.hydrate([
+      { instance_id: "wb-1", kind: wbStateKind.travelNotified, value: "1789370635" },
+    ]);
     detector.observe(makeInstance(), makeSnapshot({ tripKey: "1789370635", credited: 9 }));
     expect(notifications).toHaveLength(0);
     // 未播种过的实例照常通知

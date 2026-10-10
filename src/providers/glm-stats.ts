@@ -485,7 +485,7 @@ export interface GlmResetCardItem {
   status: "available" | "expired" | "used";
 }
 
-/** 统计抽屉「重置卡」卡片所需明细（官网「用量重置额度」，仅展示未使用或近 7 天已过期的记录） */
+/** 重置卡弹窗所需明细（官网「用量重置额度」，仅展示未使用或近 7 天已过期的记录） */
 export interface GlmResetCardList {
   fiveHour: { available: number; items: GlmResetCardItem[] };
   week: { available: number; items: GlmResetCardItem[] };
@@ -535,7 +535,7 @@ export function parseGlmResetCards(
   return { fiveHour: group(data?.fiveHourResets), week: group(data?.weekResets) };
 }
 
-/** 拉取智谱重置卡明细（统计抽屉用；与卡片快照的重置卡行同源、独立请求） */
+/** 拉取智谱重置卡明细（卡片底部「重置卡」按钮打开的弹窗用，每次打开重取；与快照同源、独立请求） */
 export const fetchGlmResetCards = async (
   instanceId: string,
 ): Promise<StatsResult<GlmResetCardList>> => {

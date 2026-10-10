@@ -1,4 +1,6 @@
-export type ProviderKind = "deepseek" | "opencode-go" | "glm" | "workbuddy" | "qoder";
+import type { ThemeMode } from "../lib/theme";
+
+export type ProviderKind = "deepseek" | "opencode-go" | "glm" | "workbuddy" | "qoder" | "mimo";
 
 /** 供应商站点（ADR-0031）：同一供应商的两套登录域，Cookie/凭据不互通。
  *  哪些种类是多站，单一判据见 lib/instance.ts 的 providerSites */
@@ -13,7 +15,7 @@ export interface ProviderInstance {
   autoRefresh: boolean;
   /** DeepSeek=元，其余=已用百分比；null=不告警 */
   threshold: number | null;
-  /** 余额告警阈值（元，低于触发）；仅 glm 使用，null=不告警 */
+  /** 余额告警阈值（与账户余额同币种，低于触发）；glm 与 mimo 使用，null=不告警 */
   balanceThreshold: number | null;
   /** 站点（仅多站种类有意义，单站种类一律忽略并按 china 处理） */
   site: ProviderSite;
@@ -47,25 +49,38 @@ export interface ProviderRequestOptions {
   bodyText?: string;
   /** "session_cookie"：从 vault 槽位读 session 的 Value，校验后拼作 Cookie: session=<值>（workbuddy）
    *  "workbuddy_token"：从 vault 槽位读扫码所得 accessToken/uid，注入 Bearer + billing UA + X-User-Id（ADR-0034）
-   *  "qoder_cookie"：从 vault 槽位读 qoder_session_cookie 的 Value，校验后拼作 Cookie: qoder_session_cookie=<值>（qoder，ADR-0030） */
-  auth?: "bearer" | "cookie" | "none" | "session_cookie" | "workbuddy_token" | "qoder_cookie";
+   *  "qoder_cookie"：从 vault 槽位读 qoder_session_cookie 的 Value，校验后拼作 Cookie: qoder_session_cookie=<值>（qoder，ADR-0030）
+   *  "qoder_device"：从 vault 槽位读扫码所得 accessToken，注入 Authorization: Bearer（qoder，ADR-0041）
+   *  "mimo_cookie"：从 vault 两个槽位读 api-platform_serviceToken 与 userId 的值，拼作两条 Cookie（mimo，ADR-0038）
+   *  "mimo_pass"：从 vault 读 passToken 族，由 Rust 现铸 serviceToken 再拼同样的两条 Cookie（mimo，ADR-0042） */
+  auth?:
+    | "bearer"
+    | "cookie"
+    | "none"
+    | "session_cookie"
+    | "workbuddy_token"
+    | "qoder_cookie"
+    | "qoder_device"
+    | "mimo_cookie"
+    | "mimo_pass";
   /** bearer/session_cookie/qoder_cookie 时的凭据槽；bearer 缺省用该种类的主鉴权键 */
   credentialSlot?: string;
 }
 
-/** workbuddy_qr_start 的返回（ADR-0034；无实例会话形态见 ADR-0035） */
-export interface WorkbuddyQrStartResult {
-  /** 浏览器授权链接（authUrl）：整段编码为二维码或复制打开，截断即「登录链接不完整」 */
+/**
+ * 三家扫码登录共用的返回形状（workbuddy_qr_* / qoder_qr_* / mimo_qr_*）。
+ * 会话键是我们自造的 uuid，不含上游凭据（ADR-0041/0042）
+ */
+export interface QrStartResult {
+  /** 授权链接：整段编码为二维码或复制到浏览器打开，截断即失效 */
   authUrl: string;
-  /** 会话键（上游 state 本身）：后续 poll 与 claim 都用它，已在二维码里曝光非新增敏感面 */
   sessionKey: string;
 }
 
-/** workbuddy_qr_poll 的返回 */
-export interface WorkbuddyQrPollResult {
+export interface QrPollResult {
+  /** pending=等待另一侧完成登录；confirmed=凭据已暂存后端；expired=需重新发起 */
   status: "pending" | "confirmed" | "expired";
   nickname?: string | null;
-  /** token 有效期（epoch 毫秒）；confirmed 时非空 */
   expiresAtMs?: number | null;
 }
 
@@ -103,12 +118,16 @@ export interface ProviderSnapshot {
   /** message 模板的占位符实参 */
   messageParams?: Record<string, string | number>;
   lines: MetricLine[];
-  /** 本轮在线的可用重置卡 recordId（仅智谱 fetch 填充；重置卡源失败时缺省=到账检测冻结）。
-   *  供到账检测差集用，落库属瞬时冗余，历史读回不参与检测 */
+  /** 本轮在线的可用重置卡 recordId（仅智谱 fetch 填充；重置卡源失败时缺省=到账检测冻结、卡片不出入口）。
+   *  供到账检测差集与卡片底部「重置卡」按钮的有无/张数用，落库属瞬时冗余，历史读回不参与检测 */
   availableResetIds?: { fiveHour: number[]; week: number[] };
+  /** 本轮取数用的通道**有没有**消耗明细这个数据源（Qoder 扫码通道读不到 histories，
+   *  ADR-0041）。缺省=按种类与站点的能力表判定，只有需要按通道收窄的实例会显式写 false，
+   *  卡片据此决定「查看统计」入口画不画——不画空位也不挂提示点 */
+  statsAvailable?: boolean;
   /** 本轮刷新实际执行且成功的签到（仅 WorkBuddy fetch 在本轮真的调了签到接口并拿到
    *  成功响应时填充）。落库属瞬时冗余、会随快照重放，通知判重权威在 Rust 端
-   *  workbuddy_checkins 行（按 date 每天、按实例各一次）；错误快照也携带——签到与
+   *  workbuddy_states 的 checkin_notified 格（按 date 每天、按实例各一次）；错误快照也携带——签到与
    *  取数是两个源，取数失败不吞掉已发生的签到事件 */
   checkin?: { /** 签到当日（CST，YYYY-MM-DD），检测器据此判重 */
     date: string;
@@ -116,7 +135,7 @@ export interface ProviderSnapshot {
     credited: number;
   };
   /** 本轮刷新真实领到的喵喵旅行奖励（仅 WorkBuddy fetch 本轮调 claim 拿到成功响应时填充）。
-   *  同 checkin 属瞬时冗余，通知判重权威在 Rust 端 workbuddy_travel_claims 行（按行程
+   *  同 checkin 属瞬时冗余，通知判重权威在 workbuddy_states 的 travel_notified 格（按行程
    *  depart_at 判重——一天可有多趟旅行）；错误快照也携带 */
   travel?: { /** 行程标识（depart_at，秒级 epoch 字符串化），检测器据此判重 */
     tripKey: string;
@@ -125,7 +144,7 @@ export interface ProviderSnapshot {
   };
   /** 本轮连登管家闭环发生的事件汇总（仅 WorkBuddy fetch 本轮真的跑了管家且发生事件时
    *  填充；ADR-0037）。落库属瞬时冗余、会随快照重放，通知判重权威在 Rust 端
-   *  workbuddy_growth_notices 行（按 date 每日一条汇总通知）；错误快照也携带——
+   *  workbuddy_states 的 butler_notified 格（按 date 每日一条汇总通知）；错误快照也携带——
    *  管家与取数是不同源，取数失败不吞掉已发生的管家事件 */
   growthNotice?: {
     /** 闭环当日（CST，YYYY-MM-DD），检测器据此判重 */
@@ -149,7 +168,7 @@ export interface ProviderSnapshot {
   };
   /** 本轮真实领取的国际站试用加油包（仅 WorkBuddy fetch 国际站实例本轮领取成功时
    *  填充；ADR-0037）。一次性事件：领取成功只可能发生一次，重启后重试只会拿到
-   *  幂等静默（14051），判重权威是 Rust 端 workbuddy_trials 行（实例级一行） */
+   *  幂等静默（14051），判重权威是 workbuddy_states 的 trial_notified 格（实例级一次性） */
   trial?: {
     /** 到账积分（端点未返回时为 0；加油包本体随余额套餐行出现） */
     credit: number;
@@ -170,37 +189,14 @@ export interface StoredSeenResetCards {
   seeded: boolean;
 }
 
-/** WorkBuddy 签到通知判重行（Rust 端 workbuddy_checkins 表，字段 snake_case 同口径）；
- *  notified_date 是最近一次发出「签到成功」通知的日期（CST YYYY-MM-DD） */
-export interface StoredWorkbuddyCheckin {
+/** WorkBuddy 例程判据的一格（Rust 端 workbuddy_states 表，字段 snake_case 同口径）：
+ *  kind 说这是什么判据（见 lib/workbuddy-states 的 wbStateKind），value 按 kind 自解释——
+ *  按日的存 CST 日期、按行程的存行程键、一次性的存 '1'、留档的存 JSON。
+ *  它取代了「一事一表」的四张判据表：动作判据此前只在内存里，重启即失效（ADR-0039） */
+export interface StoredWorkbuddyState {
   instance_id: string;
-  notified_date: string;
-}
-
-/** WorkBuddy 旅行领奖通知判重行（Rust 端 workbuddy_travel_claims 表）；claimed_key 是
- *  最近一次发出「旅行到账」通知的行程标识（depart_at）——按行程而非日期，一天多趟各判各的 */
-export interface StoredWorkbuddyTravelClaim {
-  instance_id: string;
-  claimed_key: string;
-}
-
-/** WorkBuddy 管家通知判重行（Rust 端 workbuddy_growth_notices 表）；notified_date 是
- *  最近一次发出「成长中心管家」汇总通知的日期（CST YYYY-MM-DD）——管家一轮可能产生
- *  补签/礼包/兑换/抽奖多个事件，通知按日汇总为一条。
- *  detail_json 是那一轮的到账明细（ButlerRecordDetail 的 JSON，档位/奖品/礼包逐条），
- *  供成长中心抽屉显示「最近一次领取」——快照上的 growthNotice 会被下轮刷新覆盖，
- *  判重行才是留档处 */
-export interface StoredWorkbuddyGrowthNotice {
-  instance_id: string;
-  notified_date: string;
-  detail_json?: string | null;
-}
-
-/** WorkBuddy 试用加油包通知判重行（Rust 端 workbuddy_trials 表）——一次性事件，
- *  实例级一行即够（重启后快照重放同一次领取不再重复通知） */
-export interface StoredWorkbuddyTrial {
-  instance_id: string;
-  claimed: boolean;
+  kind: string;
+  value: string;
 }
 
 export interface AppSettings {
@@ -218,6 +214,9 @@ export interface AppSettings {
   resetTimeDisplay: "relative" | "absolute";
   /** 界面语言：auto 按系统语言检测（中文→中文，否则英文） */
   interfaceLanguage: "auto" | "zh" | "en";
+  /** 主题模式：system 跟随系统 / light 浅色 / dark 深色；null＝旧版本数据未迁移，
+   *  启动对账时从浏览器存储收编（WebView2 的 localStorage 可能因硬退出丢写，不入库不可靠） */
+  themeMode: ThemeMode | null;
   /** 开机自启：随系统登录自动运行程序 */
   autoStart: boolean;
   /** 静默启动：仅自启路径生效（ADR-0015），关闭自启时复位为关 */

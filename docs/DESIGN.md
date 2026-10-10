@@ -15,11 +15,12 @@
 2. **语义化**：只用语义 Token（`fg` / `surface` / `brand` / `success`…），不用具体色号  
    （`slate-500`、`#fff` 等一律禁止出现在组件代码中）。
 3. **双主题同源**：浅色/深色共用一套语义 Token，写一次即可同时适配两个主题。
-4. **克制的动效**：只做 120–200ms 的颜色、宽度过渡，不做花哨动画。
+4. **克制的动效**：微反馈只做 120–200ms 的颜色、宽度过渡；弹层进出允许 120–200ms 的位移与淡入（§7），
+   除此之外不做花哨动画。
 
 ## 2. 主题
 
-- 默认跟随系统（`prefers-color-scheme`），可在 设置 → 外观 锁定浅色/深色。
+- 默认跟随系统（`prefers-color-scheme`），可在设置抽屉的「外观」卡片锁定浅色/深色。
 - 实现：`<html data-theme="dark">` 覆盖 Token；未设置时媒体查询兜底。
 - 新增强调色只需改 `src/styles.css` 中 `:root` / `[data-theme="dark"]` / 媒体查询三处。
 
@@ -119,7 +120,7 @@
 
 ### 自动刷新（两级门控）
 
-- 自动刷新由两级开关控制：**自动刷新总开关**（设置 → 通用）是总闸；**实例自动刷新**（各实例配置弹窗）决定单个实例是否参与定时刷新，受总开关门控。
+- 自动刷新由两级开关控制：**自动刷新总开关**（设置抽屉）是总闸；**实例自动刷新**（各实例配置弹窗）决定单个实例是否参与定时刷新，受总开关门控。
 - 总览定时刷新走 `refreshAll(false, { auto: true })`，按实例开关过滤；手动「刷新」始终拉取所有实例。
 - 手动全局刷新同时覆盖统计抽屉：`refreshAll` 手动路径递增 `manualRefreshTick`，统计模块经 `useGlobalRefresh(callback, instanceId)` 感知并同步刷新；组件卸载期间发生的全局刷新，重挂载时补刷一次，不停留在旧缓存。
 - 统计抽屉的刷新按钮与 `RefreshOverlay` 跟随全局刷新状态（`loading` 或该实例的 `refreshingInstances`），与总览卡片行为一致。
@@ -167,7 +168,7 @@
 
 ### 分段选择器 `ui/segmented`
 
-同层级 2–4 个互斥视图切换（总览/设置、主题模式）。选项过多请改用其他导航。
+同层级 2–4 个互斥视图切换（主题模式、界面语言）。选项过多请改用其他导航。主窗口顶层不设页签，原先的「总览/设置」已下沉（见 6.8 与 ADR-0040）。选项一律 `whitespace-nowrap`：与左侧说明同行排布而宽度不够时，换行的是说明文字，控件保持整行（英文标签折行会把「中文」拆成竖排两字）。
 
 ### 空状态 `ui/empty-state`
 
@@ -181,11 +182,6 @@
 
 - 输入框聚焦态已内置 brand 描边 + 焦点环。
 - 开关开启 = brand，关闭 = line-strong，无需自定义颜色。
-
-### 标签页 `ui/tabs`
-
-下划线式 Tabs，用于**页面级模块切换**（如统计页的供应商模块）。  
-与 Segmented 的分工：Tabs 切换整页内容模块；Segmented 切换小范围互斥选项。
 
 ### 下拉选择 `ui/select` 与可搜索选择器 `ui/command`
 
@@ -222,7 +218,7 @@
 
 ## 6.6 统计抽屉模块约定 `views/stats/`
 
-- 统计从顶层页签下沉到卡片触发的右侧抽屉：`StatsSheet` 按 `instance.providerId` 挂载五家模块
+- 统计从顶层页签下沉到卡片触发的右侧抽屉：`StatsSheet` 按 `instance.providerId` 挂载各家模块（小米 MiMo 无统计抽屉，不出「查看统计」）
   （`DeepSeekStats` / `OpenCodeStats` / `GlmStats` / `WorkbuddyStats` / `QoderStats`，各自一个子目录），
   标题 = 实例显示名 + 供应商名 +（多站种类的）站点徽标；
   每个供应商一个独立文件，新增供应商 = 在 `StatsSheet` 注册映射 + 新建模块文件，互不改对方代码。
@@ -245,11 +241,13 @@
 - **界面图标**：统一使用 lucide-react，`strokeWidth` 默认 2，尺寸只用 `h-3.5 w-3.5`（小）/ `h-4 w-4`（中）/ `h-5 w-5`（大）。
 - **状态指示**：成功/警告/危险图标颜色用对应状态 Token，不用灰色表达状态。
 
-## 6.8 设置页与实例配置弹窗约定
+## 6.8 设置抽屉与实例配置弹窗约定
 
-- 设置视图只保留「通用」：自动刷新、启动（开机自启 + 静默启动）、外观（主题与界面语言）、用量告警
+- 设置是顶栏最右齿轮按钮打开的右侧抽屉 `views/settings/SettingsSheet.tsx`（宽 `min(40rem,100vw)`，
+  `SheetBody` 全高滚动，开关状态只在会话内持有、不持久化），不再占顶层页签位（ADR-0040）。
+  抽屉里只保留「通用」：自动刷新、启动（开机自启 + 静默启动）、外观（主题与界面语言）、用量告警
   （含重复提醒间隔）、快速面板（全局快捷键与失焦隐藏）、托盘图标与速览面板、关于与更新；
-  顶部承载 `MigrationCard` 与设备密钥丢失横幅。
+  顶部承载 `MigrationCard` 与设备密钥丢失横幅，顺序照旧。抽屉**没有页脚**：即时写入不存在待提交状态。
 - 实例的凭据表单、自动刷新开关与告警阈值全部在配置弹窗 `views/instances/InstanceDialog.tsx`
   （新建与编辑共用；备注 → 站点（仅 `providerSites` 登记的多站种类）→ 按 kind 渲染的凭据区 →
   自动刷新与阈值 → 取消/保存）。备注上限 20 字。
@@ -265,16 +263,17 @@
 - 删除实例走卡片 ⋯ 菜单 + `DeleteInstanceDialog`（AlertDialog）二次确认。
 - 开关类设置即时保存并显示短暂「已保存」反馈（`useSaveFlash` / `SavedHint`）；弹窗内保存为显式按钮。
 - 「关于与更新」卡片（`views/settings/UpdateCard.tsx`）：显示当前版本、检查更新、变更说明与下载进度（`ui/progress`），错误可重试；状态机在 `store/useUpdateStore.ts`，仅已安装运行时可用（开发构建禁用并提示）。
-- 发现新版本时主窗口顶栏出现「新版本 vX」徽标按钮（outline + brand 描边），点击进入设置视图完成安装。
+- 发现新版本时主窗口顶栏出现「新版本 vX」徽标按钮（outline + brand 描边），点击打开设置抽屉并把滚动区
+  定位到「检查更新」卡片（`UpdateCard` 的 `id="settings-update-card"` 是这条链路的锚点）。
 
 ## 6.9 弹层：Dialog / Sheet / AlertDialog / Popover
 
-三者的分工：
+**选型按容量，不按读写**（ADR-0040）：一屏放得下、有显式提交动作的表单走居中 `dialog`；需要滚动的长内容走右侧 `sheet`。写入时机是第二轴——`dialog` 有取消/保存，`sheet` 里的设置靠即时写入，没有提交概念。
 
 | 组件 | 用途 | 形态 |
 | --- | --- | --- |
-| `ui/dialog` | 表单类内容（实例配置） | 居中，`max-w-lg`，内容超高时内部滚动（`max-h-[85vh]`） |
-| `ui/sheet` | 详情类内容（实例统计） | 右侧滑入，全高，宽 `min(960px,100vw)` |
+| `ui/dialog` | 短表单（实例配置、重置卡明细、错误详情） | 居中，`max-w-lg`，内容超高时内部滚动（`max-h-[85vh]`） |
+| `ui/sheet` | 长内容（实例统计、成长中心、设置抽屉） | 右侧滑入，全高，默认宽 `min(960px,100vw)`，按内容收窄：设置 `min(40rem,100vw)`、成长中心 `sm:max-w-md` |
 | `ui/alert-dialog` | 破坏性操作二次确认（删除实例） | 居中，`max-w-md`，确认按钮 `destructive` |
 | `ui/popover` | 轻量非模态弹出（+ `ui/command` 组成可搜索选择器） | 锚定触发器，`w-72` 左右 |
 
@@ -282,11 +281,16 @@
 - 内容结构：头部（标题 `text-[15px] font-semibold` + 描述）/ 滚动区 / 页脚（取消在左、主操作在右，
   主按钮一个视口一个 `primary`）。
 - 所有弹层必须可用 Esc 关闭且带焦点环；标题/描述供屏幕阅读器（Radix Title/Description）。
+- **宿主别把出场动画吃掉**：`onOpenChange` 里常写的 `setInstance(null)` 会让 `open` 与载荷同一次渲染置空，
+  带 `if (!instance) return null` 的宿主（统计抽屉、成长中心抽屉、删除确认）就此提前卸载整个 Radix Root，
+  而 Presence 是要等 `animationend` 才允许卸载的。载荷一律经 `hooks/use-retained` 留到动画结束，
+  滑出过程中内容不变（`views/settings/SettingsSheet` 只吃 `open`，没有这个问题）。
 
 ## 6.10 可排序卡片网格（总览）
 
 - 网格列：`repeat(auto-fill, minmax(min(100%,340px), 1fr))` + `justify-center`，间距 `gap-4`；
-  移除总览容器的最大宽度（设置视图保留 `max-w-3xl`）。720px 视口 1 列、980px 2 列、1180px 3 列。
+  总览容器不设最大宽度，主窗口也只有这一套版心（设置原来的 `max-w-3xl` 随页签一起撤除）。
+  720px 视口 1 列、980px 2 列、1180px 3 列。
 - **瀑布流（masonry）**：容器加 `[grid-auto-rows:8px]`，每张卡按内容自然高度跨行
   （`gridRowEnd: span ceil((h+16)/24)`，hook `useMasonrySpan`，测量内层而非被拉伸的外层），
   矮卡下方的空隙由后续卡片填充；卡片高度随内容变化时 ResizeObserver 自动重算。
@@ -297,7 +301,10 @@
   `DragOverlay` 浮起副本；拖拽结束 `reorder_instances` 落库并广播 `instances-changed`。
 - 卡片头部 = 手柄 + 头像 + 标题（备注，空则供应商名；多站种类在标题旁挂站点徽标）+ 副标题（供应商名 + 更新时间，
   备注为空时只显示更新时间）+ 状态徽标 + 刷新 + ⋯ 菜单（置顶/编辑配置/删除）；
-  底部一行「查看统计」outline 按钮（`needs_config` / `error` 状态禁用并带 title 说明）。
+  底部一行 outline 按钮：「查看统计」（`needs_config` / `error` 状态禁用并带 title 说明），按需要在它左边并排
+  功能按钮（workbuddy 国区「成长中心」、智谱有可用卡时的「重置卡」，后者张数做徽标、窗口拆分放 title，
+  点开 `GlmResetCardDialog`，见 ADR-0014 修订）。功能按钮**由卡片自持弹窗**（弹窗 portal 在 `Card` 外，
+  与「详情」同法，翻卡两面共用一枚），不跨组件传实例；只有需要打开抽屉的入口才由 Dashboard 传回调。
 - 有重置时间的额度行，重置倒计时文本可点击，在「相对倒计时 / 具体时刻」间切换
   （偏好存全局设置 `resetTimeDisplay`，主窗口与快速面板同步，默认相对）。
 - **翻卡切换（百分比 ↔ 数值）**：额度行同时具备 `percentUsed` 与 `used/limit`（当前即 GLM
@@ -334,12 +341,21 @@
 
 ## 7. 动效
 
-- 时长：`duration-fast`(120ms) 用于 hover 变色；`duration-normal`(200ms) 用于宽度/阴影；
+- 时长：`duration-fast`(120ms) 用于 hover 变色与弹层**离场**；`duration-normal`(200ms) 用于宽度/阴影与弹层**进场**；
   卡片 3D 翻面使用组件级 `--flip-duration: 650ms` + `--flip-ease: cubic-bezier(0.32, 0.72, 0, 1)`
   强缓出（对齐参考稿，无过冲），翻面按钮图标同步旋转 500ms。
+- 缓动只有两个 Token：`--ease-enter: cubic-bezier(0.22, 1, 0.36, 1)`（进场，强缓出无过冲）、
+  `--ease-exit: cubic-bezier(0.4, 0, 1, 1)`（离场，加速离开）。`.panel-enter` 与新弹层共用它们，不另造曲线。
+- **弹层进出**（`ui/dialog` `ui/sheet` `ui/alert-dialog`，由 Radix 的 `data-state` 驱动，关闭动画跑完才卸载）：
+  遮罩淡入淡出；Sheet 自右边缘整宽滑入（`--animate-sheet-*`）；居中弹窗 `scale(.97)→1` 配淡入（`--animate-dialog-*`）。
+  进场用 normal、离场用 fast——关闭比打开快，否则觉得拖沓；唯一的例外是 Sheet 的离场，
+  它要跑完整宽位移，120ms 内等于看不见，故与进场同为 normal。居中弹窗的定位走 Tailwind 的 `translate` 属性，
+  动画只动 `transform`（两者相乘），别把动画改写成 `translate`，那会抢掉居中。
 - 加载：统一使用旋转细环  
   `h-5 w-5 animate-spin rounded-full border-2 border-line-strong border-t-brand`。
-- `prefers-reduced-motion: reduce`：翻面等位移动画关闭过渡直接切换，颜色/阴影过渡保留。
+- `prefers-reduced-motion: reduce`：翻面等位移动画关闭过渡直接切换，颜色/阴影过渡保留。  
+  **弹层进出与 `.panel-enter` 刻意不响应该查询**：系统关掉「显示动画」时 WebView2 恒定上报 reduce，
+  在这里让步等于这两类反馈在用户机器上永远不播（已实际发生，见 `src/styles.css` 注释）。
 
 ## 8. 新页面检查清单
 
@@ -352,4 +368,4 @@
 - [ ] 图例序列 >4 时用 `type: "scroll"`；`grid.bottom` 按行数动态计算
 - [ ] 大数据量表格设 `maxHeight`，分页用 `Pagination` 组件
 - [ ] 统计页接入 `useAutoRefresh`；刷新走局部 overlay，不全屏替换
-- [ ] 页面级模块切换用 `Tabs`，小范围选项用 `Segmented`，筛选用 `Select`
+- [ ] 小范围互斥选项用 `Segmented`，筛选用 `Select`；页面级内容不占顶层页签，一律留在总览或下沉为弹层（ADR-0040）

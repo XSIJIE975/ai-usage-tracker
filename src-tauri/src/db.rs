@@ -52,42 +52,16 @@ pub struct StoredSeenResetCards {
     pub seeded: bool,
 }
 
-/// WorkBuddy 签到通知的判重事实源：每实例一行，notified_date 是最近一次发出
-/// 「签到成功」通知的日期（CST YYYY-MM-DD）。快照上的签到字段是瞬时冗余、会随
-/// 落库快照重放（重启后 reevaluate 重读同一份），通知判重的权威在这里，
-/// 重启后同一天的旧快照重放不再重复通知。字段 snake_case 与 StoredAlertState 同口径
+/// WorkBuddy 日常例程判据的一格（ADR-0039）：kind 说这是什么判据，value 按 kind 自解释
+/// ——按日的存 CST 日期、按行程的存行程键、一次性的存 '1'、留档的存 JSON。
+/// 一实例多行，主键 (instance_id, kind)。它同时取代了两处旧形态：一事一表的「通知判据」
+/// 与只在内存里的「动作判据」——同一件事分两个地方各说各话，重启后动作判据直接失效。
+/// 字段 snake_case 与 StoredAlertState 同口径
 #[derive(Serialize, Deserialize)]
-pub struct StoredWorkbuddyCheckin {
+pub struct StoredWorkbuddyState {
     pub instance_id: String,
-    pub notified_date: String,
-}
-
-/// 旅行领奖通知判重行：claimed_key 是最近一次通知的行程标识（depart_at）。
-/// 按行程而非日期——一天可有多趟旅行，各趟各判各的；语义同 StoredWorkbuddyCheckin
-#[derive(Serialize, Deserialize)]
-pub struct StoredWorkbuddyTravelClaim {
-    pub instance_id: String,
-    pub claimed_key: String,
-}
-
-/// 管家通知判重行：notified_date 是最近一次发出「成长中心管家」汇总通知的日期。
-/// 管家一轮可能产生补签/礼包/兑换/抽奖多个事件，通知按日汇总为一条，按日判重；
-/// 语义同 StoredWorkbuddyCheckin。detail_json 是那一轮的到账明细 JSON（抽屉「最近一次
-/// 自动领取」的留档），存量库缺列为 NULL——旧库升级后由下一次自动领取补上
-#[derive(Serialize, Deserialize)]
-pub struct StoredWorkbuddyGrowthNotice {
-    pub instance_id: String,
-    pub notified_date: String,
-    #[serde(default)]
-    pub detail_json: Option<String>,
-}
-
-/// 试用加油包通知判重行：一次性事件，实例级一行即够（claimed 恒 true 的存在性标记）；
-/// 重启后快照重放同一次领取不再重复通知
-#[derive(Serialize, Deserialize)]
-pub struct StoredWorkbuddyTrial {
-    pub instance_id: String,
-    pub claimed: bool,
+    pub kind: String,
+    pub value: String,
 }
 
 #[derive(Serialize)]
@@ -172,29 +146,12 @@ impl Db {
                 updated_at INTEGER NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS workbuddy_checkins (
-                instance_id TEXT PRIMARY KEY,
-                notified_date TEXT NOT NULL,
-                updated_at INTEGER NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS workbuddy_travel_claims (
-                instance_id TEXT PRIMARY KEY,
-                claimed_key TEXT NOT NULL,
-                updated_at INTEGER NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS workbuddy_growth_notices (
-                instance_id TEXT PRIMARY KEY,
-                notified_date TEXT NOT NULL,
-                detail_json TEXT,
-                updated_at INTEGER NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS workbuddy_trials (
-                instance_id TEXT PRIMARY KEY,
-                claimed INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
+            CREATE TABLE IF NOT EXISTS workbuddy_states (
+                instance_id TEXT NOT NULL,
+                kind        TEXT NOT NULL,
+                value       TEXT NOT NULL,
+                updated_at  INTEGER NOT NULL,
+                PRIMARY KEY (instance_id, kind)
             );
             "#,
         )
@@ -205,7 +162,7 @@ impl Db {
         db.ensure_instance_site_column()?;
         db.ensure_instance_token_auto_renew_column()?;
         db.ensure_notification_params_column()?;
-        db.ensure_growth_notice_detail_column()?;
+        db.drop_legacy_workbuddy_tables()?;
         // 索引依赖列名，必须在改名之后建
         db.conn
             .execute_batch(
@@ -320,24 +277,21 @@ impl Db {
         Ok(())
     }
 
-    /// 管家明细列（成长中心抽屉「最近一次自动领取」）晚于建表语句加入：存量库用
-    /// ALTER TABLE 补列（缺省 NULL），新库建表已含该列，此函数为幂等空操作
-    fn ensure_growth_notice_detail_column(&self) -> Result<(), String> {
-        let mut statement = self
-            .conn
-            .prepare("PRAGMA table_info(workbuddy_growth_notices)")
-            .map_err(|error| error.to_string())?;
-        let columns = statement
-            .query_map([], |row| row.get::<_, String>(1))
-            .map_err(|error| error.to_string())?
-            .collect::<Result<Vec<String>, _>>()
-            .map_err(|error| error.to_string())?;
-        if !columns.iter().any(|column| column == "detail_json") {
-            self.conn
-                .execute_batch("ALTER TABLE workbuddy_growth_notices ADD COLUMN detail_json TEXT;")
-                .map_err(|error| error.to_string())?;
-        }
-        Ok(())
+    /// 「一事一表」时代的四张 WorkBuddy 判据表（checkins / travel_claims / growth_notices /
+    /// trials）已由 workbuddy_states 的一格一判据取代，旧表整块撤掉不留并存读写。
+    /// 刻意不搬旧数据：这些格子都是幂等动作与通知的节流标记，升级当天最多多发一次
+    /// 幂等请求或多通知一条，当天之后自愈（ADR-0039）
+    fn drop_legacy_workbuddy_tables(&self) -> Result<(), String> {
+        self.conn
+            .execute_batch(
+                r#"
+                DROP TABLE IF EXISTS workbuddy_checkins;
+                DROP TABLE IF EXISTS workbuddy_travel_claims;
+                DROP TABLE IF EXISTS workbuddy_growth_notices;
+                DROP TABLE IF EXISTS workbuddy_trials;
+                "#,
+            )
+            .map_err(|error| error.to_string())
     }
 
     fn ensure_notification_params_column(&self) -> Result<(), String> {
@@ -604,13 +558,7 @@ impl Db {
             .map_err(|error| error.to_string())?;
         tx.execute("DELETE FROM seen_reset_cards WHERE instance_id = ?1", [id])
             .map_err(|error| error.to_string())?;
-        tx.execute("DELETE FROM workbuddy_checkins WHERE instance_id = ?1", [id])
-            .map_err(|error| error.to_string())?;
-        tx.execute("DELETE FROM workbuddy_travel_claims WHERE instance_id = ?1", [id])
-            .map_err(|error| error.to_string())?;
-        tx.execute("DELETE FROM workbuddy_growth_notices WHERE instance_id = ?1", [id])
-            .map_err(|error| error.to_string())?;
-        tx.execute("DELETE FROM workbuddy_trials WHERE instance_id = ?1", [id])
+        tx.execute("DELETE FROM workbuddy_states WHERE instance_id = ?1", [id])
             .map_err(|error| error.to_string())?;
         tx.commit().map_err(|error| error.to_string())?;
         Ok(())
@@ -869,162 +817,37 @@ impl Db {
         Ok(())
     }
 
-    /// 读某实例的签到通知判重日期；None = 从未通知过
-    pub fn get_workbuddy_checkin(&self, instance_id: &str) -> Result<Option<StoredWorkbuddyCheckin>, String> {
+    /// 读某实例某格判据的值；None = 这件事在该实例上从未发生过（动作没做过、通知没发过）
+    pub fn get_workbuddy_state(
+        &self,
+        instance_id: &str,
+        kind: &str,
+    ) -> Result<Option<String>, String> {
         let row = self.conn.query_row(
-            "SELECT notified_date FROM workbuddy_checkins WHERE instance_id = ?1",
-            [instance_id],
+            "SELECT value FROM workbuddy_states WHERE instance_id = ?1 AND kind = ?2",
+            rusqlite::params![instance_id, kind],
             |row| row.get::<_, String>(0),
         );
         match row {
-            Ok(notified_date) => Ok(Some(StoredWorkbuddyCheckin {
-                instance_id: instance_id.to_string(),
-                notified_date,
-            })),
+            Ok(value) => Ok(Some(value)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(error) => Err(error.to_string()),
         }
     }
 
-    /// 回写某实例的签到通知判重日期（UPSERT 幂等）：前端检测器的内存投影是判定者，
-    /// 这里只是重启恢复用的事实源——落库快照重放同一天的签到字段不再重复通知
-    pub fn save_workbuddy_checkin(&self, checkin: &StoredWorkbuddyCheckin) -> Result<(), String> {
+    /// 回写某实例某格判据（UPSERT 幂等）。「今天已经做过」从这一刻起是库里的事实而非
+    /// 内存的事实——重启、webview 重载、主窗口隐藏都同样成立（ADR-0039）
+    pub fn save_workbuddy_state(&self, state: &StoredWorkbuddyState) -> Result<(), String> {
         self.conn
             .execute(
                 r#"
-                INSERT INTO workbuddy_checkins(instance_id, notified_date, updated_at)
-                VALUES(?1, ?2, ?3)
-                ON CONFLICT(instance_id) DO UPDATE SET
-                    notified_date = excluded.notified_date,
-                    updated_at = excluded.updated_at
-                "#,
-                rusqlite::params![checkin.instance_id, checkin.notified_date, chrono_utc_now()],
-            )
-            .map_err(|error| error.to_string())?;
-        Ok(())
-    }
-
-    /// 读某实例的旅行领奖判重行程键；None = 从未通知过
-    pub fn get_workbuddy_travel_claim(
-        &self,
-        instance_id: &str,
-    ) -> Result<Option<StoredWorkbuddyTravelClaim>, String> {
-        let row = self.conn.query_row(
-            "SELECT claimed_key FROM workbuddy_travel_claims WHERE instance_id = ?1",
-            [instance_id],
-            |row| row.get::<_, String>(0),
-        );
-        match row {
-            Ok(claimed_key) => Ok(Some(StoredWorkbuddyTravelClaim {
-                instance_id: instance_id.to_string(),
-                claimed_key,
-            })),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(error) => Err(error.to_string()),
-        }
-    }
-
-    /// 回写某实例的旅行领奖判重行程键（UPSERT 幂等），语义同 save_workbuddy_checkin：
-    /// 落库快照随重启重放 travel 字段，靠这里判重不重复通知
-    pub fn save_workbuddy_travel_claim(&self, claim: &StoredWorkbuddyTravelClaim) -> Result<(), String> {
-        self.conn
-            .execute(
-                r#"
-                INSERT INTO workbuddy_travel_claims(instance_id, claimed_key, updated_at)
-                VALUES(?1, ?2, ?3)
-                ON CONFLICT(instance_id) DO UPDATE SET
-                    claimed_key = excluded.claimed_key,
-                    updated_at = excluded.updated_at
-                "#,
-                rusqlite::params![claim.instance_id, claim.claimed_key, chrono_utc_now()],
-            )
-            .map_err(|error| error.to_string())?;
-        Ok(())
-    }
-
-    /// 读某实例的管家通知判重日期与最近一轮到账明细；None = 从未通知过
-    pub fn get_workbuddy_growth_notice(
-        &self,
-        instance_id: &str,
-    ) -> Result<Option<StoredWorkbuddyGrowthNotice>, String> {
-        let row = self.conn.query_row(
-            "SELECT notified_date, detail_json FROM workbuddy_growth_notices WHERE instance_id = ?1",
-            [instance_id],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, Option<String>>(1)?,
-                ))
-            },
-        );
-        match row {
-            Ok((notified_date, detail_json)) => Ok(Some(StoredWorkbuddyGrowthNotice {
-                instance_id: instance_id.to_string(),
-                notified_date,
-                detail_json,
-            })),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(error) => Err(error.to_string()),
-        }
-    }
-
-    /// 回写某实例的管家通知判重日期与当轮明细（UPSERT 幂等），语义同 save_workbuddy_checkin：
-    /// 落库快照随重启重放 growthNotice 字段，靠这里判重不重复通知
-    pub fn save_workbuddy_growth_notice(
-        &self,
-        notice: &StoredWorkbuddyGrowthNotice,
-    ) -> Result<(), String> {
-        self.conn
-            .execute(
-                r#"
-                INSERT INTO workbuddy_growth_notices(instance_id, notified_date, detail_json, updated_at)
+                INSERT INTO workbuddy_states(instance_id, kind, value, updated_at)
                 VALUES(?1, ?2, ?3, ?4)
-                ON CONFLICT(instance_id) DO UPDATE SET
-                    notified_date = excluded.notified_date,
-                    detail_json = excluded.detail_json,
+                ON CONFLICT(instance_id, kind) DO UPDATE SET
+                    value = excluded.value,
                     updated_at = excluded.updated_at
                 "#,
-                rusqlite::params![
-                    notice.instance_id,
-                    notice.notified_date,
-                    notice.detail_json,
-                    chrono_utc_now()
-                ],
-            )
-            .map_err(|error| error.to_string())?;
-        Ok(())
-    }
-
-    /// 读某实例的试用加油包领取标记；None = 从未通知过
-    pub fn get_workbuddy_trial(&self, instance_id: &str) -> Result<Option<StoredWorkbuddyTrial>, String> {
-        let row = self.conn.query_row(
-            "SELECT claimed FROM workbuddy_trials WHERE instance_id = ?1",
-            [instance_id],
-            |row| row.get::<_, bool>(0),
-        );
-        match row {
-            Ok(claimed) => Ok(Some(StoredWorkbuddyTrial {
-                instance_id: instance_id.to_string(),
-                claimed,
-            })),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(error) => Err(error.to_string()),
-        }
-    }
-
-    /// 回写某实例的试用加油包领取标记（UPSERT 幂等）：一次性事件，重启后快照重放
-    /// trial 字段，靠这里判重不重复通知
-    pub fn save_workbuddy_trial(&self, trial: &StoredWorkbuddyTrial) -> Result<(), String> {
-        self.conn
-            .execute(
-                r#"
-                INSERT INTO workbuddy_trials(instance_id, claimed, updated_at)
-                VALUES(?1, ?2, ?3)
-                ON CONFLICT(instance_id) DO UPDATE SET
-                    claimed = excluded.claimed,
-                    updated_at = excluded.updated_at
-                "#,
-                rusqlite::params![trial.instance_id, trial.claimed, chrono_utc_now()],
+                rusqlite::params![state.instance_id, state.kind, state.value, chrono_utc_now()],
             )
             .map_err(|error| error.to_string())?;
         Ok(())
@@ -1249,12 +1072,100 @@ mod tests {
         );
     }
 
-    /// 存量库的 workbuddy_growth_notices 没有明细列：打开时 ALTER 补列，老行读回 None，
-    /// 下一次自动领取照常把明细写进去
+    fn state(instance_id: &str, kind: &str, value: &str) -> super::StoredWorkbuddyState {
+        super::StoredWorkbuddyState {
+            instance_id: instance_id.into(),
+            kind: kind.into(),
+            value: value.into(),
+        }
+    }
+
     #[test]
-    fn legacy_growth_notice_table_gains_detail_column() {
+    fn workbuddy_state_upsert_reads_back_and_cascades() {
+        let db = temp_db();
+        // 从未写过 = None：例程据此判定「今天还没做过」
+        assert!(db
+            .get_workbuddy_state("inst-1", "checkin_acted")
+            .unwrap()
+            .is_none());
+        db.save_workbuddy_state(&state("inst-1", "checkin_acted", "2026-09-20"))
+            .unwrap();
+        // 同格重复回写（快照重放/幂等重试）覆盖旧值，不新增行
+        db.save_workbuddy_state(&state("inst-1", "checkin_acted", "2026-09-21"))
+            .unwrap();
+        assert_eq!(
+            db.get_workbuddy_state("inst-1", "checkin_acted")
+                .unwrap()
+                .as_deref(),
+            Some("2026-09-21")
+        );
+        db.delete_instance("inst-1").unwrap();
+        assert!(db
+            .get_workbuddy_state("inst-1", "checkin_acted")
+            .unwrap()
+            .is_none());
+    }
+
+    /// 一格一判据：同实例的不同 kind 彼此独立，换实例也互不串味——
+    /// 这是把「动作判据」与「通知判据」收进同一张表的前提
+    #[test]
+    fn workbuddy_states_isolate_kinds_and_instances() {
+        let db = temp_db();
+        db.save_workbuddy_state(&state("inst-1", "checkin_acted", "2026-10-08"))
+            .unwrap();
+        db.save_workbuddy_state(&state("inst-1", "checkin_notified", "2026-10-07"))
+            .unwrap();
+        db.save_workbuddy_state(&state("inst-1", "travel_tried", "1789370635"))
+            .unwrap();
+        db.save_workbuddy_state(&state("inst-2", "checkin_acted", "2026-10-01"))
+            .unwrap();
+        assert_eq!(
+            db.get_workbuddy_state("inst-1", "checkin_notified")
+                .unwrap()
+                .as_deref(),
+            Some("2026-10-07"),
+            "同实例的另一格不受本轮写入影响"
+        );
+        assert_eq!(
+            db.get_workbuddy_state("inst-1", "travel_tried")
+                .unwrap()
+                .as_deref(),
+            Some("1789370635")
+        );
+        assert_eq!(
+            db.get_workbuddy_state("inst-2", "checkin_acted")
+                .unwrap()
+                .as_deref(),
+            Some("2026-10-01")
+        );
+        assert!(db
+            .get_workbuddy_state("inst-2", "travel_tried")
+            .unwrap()
+            .is_none());
+        // 删实例清掉该实例的全部格子，别的实例照留
+        db.delete_instance("inst-1").unwrap();
+        assert!(db
+            .get_workbuddy_state("inst-1", "checkin_acted")
+            .unwrap()
+            .is_none());
+        assert!(db
+            .get_workbuddy_state("inst-1", "travel_tried")
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            db.get_workbuddy_state("inst-2", "checkin_acted")
+                .unwrap()
+                .as_deref(),
+            Some("2026-10-01")
+        );
+    }
+
+    /// 一事一表时代的四张判据表在打开时被整块撤掉，旧行不搬运（ADR-0039）：
+    /// 留着会让新旧两套事实源并存，正是这次要消灭的状态
+    #[test]
+    fn legacy_workbuddy_tables_are_dropped_without_migration() {
         let dir = std::env::temp_dir().join(format!(
-            "ai-usage-db-legacy-growth-{}-{}",
+            "ai-usage-db-legacy-states-{}-{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -1267,11 +1178,19 @@ mod tests {
             let conn = rusqlite::Connection::open(&db_path).unwrap();
             conn.execute_batch(
                 r#"
-                CREATE TABLE workbuddy_growth_notices (
-                    instance_id   TEXT PRIMARY KEY,
-                    notified_date TEXT NOT NULL,
-                    updated_at    INTEGER NOT NULL
+                CREATE TABLE workbuddy_checkins (
+                    instance_id TEXT PRIMARY KEY, notified_date TEXT NOT NULL, updated_at INTEGER NOT NULL
                 );
+                CREATE TABLE workbuddy_travel_claims (
+                    instance_id TEXT PRIMARY KEY, claimed_key TEXT NOT NULL, updated_at INTEGER NOT NULL
+                );
+                CREATE TABLE workbuddy_growth_notices (
+                    instance_id TEXT PRIMARY KEY, notified_date TEXT NOT NULL, detail_json TEXT, updated_at INTEGER NOT NULL
+                );
+                CREATE TABLE workbuddy_trials (
+                    instance_id TEXT PRIMARY KEY, claimed INTEGER NOT NULL, updated_at INTEGER NOT NULL
+                );
+                INSERT INTO workbuddy_checkins VALUES('inst-legacy', '2026-09-26', 0);
                 INSERT INTO workbuddy_growth_notices(instance_id, notified_date, updated_at)
                     VALUES('inst-legacy', '2026-09-26', 0);
                 "#,
@@ -1279,152 +1198,32 @@ mod tests {
             .unwrap();
         }
         let db = Db::open(&db_path).unwrap();
-        let legacy = db.get_workbuddy_growth_notice("inst-legacy").unwrap().unwrap();
-        assert_eq!(legacy.notified_date, "2026-09-26");
-        assert!(legacy.detail_json.is_none(), "老行没有明细，读回 None");
-        db.save_workbuddy_growth_notice(&super::StoredWorkbuddyGrowthNotice {
-            instance_id: "inst-legacy".into(),
-            notified_date: "2026-09-27".into(),
-            detail_json: Some("{\"date\":\"2026-09-27\"}".into()),
-        })
-        .unwrap();
-        let refreshed = db.get_workbuddy_growth_notice("inst-legacy").unwrap().unwrap();
-        assert_eq!(refreshed.notified_date, "2026-09-27");
-        assert_eq!(
-            refreshed.detail_json.as_deref(),
-            Some(r#"{"date":"2026-09-27"}"#),
-            "补列后照常写读明细"
-        );
-    }
-
-    #[test]
-    fn workbuddy_growth_notice_upsert_and_cascade() {
-        let db = temp_db();
-        assert!(db.get_workbuddy_growth_notice("inst-1").unwrap().is_none());
-        db.save_workbuddy_growth_notice(&super::StoredWorkbuddyGrowthNotice {
-            instance_id: "inst-1".into(),
-            notified_date: "2026-09-27".into(),
-            detail_json: None,
-        })
-        .unwrap();
-        // 升级前写入的行没有明细：读回 None（抽屉那段留空，等下一次自动领取补上）
+        let conn = &db.conn;
+        let remaining: i64 = conn
+            .query_row(
+                r#"
+                SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'
+                    AND name IN ('workbuddy_checkins', 'workbuddy_travel_claims',
+                                 'workbuddy_growth_notices', 'workbuddy_trials')
+                "#,
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining, 0, "四张旧判据表必须整块撤掉");
+        // 旧行不迁：新表里没有那天的签到格子，最坏是升级当天多发一次幂等请求
         assert!(db
-            .get_workbuddy_growth_notice("inst-1")
+            .get_workbuddy_state("inst-legacy", "checkin_acted")
             .unwrap()
-            .unwrap()
-            .detail_json
             .is_none());
-        db.save_workbuddy_growth_notice(&super::StoredWorkbuddyGrowthNotice {
-            instance_id: "inst-1".into(),
-            notified_date: "2026-09-28".into(),
-            detail_json: Some(r#"{"date":"2026-09-28","draws":["20 积分"]}"#.into()),
-        })
-        .unwrap();
-        let notice = db.get_workbuddy_growth_notice("inst-1").unwrap().unwrap();
-        assert_eq!(notice.notified_date, "2026-09-28");
+        db.save_workbuddy_state(&state("inst-legacy", "butler_detail", r#"{"date":"2026-10-08"}"#))
+            .unwrap();
         assert_eq!(
-            notice.detail_json.as_deref(),
-            Some(r#"{"date":"2026-09-28","draws":["20 积分"]}"#)
-        );
-        db.save_workbuddy_growth_notice(&super::StoredWorkbuddyGrowthNotice {
-            instance_id: "inst-2".into(),
-            notified_date: "2026-09-27".into(),
-            detail_json: None,
-        })
-        .unwrap();
-        db.delete_instance("inst-1").unwrap();
-        assert!(db.get_workbuddy_growth_notice("inst-1").unwrap().is_none());
-        assert_eq!(
-            db.get_workbuddy_growth_notice("inst-2")
+            db.get_workbuddy_state("inst-legacy", "butler_detail")
                 .unwrap()
-                .unwrap()
-                .notified_date,
-            "2026-09-27"
-        );
-    }
-
-    #[test]
-    fn workbuddy_trial_upsert_and_cascade() {
-        let db = temp_db();
-        assert!(db.get_workbuddy_trial("inst-1").unwrap().is_none());
-        db.save_workbuddy_trial(&super::StoredWorkbuddyTrial {
-            instance_id: "inst-1".into(),
-            claimed: true,
-        })
-        .unwrap();
-        // 一次性事件：重复回写（快照重放触发）幂等
-        db.save_workbuddy_trial(&super::StoredWorkbuddyTrial {
-            instance_id: "inst-1".into(),
-            claimed: true,
-        })
-        .unwrap();
-        let trial = db.get_workbuddy_trial("inst-1").unwrap().unwrap();
-        assert!(trial.claimed);
-        db.delete_instance("inst-1").unwrap();
-        assert!(db.get_workbuddy_trial("inst-1").unwrap().is_none());
-    }
-
-    #[test]
-    fn workbuddy_checkin_upsert_and_cascade() {
-        let db = temp_db();
-        // 从未通知 = None：签到检测器据此放行首条通知
-        assert!(db.get_workbuddy_checkin("inst-1").unwrap().is_none());
-        db.save_workbuddy_checkin(&super::StoredWorkbuddyCheckin {
-            instance_id: "inst-1".into(),
-            notified_date: "2026-09-20".into(),
-        })
-        .unwrap();
-        // 同一天重复回写（快照重放触发）幂等；跨天覆盖旧日期
-        db.save_workbuddy_checkin(&super::StoredWorkbuddyCheckin {
-            instance_id: "inst-1".into(),
-            notified_date: "2026-09-21".into(),
-        })
-        .unwrap();
-        let checkin = db.get_workbuddy_checkin("inst-1").unwrap().unwrap();
-        assert_eq!(checkin.notified_date, "2026-09-21");
-        // 删实例级联清理判重行
-        db.save_workbuddy_checkin(&super::StoredWorkbuddyCheckin {
-            instance_id: "inst-2".into(),
-            notified_date: "2026-09-20".into(),
-        })
-        .unwrap();
-        db.delete_instance("inst-1").unwrap();
-        assert!(db.get_workbuddy_checkin("inst-1").unwrap().is_none());
-        assert_eq!(
-            db.get_workbuddy_checkin("inst-2").unwrap().unwrap().notified_date,
-            "2026-09-20"
-        );
-    }
-
-    #[test]
-    fn workbuddy_travel_claim_upsert_and_cascade() {
-        let db = temp_db();
-        // 从未通知 = None：旅行检测器据此放行首条通知
-        assert!(db.get_workbuddy_travel_claim("inst-1").unwrap().is_none());
-        db.save_workbuddy_travel_claim(&super::StoredWorkbuddyTravelClaim {
-            instance_id: "inst-1".into(),
-            claimed_key: "1789370635".into(),
-        })
-        .unwrap();
-        // 同行程重复回写（快照重放触发）幂等；新行程覆盖旧行程键
-        db.save_workbuddy_travel_claim(&super::StoredWorkbuddyTravelClaim {
-            instance_id: "inst-1".into(),
-            claimed_key: "1789957341".into(),
-        })
-        .unwrap();
-        let claim = db.get_workbuddy_travel_claim("inst-1").unwrap().unwrap();
-        assert_eq!(claim.claimed_key, "1789957341");
-        // 删实例级联清理判重行
-        db.save_workbuddy_travel_claim(&super::StoredWorkbuddyTravelClaim {
-            instance_id: "inst-2".into(),
-            claimed_key: "1789370635".into(),
-        })
-        .unwrap();
-        db.delete_instance("inst-1").unwrap();
-        assert!(db.get_workbuddy_travel_claim("inst-1").unwrap().is_none());
-        assert_eq!(
-            db.get_workbuddy_travel_claim("inst-2").unwrap().unwrap().claimed_key,
-            "1789370635"
+                .as_deref(),
+            Some(r#"{"date":"2026-10-08"}"#),
+            "抽屉留档明细走同一格读写"
         );
     }
 

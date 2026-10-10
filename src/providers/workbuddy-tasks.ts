@@ -6,7 +6,12 @@ import {
   WEB_ORIGIN,
 } from "./workbuddy-channel";
 import {
+  WB_UID_PLACEHOLDER,
+  chatActivityEvent,
+  chatReportHeadersCookie,
   createGrowthContext,
+  reportAuthFor,
+  sendChatActivity,
   type GrowthContext,
   type WorkbuddyAccount,
 } from "./workbuddy-growth";
@@ -21,9 +26,12 @@ import {
 // 四条接口（国区；国际站无成长体系，能力位整段门掉）：
 // - 任务列表 GET copilot.tencent.com/v2/activity/growth/tasks（growth 域带 /v2 前缀，
 //   与 travel/streak 的无前缀不同——参考 tasks.go tasksListPath）；mp 口径同 URL 叠加
-//   X-Client-Platform: miniprogram，列表是默认口径的超集，按 task_code 去重合并
-// - 接受任务 POST .../tasks/accept {"task_codes":[...]}（幂等报名；mp 任务不 accept
-//   不计分，执行前带回读验证）
+//   X-Client-Platform: miniprogram，两口径大体重叠、各有专属任务，按 task_code 去重
+//   合并（2026-10-02 实抓：默认口径可见的体验类任务不在 mp 口径，「mp 超集」不成立）
+// - 接受任务 POST .../tasks/accept {"task_codes":[...]}（幂等报名）：上游对
+//   not_accepted 的任务不计数（参考 taskcenter.go 队列前置 acceptPendingTasks——
+//   漏了这步的表现就是上报 200 但进度不动、无法领奖），mp 任务执行前带回读验证，
+//   default 口径任务执行前尽力而为（acceptDefaultTask）
 // - 行为事件上报 POST {codebuddy.cn|copilot.tencent.com|workbuddy.cn}/v2/report——
 //   点亮判据。事件体必带 userId（uid）；桌面/mp 指纹的 machineId 等设备标识由 uid
 //   派生。**token 通道 uid 在 vault 前端拿不到明文**：事件体以 {{WB_UID}} 等占位符
@@ -32,8 +40,8 @@ import {
 // - 领奖 POST www.workbuddy.cn/activity/growth/tasks/{code}/claim（web 头，幂等，
 //   already_claimed 不算错）；mp 任务走 copilot 域 + miniprogram 头，400 时降级 web 路径
 
-/** 事件体里的凭据占位符（token 通道由 Rust 替换；Cookie 通道前端替换） */
-const UID_PLACEHOLDER = "{{WB_UID}}";
+/** 事件体里的凭据占位符（token 通道由 Rust 替换；Cookie 通道前端替换）。
+ *  uid 那一个与活跃上报共用 growth 层的常量——事件里的 userId 是同一个格 */
 const NICKNAME_PLACEHOLDER = "{{WB_NICKNAME}}";
 const MACHINE_ID_PLACEHOLDER = "{{WB_MACHINE_ID}}";
 const SESSION_ID_PLACEHOLDER = "{{WB_SESSION_ID}}";
@@ -74,21 +82,6 @@ const desktopReportHeaders = {
   "Content-Type": "application/json;charset=UTF-8",
   "X-Domain": GROWTH_ORIGIN,
   "X-Product": "SaaS",
-};
-/** chat 活跃上报（billing 域；Cookie 通道形态 = spike 第二关实证组合） */
-const chatReportHeadersCookie = {
-  Accept: "application/json",
-  "Content-Type": "application/json",
-  Origin: WEB_ORIGIN,
-  Referer: `${WEB_ORIGIN}/profile/plans-usage`,
-  "x-client-platform": "web",
-};
-/** chat 活跃上报（token 通道形态，billing 头族） */
-const chatReportHeadersToken = {
-  Accept: "application/json",
-  "Content-Type": "application/json",
-  "X-CodeBuddy-Request": "1",
-  "X-Domain": "www.codebuddy.cn",
 };
 /** mp 指纹上报（codebuddy.cn；参考 ReportMPEvent 头组） */
 const mpReportHeaders = {
@@ -158,7 +151,7 @@ async function fillPlaceholders(body: string, account: WorkbuddyAccount): Promis
     deriveDeviceId(account.uid, "webmachine"),
   ]);
   return body
-    .split(UID_PLACEHOLDER).join(account.uid)
+    .split(WB_UID_PLACEHOLDER).join(account.uid)
     .split(NICKNAME_PLACEHOLDER).join(escapedNickname)
     .split(MACHINE_ID_PLACEHOLDER).join(machineId)
     .split(SESSION_ID_PLACEHOLDER).join(sessionId)
@@ -214,10 +207,6 @@ async function taskRequest(
  *  （Rust 替换占位符 + 按域注入桌面/billing UA），其余走 workbuddy_token */
 function authFor(ctx: TaskContext): string {
   return ctx.channel === "cookie" ? "session_cookie" : "workbuddy_token";
-}
-
-function reportAuthFor(ctx: TaskContext): string {
-  return ctx.channel === "cookie" ? "session_cookie" : "workbuddy_report";
 }
 
 // ─── 信封与任务解析 ───
@@ -351,12 +340,12 @@ function desktopFingerprint(): Record<string, unknown> {
   return {
     timezone: "Asia/Shanghai",
     reportDelay: 2000,
-    userId: UID_PLACEHOLDER,
+    userId: WB_UID_PLACEHOLDER,
     username: NICKNAME_PLACEHOLDER,
     userNickname: NICKNAME_PLACEHOLDER,
     product: "SaaS",
     releaseDate: 1789036585355,
-    commit: "5f9692923c93033111c51ad7b003eb80204b9b75",
+    commit: "5f9692923c93033111c51ad7b003eb80204a9b75",
     ideName: "WorkBuddy",
     ideType: "WorkBuddy",
     ideVersion: "5.5.6",
@@ -390,50 +379,8 @@ function mpFingerprint(): Record<string, unknown> {
     arch: "x64",
     machineId: "0655736a-607f-4d9d-b430-58176ee9a090",
     timezone: "Asia/Shanghai",
-    userId: UID_PLACEHOLDER,
+    userId: WB_UID_PLACEHOLDER,
     userNickname: NICKNAME_PLACEHOLDER,
-  };
-}
-
-/** chat 活跃上报事件（参考 chatRequestEvent 完整形状——勿删字段，防上游加严） */
-function chatRequestEvent(conversationId: string, requestId: string): Record<string, unknown> {
-  return {
-    eventCode: "chat_request_send",
-    timestamp: now(),
-    reportDelay: 0,
-    mode: "craft",
-    conversationId,
-    requestId,
-    inputLength: 12,
-    requestModelId: "deepseek-v4-flash",
-    requestModelName: "DeepSeek V4 Flash",
-    isPlan: false,
-    isAutoExecuteTerminal: false,
-    isAutoModify: false,
-    codebaseEnable: false,
-    maxToken: 0,
-    maxSteps: 0,
-    temperature: 0,
-    maxRetries: 0,
-    mentionContexts: [],
-    knowledgeId: [],
-    knowledgeName: [],
-    codebaseId: "",
-    mentionContextCount: 0,
-    command: "",
-    expertId: "",
-    recommendId: "",
-    skillId: "",
-    skillCount: 0,
-    totalCount: 0,
-    fileUri: "",
-    presentAt: now(),
-    traceId: "",
-    rootRequestId: requestId,
-    parentConversationId: conversationId,
-    agentName: "default",
-    agentType: "conversation",
-    userId: UID_PLACEHOLDER,
   };
 }
 
@@ -657,24 +604,20 @@ async function reportDesktopEvents(
   if (!envelope.ok) throw envelopeError("事件上报失败：{detail}", envelope.msg);
 }
 
-/** chat 活跃上报（billing 域 /v2/report，chat_5 计数与领养前置） */
-async function reportChatActivity(ctx: TaskContext, conversationId: string): Promise<void> {
-  const event = chatRequestEvent(conversationId, conversationId);
-  const headers =
-    ctx.channel === "cookie" ? chatReportHeadersCookie : chatReportHeadersToken;
-  const raw = JSON.stringify([event]);
-  const result = await invoke<HttpResult>("provider_request", {
-    instanceId: ctx.instance.id,
-    url: `${BILLING_ORIGIN}/v2/report`,
-    method: "POST",
-    auth: reportAuthFor(ctx),
-    headers,
-    bodyText:
-      ctx.channel === "cookie" && ctx.account
-        ? await fillPlaceholders(raw, ctx.account)
-        : raw,
-  });
-  const envelope = unwrapEnvelope(result);
+/** chat 活跃上报（billing 域 /v2/report，chat_5 计数与领养前置；Sequential_Tasks_5
+ *  的 PC 兜底走同端点带模型字段——缺省模型与参考 chatRequestEvent 一致）。
+ *  事件形状与出站本体在 growth 层（每日活跃上报走同一条路，一处实现），这里只把
+ *  信封失败转成任务动作错误给行内反馈 */
+async function reportChatActivity(
+  ctx: TaskContext,
+  conversationId: string,
+  modelId?: string,
+  modelName?: string,
+): Promise<void> {
+  const envelope = await sendChatActivity(
+    ctx,
+    chatActivityEvent(conversationId, modelId, modelName),
+  );
   if (!envelope.ok) throw envelopeError("活跃上报失败：{detail}", envelope.msg);
 }
 
@@ -699,7 +642,7 @@ async function reportWebEvent(
     osVersion: "10.0",
     userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
     machineId: WEB_MACHINE_ID_PLACEHOLDER,
-    userId: UID_PLACEHOLDER,
+    userId: WB_UID_PLACEHOLDER,
     userNickname: NICKNAME_PLACEHOLDER,
     enterpriseId: "",
   };
@@ -819,17 +762,36 @@ export interface TaskActionRunResult {
   params?: Record<string, string | number>;
 }
 
+/** 动作执行时的最新进度（mp 任务取 accept 回读、其余取前置读/快照；target≤0
+ *  由动作自行兜底 1——accept 前 mp 列表 target 下发 0，兜底值会少报误领） */
+export interface TaskProgress {
+  target: number;
+  current: number;
+}
+
 interface TaskAction {
   taskCode: string;
   /** 面板兜底标题（上游 title 优先） */
   fallbackTitle: string;
   mp?: boolean;
-  run: (ctx: TaskContext) => Promise<TaskActionRunResult>;
+  /** 按差额补报的动作置位：执行引擎为其拉取最新进度（非 mp 任务多一次列表 GET） */
+  needProgress?: boolean;
+  run: (ctx: TaskContext, progress: TaskProgress) => Promise<TaskActionRunResult>;
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 /** 连续上报之间的节流（参考 reportGap 1050ms 风控口径） */
 const REPORT_GAP_MS = 1050;
+/** mp 对话事件（chat_request_send）的真人节奏：上游对 Sequential 链多轮对话任务有
+ *  反作弊校验——数秒级连发的事件先被计入进度（回读甚至短暂 completed）、随后判无效
+ *  **整体回滚**（进度回落、claim 400 "task not completed"），参考项目 2026-09-26 实测
+ *  2s 连发 4 条全灭、45s 间隔逐条上报全存活且领奖成功。每条上报前 sleep gap + 0~10s
+ *  抖动；**首条也等**（上一轮残留进度被回滚后立即重报同样无效）。宁可慢不可白报 */
+const MP_CHAT_EVENT_GAP_MS = 45_000;
+const MP_CHAT_EVENT_JITTER_MS = 10_000;
+/** 双形态判据任务（Sequential_Tasks_5/7）：primary 上报未点亮时补 fallback 前的
+ *  重读间隔（参考 runSequentialEventTask 两轮各隔 claimPollGap 的口径） */
+const FALLBACK_REREAD_MS = 3_000;
 
 /** 生成一次性会话标识（参考实现 wb2api-<ms> 前缀语义，服务端不校验一致性） */
 const freshId = (prefix: string) => `${prefix}-${now()}-${Math.floor(Math.random() * 1e4)}`;
@@ -856,16 +818,63 @@ function growthBase(ctx: TaskContext): string {
   return ctx.channel === "cookie" ? WEB_ORIGIN : GROWTH_ORIGIN;
 }
 
+/** 「定时任务创建成功」桌面事件（automation_1 与 Sequential_Tasks_4 共用判据，
+ *  参考 DesktopAutomationCreateEvent：纯 API 上报即点亮，无需真实创建） */
+function desktopAutomationCreateEvent(): Record<string, unknown> {
+  return {
+    eventCode: "automated_task_create_suc",
+    name: "自动化任务",
+    source: "manually", modelId: "fast-model", modelIsThinking: true,
+    connectorCount: 0, skills: "", skillCount: 0,
+    scheduleType: "once", mode: "LOCAL",
+  };
+}
+
+/** mp 指纹对话事件 + 模型字段（Sequential_Tasks_5「体验 GLM-5.2」判据载体，
+ *  参考 MiniChatModelEvent：小程序 chat_request_send 真实发射点带 requestModelId/
+ *  requestModelName——Tasks_1/3 的裸对话事件不带模型，模型任务须用本形态） */
+function mpChatModelEvent(conversationId: string, modelId: string, modelName: string): Record<string, unknown> {
+  return {
+    ...mpChatEvent(conversationId, false),
+    requestModelId: modelId,
+    requestModelName: modelName,
+  };
+}
+
+/** mp 指纹灵感事件组（Sequential_Tasks_7 判据载体，参考 MiniPlaybookEvents：
+ *  mpsrc 发射点 playbook_cta_click → playbook_prompt_send，extVersion 覆盖
+ *  2.2.8——任务在 mp 链上，判据认 PC 侧还是 mp 侧待解锁实测，双侧都发） */
+function mpPlaybookEvents(caseId: string, caseName: string): Record<string, unknown>[] {
+  const base = {
+    id: caseId, name: caseName, type: "document",
+    categoryId: "", categoryName: "", skills: "", skillNames: "",
+  };
+  return [
+    { eventCode: "playbook_cta_click", source: "discover", position: 1, extVersion: "2.2.8", ...base },
+    {
+      eventCode: "playbook_prompt_send", source: "discover",
+      promptLength: 96, isOfficial: 1,
+      conversationId: freshId("wb2api-mp-pb"), extVersion: "2.2.8", ...base,
+    },
+  ];
+}
+
 export const TASK_ACTIONS: TaskAction[] = [
   {
     taskCode: "chat_5",
     fallbackTitle: "完成 5 次对话",
-    run: async (ctx) => {
-      for (let index = 0; index < 5; index += 1) {
+    needProgress: true,
+    run: async (ctx, progress) => {
+      // 按差额补报（参考 runChat5 同款）：target 缺失兜底任务语义值 5；
+      // 快照 current 落后于服务端时按前置读最新值补，不重复上报
+      const target = progress.target > 0 ? progress.target : 5;
+      const need = target - progress.current;
+      if (need <= 0) return { message: "进度已达标，无需补报" };
+      for (let index = 0; index < need; index += 1) {
         await reportChatActivity(ctx, freshId("wb2api-chat5"));
-        if (index < 4) await sleep(REPORT_GAP_MS);
+        if (index < need - 1) await sleep(REPORT_GAP_MS);
       }
-      return { message: "已上报 5 条对话活跃事件" };
+      return { message: "已补报 {count} 条对话事件", params: { count: need } };
     },
   },
   {
@@ -928,13 +937,7 @@ export const TASK_ACTIONS: TaskAction[] = [
     taskCode: "automation_1",
     fallbackTitle: "设置自动化任务",
     run: async (ctx) => {
-      await reportDesktopEvents(ctx, [{
-        eventCode: "automated_task_create_suc",
-        name: "自动化任务",
-        source: "manually", modelId: "fast-model", modelIsThinking: true,
-        connectorCount: 0, skills: "", skillCount: 0,
-        scheduleType: "once", mode: "LOCAL",
-      }]);
+      await reportDesktopEvents(ctx, [desktopAutomationCreateEvent()]);
       return { message: "已上报定时任务创建事件" };
     },
   },
@@ -1053,15 +1056,102 @@ export const TASK_ACTIONS: TaskAction[] = [
     taskCode: "Sequential_Tasks_3",
     fallbackTitle: "小程序完成 5 次对话",
     mp: true,
+    run: (ctx, progress) => reportMpChatBackfill(ctx, progress),
+  },
+  {
+    // 每日解锁链第四环（判据待解锁验证）：mp 源码无 automation 发射点，参考以
+    // PC 同源桌面事件作判据（automation_1 三账号实测点亮）
+    taskCode: "Sequential_Tasks_4",
+    fallbackTitle: "小程序创建定时任务",
+    mp: true,
     run: async (ctx) => {
-      for (let index = 0; index < 5; index += 1) {
-        await reportMpEvents(ctx, [mpChatEvent(freshId("wb2api-mp"), false)]);
-        if (index < 4) await sleep(2_000);
-      }
-      return { message: "已上报小程序对话事件 ×5" };
+      await reportDesktopEvents(ctx, [desktopAutomationCreateEvent()]);
+      return { message: "已上报定时任务创建事件" };
+    },
+  },
+  {
+    taskCode: "Sequential_Tasks_5",
+    fallbackTitle: "小程序体验 GLM-5.2 模型",
+    mp: true,
+    run: (ctx, progress) =>
+      runSequentialDualForm(
+        ctx,
+        progress,
+        "Sequential_Tasks_5",
+        () => reportMpEvents(ctx, [mpChatModelEvent(freshId("wb2api-mp-glm"), "glm-5.2", "GLM-5.2")]),
+        "已上报模型对话事件（{model}）",
+        { model: "GLM-5.2" },
+        () => reportChatActivity(ctx, freshId("wb2api-mp-glm"), "glm-5.2", "GLM-5.2"),
+        "模型对话已上报 PC 活跃（{model}）兜底",
+      ),
+  },
+  {
+    taskCode: "Sequential_Tasks_6",
+    fallbackTitle: "小程序完成 10 次对话",
+    mp: true,
+    run: (ctx, progress) => reportMpChatBackfill(ctx, progress),
+  },
+  {
+    taskCode: "Sequential_Tasks_7",
+    fallbackTitle: "小程序体验灵感功能",
+    mp: true,
+    run: (ctx, progress) => {
+      const conversationId = freshId("wb2api-pb");
+      return runSequentialDualForm(
+        ctx,
+        progress,
+        "Sequential_Tasks_7",
+        () =>
+          reportDesktopEvents(
+            ctx,
+            desktopPlaybookPromptSequence(conversationId, `${conversationId}-req`, "pm-gtm-launch-plan", "新产品上市 GTM 发布计划一页纸"),
+          ),
+        "已上报灵感功能事件",
+        undefined,
+        () => reportMpEvents(ctx, mpPlaybookEvents("pm-gtm-launch-plan", "新产品上市 GTM 发布计划一页纸")),
+        "灵感功能已上报 mp 指纹兜底",
+      );
     },
   },
 ];
+
+/** mp 对话任务按差额补报（Sequential_Tasks_3/6 共用形状：mini 指纹 chat_request_send，
+ *  target 由 accept 后回读下发）。每条前等真人节奏（MP_CHAT_EVENT_GAP_MS+抖动，
+ *  **首条也等**）——连发会被上游反作弊判无效整体回滚，见常量注释 */
+async function reportMpChatBackfill(ctx: TaskContext, progress: TaskProgress): Promise<TaskActionRunResult> {
+  const target = progress.target > 0 ? progress.target : 1;
+  const need = target - progress.current;
+  if (need <= 0) return { message: "进度已达标，无需补报" };
+  for (let index = 0; index < need; index += 1) {
+    await sleep(MP_CHAT_EVENT_GAP_MS + Math.floor(Math.random() * MP_CHAT_EVENT_JITTER_MS));
+    await reportMpEvents(ctx, [mpChatEvent(freshId("wb2api-mp"), false)]);
+  }
+  return { message: "已按真人节奏补报 {count} 条对话事件", params: { count: need } };
+}
+
+/** 双形态判据任务（Sequential_Tasks_5/7，每日解锁链的预留环）：primary 上报后
+ *  有界重读一次，未点亮补 fallback 再交外层轮询——判据认 PC 侧还是 mp 侧待解锁
+ *  实测，两侧都是各自任务上实测点亮过的形状（参考 runSequentialEventTask 同款） */
+async function runSequentialDualForm(
+  ctx: TaskContext,
+  progress: TaskProgress,
+  taskCode: string,
+  primary: () => Promise<void>,
+  primaryMessage: string,
+  primaryParams: Record<string, string | number> | undefined,
+  fallback: () => Promise<void>,
+  fallbackMessage: string,
+): Promise<TaskActionRunResult> {
+  await primary();
+  await sleep(FALLBACK_REREAD_MS);
+  const target = progress.target > 0 ? progress.target : 1;
+  const after = await findTask(ctx, taskCode, true);
+  if (!after || after.current < target) {
+    await fallback();
+    return { message: fallbackMessage };
+  }
+  return { message: primaryMessage, params: primaryParams };
+}
 
 /** 自动执行码集合（动作表全集） */
 export const AUTOMATABLE_CODES = new Set(TASK_ACTIONS.map((action) => action.taskCode));
@@ -1132,12 +1222,35 @@ export interface WorkbuddyTaskRunResult {
   energy: number;
 }
 
+/** default 口径任务的接受（执行前置，尽力而为）：上游对 not_accepted 的任务不计数
+ *  （参考 taskcenter.go 队列前置 acceptPendingTasks——漏了这步的表现是上报 200 但
+ *  进度不动、无法领奖）。端点与通道分流同 acceptMpTask（token → copilot /v2，
+ *  Cookie → workbuddy.cn 无 /v2，copilot 拒 Cookie POST），但头族是 web/token 标准
+ *  形态（非 miniprogram 口径，参考 AcceptTasks 用 growthJSON 标准头）。失败返回
+ *  false 不阻塞：部分任务本就无需接受，凭据失效会在随后的动作/回读里显性暴露 */
+async function acceptDefaultTask(ctx: TaskContext, taskCode: string): Promise<boolean> {
+  const baseHeaders = ctx.channel === "cookie" ? taskHeadersCookie : taskHeadersToken;
+  const acceptUrl =
+    ctx.channel === "cookie"
+      ? `${WEB_ORIGIN}/activity/growth/tasks/accept`
+      : `${GROWTH_ORIGIN}/v2/activity/growth/tasks/accept`;
+  const result = await taskRequest(ctx, acceptUrl, {
+    method: "POST",
+    headers: { ...baseHeaders, "Content-Type": "application/json" },
+    bodyText: JSON.stringify({ task_codes: [taskCode] }),
+  });
+  if (result.status !== 200) return false;
+  return unwrapEnvelope(result).ok;
+}
+
 /** mp 任务接受（带登记回读验证——上游存在 200 OK 但未落账形态，此时上报不归账）。
  *  accept 基址按通道分流：token 走 copilot /v2（参考实证），Cookie 走 workbuddy.cn
  *  无 /v2（与 travel/depart 同形态；copilot 拒 Cookie POST 真机 401）。回读列表恒
  *  copilot GET（Cookie 通道已真机证出数）。HTTP 401/403 是凭据失效，直接抛凭据
- *  文案——与「每日锁定窗口」（业务成功但回读未登记）是两回事，不能混同误导 */
-async function acceptMpTask(ctx: TaskContext, taskCode: string): Promise<boolean> {
+ *  文案——与「每日锁定窗口」（业务成功但回读未登记）是两回事，不能混同误导。
+ *  成功返回**accept 后回读到的任务**：accept 前 mp 列表 target 下发 0、回读才带
+ *  真实 target/current——调用方据此按差额补报（A2），失败返回 null */
+async function acceptMpTask(ctx: TaskContext, taskCode: string): Promise<WorkbuddyTask | null> {
   const baseHeaders = ctx.channel === "cookie" ? taskHeadersCookie : taskHeadersToken;
   const acceptUrl =
     ctx.channel === "cookie"
@@ -1163,11 +1276,11 @@ async function acceptMpTask(ctx: TaskContext, taskCode: string): Promise<boolean
       const envelope = unwrapEnvelope(listResult);
       if (envelope.ok) {
         const found = parseGrowthTasks(envelope.data, true).find((task) => task.taskCode === taskCode);
-        if (found && found.acceptStatus !== "not_accepted" && found.acceptStatus !== "") return true;
+        if (found && found.acceptStatus !== "not_accepted" && found.acceptStatus !== "") return found;
       }
     }
   }
-  return false;
+  return null;
 }
 
 /** 回读定位单个任务（按 isMp 只拉单口径：回读不需要双口径合并，一轮执行的总
@@ -1209,6 +1322,9 @@ export async function runWorkbuddyTask(
   if (!action) {
     return { taskCode: task.taskCode, ok: false, message: "该任务不支持自动完成", credit: 0, energy: 0 };
   }
+  // 执行时进度：mp 任务取 accept 回读（accept 前 target 下发 0），其余取前置读或
+  // 面板快照；needProgress 的动作靠它按差额补报
+  let progress: TaskProgress = { target: task.target, current: task.current };
   if (action.mp) {
     const current = (await findTask(ctx, task.taskCode, task.isMp)) ?? task;
     if (current.acceptStatus === "not_accepted" || current.acceptStatus === "") {
@@ -1222,9 +1338,26 @@ export async function runWorkbuddyTask(
           energy: 0,
         };
       }
+      progress = { target: accepted.target, current: accepted.current };
+    } else {
+      progress = { target: current.target, current: current.current };
     }
+  } else if (action.needProgress) {
+    // 非 mp 的差额任务：快照 current 可能落后于服务端（计分只增不减），按快照
+    // 差额补报会超额上报——前置读一次拿最新值
+    const latest = (await findTask(ctx, task.taskCode, task.isMp)) ?? task;
+    progress = { target: latest.target, current: latest.current };
+  } else if (
+    !task.claimed &&
+    !task.locked &&
+    (task.acceptStatus === "not_accepted" || task.acceptStatus === "")
+  ) {
+    // default 口径：接受后才计分，执行前尽力补报（同参考队列前置语义）。快照即
+    // 面板拉取时的状态——accept 只有本执行链会推进，不值得为此再拉一次列表；
+    // 接受成功稍候再上报，给上游状态流转留时间
+    if (await acceptDefaultTask(ctx, task.taskCode)) await sleep(REPORT_GAP_MS);
   }
-  const { message, params } = await action.run(ctx);
+  const { message, params } = await action.run(ctx, progress);
   const after = await findTaskWaiting(ctx, task.taskCode, task.isMp);
   if (after?.claimable) {
     const outcome = await claimReward(ctx, after);

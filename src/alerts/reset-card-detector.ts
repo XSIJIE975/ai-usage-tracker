@@ -111,7 +111,7 @@ export class ResetCardDetector {
   ): ResetCardArrival {
     const title = alertTitle(instance, snapshot, "重置卡到账");
     // 三种组合各一条模板（模板不能变形状，i18n key 不爆炸）；5 小时/周为窗口专名，
-    // 与卡片「可用重置卡」行的「5 小时 ×N · 周 ×N」写法同源
+    // 与卡片入口按钮 title 的「5 小时 ×N · 周 ×N」拆分写法同源（providers/glm.ts）
     const body =
       fiveHour.length > 0 && week.length > 0
         ? "新增 {count} 张可用重置卡（5 小时 ×{fiveHour} · 周 ×{week}）"

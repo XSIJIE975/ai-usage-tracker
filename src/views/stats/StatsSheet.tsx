@@ -8,8 +8,9 @@ import { SiteBadge } from "../../components/SiteBadge";
 import { displayName } from "../../lib/instance";
 import { providerName } from "../../providers";
 import { workbuddyApi, workbuddySiteOf } from "../../providers/workbuddy";
+import { useRetained } from "../../hooks/use-retained";
 import { useT } from "../../i18n";
-import type { ProviderInstance } from "../../types/ipc";
+import type { ProviderInstance, ProviderSnapshot } from "../../types/ipc";
 
 const STATS_COMPONENTS = {
   deepseek: DeepSeekStats,
@@ -24,10 +25,14 @@ const STATS_COMPONENTS = {
 } as const;
 
 /** 该实例有没有统计面：种类没挂统计模块，或本站没有那个数据源（workbuddy 国际站无消耗明细，
- *  ADR-0031 能力表）时不出「查看统计」入口 */
+ *  ADR-0031 能力表）时不出「查看统计」入口。
+ *  第二个参数带上本轮快照：同一种类的**通道**能力可以不同——Qoder 扫码通道的 token 读不到
+ *  histories（ADR-0041），该实例这一轮就把入口收掉，而不是留一个点开必然报错的按钮 */
 export function providerHasStats(
   instance: Pick<ProviderInstance, "providerId" | "site">,
+  snapshot?: Pick<ProviderSnapshot, "statsAvailable"> | null,
 ): boolean {
+  if (snapshot?.statsAvailable === false) return false;
   if (!(instance.providerId in STATS_COMPONENTS)) return false;
   if (instance.providerId === "workbuddy") {
     return workbuddyApi(workbuddySiteOf(instance)).capabilities.stats;
@@ -37,7 +42,7 @@ export function providerHasStats(
 
 /** 实例统计抽屉：按实例种类挂载对应统计模块（卡片「查看统计」入口） */
 export function StatsSheet({
-  instance,
+  instance: incoming,
   open,
   onOpenChange,
 }: {
@@ -46,6 +51,7 @@ export function StatsSheet({
   onOpenChange: (open: boolean) => void;
 }) {
   const t = useT();
+  const instance = useRetained(incoming);
   if (!instance) return null;
   // 无统计面的实例（qoder，或本站没有明细数据源的 workbuddy 国际站）入口已隐藏；
   // 此处兜底直接不渲染，防误开空抽屉

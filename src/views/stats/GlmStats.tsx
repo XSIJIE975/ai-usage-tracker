@@ -17,10 +17,8 @@ import { StackedBars } from "../../components/charts/StackedBars";
 import { Donut } from "../../components/charts/Donut";
 import {
   fetchGlmAccountBalance,
-  fetchGlmResetCards,
   fetchGlmUsage,
   type GlmAccountBalance,
-  type GlmResetCardList,
   type GlmUsageBundle,
 } from "../../providers/glm-stats";
 import { createUsageCache } from "../../stats/usage-cache";
@@ -32,7 +30,6 @@ import { useAutoRefresh } from "./use-auto-refresh";
 import { useGlobalRefresh } from "./use-global-refresh";
 import { GlmOverviewCards } from "./glm/OverviewCards";
 import { GlmBalanceCards } from "./glm/BalanceCards";
-import { GlmResetCards } from "./glm/ResetCards";
 import { GlmPerformanceCard } from "./glm/PerformanceCard";
 import { GlmModelUsageTable } from "./glm/ModelUsageTable";
 import { GlmToolUsageTable } from "./glm/ToolUsageTable";
@@ -127,27 +124,6 @@ export function GlmStats({ instance }: { instance: ProviderInstance }) {
       cancelled = true;
     };
   }, [instanceId, refreshTick]);
-
-  // 重置卡明细（官网「用量重置额度」）：与余额同节奏，取不到时整块隐藏
-  const refreshInstance = useAppStore((state) => state.refreshInstance);
-  const [resetCards, setResetCards] = useState<GlmResetCardList | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    fetchGlmResetCards(instanceId)
-      .then((result) => {
-        if (!cancelled && result.status === "ok") setResetCards(result.data);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [instanceId, refreshTick]);
-
-  /** 使用重置卡成功：重取重置卡列表，并刷新实例快照（配额窗口数值已变化） */
-  const handleResetUsed = () => {
-    setRefreshTick((tick) => tick + 1);
-    void refreshInstance(instanceId);
-  };
 
   // 接入全局自动刷新
   useAutoRefresh(refresh, instance);
@@ -314,9 +290,6 @@ export function GlmStats({ instance }: { instance: ProviderInstance }) {
 
       {/* 账户余额明细（取不到时隐藏） */}
       {accountBalance && <GlmBalanceCards balance={accountBalance} />}
-
-      {/* 重置卡明细（取不到时隐藏） */}
-      {resetCards && <GlmResetCards list={resetCards} instanceId={instanceId} onUsed={handleResetUsed} />}
 
       {/* 图表区 */}
       <div className="grid gap-4 xl:grid-cols-5">

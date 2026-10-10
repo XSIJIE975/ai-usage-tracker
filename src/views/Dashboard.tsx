@@ -6,7 +6,6 @@ import {
   ArrowUpCircle,
   Bell,
   Gauge,
-  LayoutGrid,
   Plus,
   RefreshCw,
   Settings,
@@ -40,13 +39,12 @@ import { useAppStore, currentWindowLabel, type RefreshCompletedPayload } from ".
 import { useAlertStore } from "../store/useAlertStore";
 import { selectUnreadCount, useNotificationStore } from "../store/useNotificationStore";
 import { Button } from "../components/ui/button";
-import { Segmented } from "../components/ui/segmented";
 import { EmptyState } from "../components/ui/empty-state";
 import { BrandIcon } from "../components/BrandIcon";
 import { IconButton } from "../components/ui/icon-button";
 import { ProviderCard } from "../components/ProviderCard";
 import { NotificationCenterPanel } from "./NotificationCenterPanel";
-import { SettingsView } from "./SettingsView";
+import { SettingsSheet, type SettingsFocus } from "./settings/SettingsSheet";
 import { providerHasStats, StatsSheet } from "./stats/StatsSheet";
 import { WorkbuddyTasksSheet } from "./tasks/WorkbuddyTasksSheet";
 import { workbuddyApi, workbuddySiteOf } from "../providers/workbuddy";
@@ -58,8 +56,6 @@ import type { AppSettings, ProviderInstance, ProviderKind } from "../types/ipc";
 import { updateSupported, useUpdateStore } from "../store/useUpdateStore";
 import { useTraySync } from "../hooks/use-tray-sync";
 import { applyParams, useLanguage, useT } from "../i18n";
-
-type ViewKey = "overview" | "settings";
 
 /** 瀑布流行步长：行高 8px + 行距 16px，跨行数 = ceil((内容高+行距)/步长) */
 const MASONRY_STEP = 24;
@@ -164,7 +160,12 @@ export function Dashboard() {
   const removeInstance = useAppStore((state) => state.removeInstance);
   const reorderInstances = useAppStore((state) => state.reorderInstances);
   const storeLastRefreshedAt = useAppStore((state) => state.lastRefreshedAt);
-  const [view, setView] = useState<ViewKey>("overview");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsFocus, setSettingsFocus] = useState<SettingsFocus>("top");
+  const openSettings = (focus: SettingsFocus) => {
+    setSettingsFocus(focus);
+    setSettingsOpen(true);
+  };
   const t = useT();
   const language = useLanguage();
   const [noticeOpen, setNoticeOpen] = useState(false);
@@ -402,14 +403,6 @@ export function Dashboard() {
           </div>
         </div>
         <div className="flex items-center gap-2.5">
-          <Segmented<ViewKey>
-            value={view}
-            onChange={setView}
-            options={[
-              { value: "overview", label: t("总览"), icon: <LayoutGrid className="h-3.5 w-3.5" /> },
-              { value: "settings", label: t("设置"), icon: <Settings className="h-3.5 w-3.5" /> },
-            ]}
-          />
           <Popover open={addOpen} onOpenChange={setAddOpen}>
             <PopoverTrigger asChild>
               <IconButton
@@ -450,7 +443,7 @@ export function Dashboard() {
               size="sm"
               variant="outline"
               className="border-brand/40 text-brand"
-              onClick={() => setView("settings")}
+              onClick={() => openSettings("update")}
               title={t("前往设置安装新版本")}
               aria-label={applyParams(t("新版本 v{version} 可用，前往设置安装"), { version: updateVersion ?? "" })}
             >
@@ -485,104 +478,108 @@ export function Dashboard() {
           <Button size="sm" variant="outline" onClick={() => void refreshAll()} disabled={refreshing}>
             <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} /> {t("刷新")}
           </Button>
+          <IconButton
+            onClick={() => openSettings("top")}
+            title={t("设置")}
+            aria-label={t("设置")}
+          >
+            <Settings className="h-4 w-4" />
+          </IconButton>
         </div>
       </header>
 
       <main className="flex-1 overflow-y-auto p-6">
-        <div className={cn(view === "settings" && "mx-auto max-w-3xl")}>
-          {error && (
-            <div className="mb-4 flex items-center justify-between gap-3 rounded-md border border-danger/20 bg-danger-soft px-4 py-2.5 text-[13px] text-danger-soft-fg">
-              <span className="flex items-center gap-2">
-                <AlertCircle className="h-4 w-4 shrink-0" />
-                {error}
-              </span>
-              <button
-                type="button"
-                onClick={clearError}
-                className="rounded p-0.5 opacity-70 transition-opacity hover:opacity-100"
-                aria-label={t("关闭")}
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          )}
-          {view === "overview" ? (
-            ordered.length === 0 ? (
-              initialLoaded && (
-                <EmptyState
-                  icon={<Gauge className="h-5 w-5" />}
-                  title={t("还没有供应商")}
-                  description={t("添加一份凭据，开始追踪该供应商的用量。")}
-                  action={
-                    <Button size="sm" variant="secondary" onClick={() => setAddOpen(true)}>
-                      <Plus className="h-3.5 w-3.5" /> {t("添加供应商")}
-                    </Button>
-                  }
-                />
-              )
-            ) : (
-              <DndContext
-                sensors={sensors}
-                collisionDetection={closestCenter}
-                onDragStart={onDragStart}
-                onDragEnd={onDragEnd}
-                onDragCancel={() => setDraggingId(null)}
-              >
-                <SortableContext items={ordered.map((instance) => instance.id)}>
-                  <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,340px),1fr))] justify-center gap-4 [grid-auto-rows:8px]">
-                    {ordered.map((instance) => (
-                      <SortableProviderCard
-                        key={instance.id}
-                        instance={instance}
-                        snapshot={snapshotOf(instance.id)}
-                        refreshing={loading || refreshingInstances[instance.id]}
-                        flipped={flippedIds.has(instance.id)}
-                        onToggleFlip={() => toggleFlipped(instance.id)}
-                        onRefresh={() => void refreshInstance(instance.id)}
-                        onTogglePin={() =>
-                          void updateInstance(instance.id, { pinned: !instance.pinned })
-                        }
-                        onEdit={() => setEditing(instance)}
-                        onDelete={() => setDeleting(instance)}
-                        // 无统计面的实例（qoder，或国际站 workbuddy）不传入口，卡片不渲染「查看统计」
-                        onOpenStats={
-                          providerHasStats(instance)
-                            ? () => setStatsInstance(instance)
-                            : undefined
-                        }
-                        // 成长任务入口：仅 workbuddy 国区（国际站无成长体系，ADR-0036）
-                        onOpenTasks={
-                          instance.providerId === "workbuddy" &&
-                          workbuddyApi(workbuddySiteOf(instance)).capabilities.tasks
-                            ? () => setTaskInstance(instance)
-                            : undefined
-                        }
-                        tasksBadge={
-                          taskBadges[instance.id] && taskBadges[instance.id] > 0
-                            ? taskBadges[instance.id]
-                            : undefined
-                        }
-                      />
-                    ))}
-                  </div>
-                </SortableContext>
-                <DragOverlay dropAnimation={null}>
-                  {draggingInstance && (
-                    <div className="w-full max-w-[460px] rounded-lg shadow-pop">
-                      <ProviderCard
-                        instance={draggingInstance}
-                        snapshot={snapshotOf(draggingInstance.id)}
-                        flipped={flippedIds.has(draggingInstance.id)}
-                      />
-                    </div>
-                  )}
-                </DragOverlay>
-              </DndContext>
-            )
-          ) : (
-            <SettingsView />
-          )}
-        </div>
+        {error && (
+          <div className="mb-4 flex items-center justify-between gap-3 rounded-md border border-danger/20 bg-danger-soft px-4 py-2.5 text-[13px] text-danger-soft-fg">
+            <span className="flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              {error}
+            </span>
+            <button
+              type="button"
+              onClick={clearError}
+              className="rounded p-0.5 opacity-70 transition-opacity hover:opacity-100"
+              aria-label={t("关闭")}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+        {ordered.length === 0 ? (
+          initialLoaded && (
+            <EmptyState
+              icon={<Gauge className="h-5 w-5" />}
+              title={t("还没有供应商")}
+              description={t("添加一份凭据，开始追踪该供应商的用量。")}
+              action={
+                <Button size="sm" variant="secondary" onClick={() => setAddOpen(true)}>
+                  <Plus className="h-3.5 w-3.5" /> {t("添加供应商")}
+                </Button>
+              }
+            />
+          )
+        ) : (
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragStart={onDragStart}
+            onDragEnd={onDragEnd}
+            onDragCancel={() => setDraggingId(null)}
+          >
+            <SortableContext items={ordered.map((instance) => instance.id)}>
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,340px),1fr))] justify-center gap-4 [grid-auto-rows:8px]">
+                {ordered.map((instance) => (
+                  <SortableProviderCard
+                    key={instance.id}
+                    instance={instance}
+                    snapshot={snapshotOf(instance.id)}
+                    refreshing={loading || refreshingInstances[instance.id]}
+                    flipped={flippedIds.has(instance.id)}
+                    onToggleFlip={() => toggleFlipped(instance.id)}
+                    onRefresh={() => void refreshInstance(instance.id)}
+                    onTogglePin={() =>
+                      void updateInstance(instance.id, { pinned: !instance.pinned })
+                    }
+                    onEdit={() => setEditing(instance)}
+                    onDelete={() => setDeleting(instance)}
+                    // 没有统计面的实例（国际站 workbuddy 无消耗明细）不传入口；本轮取数通道
+                    // 没有明细源的（Qoder 扫码，ADR-0041）同样收掉，卡片不渲染「查看统计」
+                    onOpenStats={
+                      providerHasStats(instance, snapshotOf(instance.id))
+                        ? () => setStatsInstance(instance)
+                        : undefined
+                    }
+                    // 成长中心入口：只有国区（有任务区才有这扇抽屉）。国际站的连登
+                    // 天数照常在卡片上显示、活跃照明代报，但抽屉里除了天数和一行
+                    // 状态没有别的可看——那里没有成长中心（ADR-0039）
+                    onOpenTasks={
+                      instance.providerId === "workbuddy" &&
+                      workbuddyApi(workbuddySiteOf(instance)).capabilities.tasks
+                        ? () => setTaskInstance(instance)
+                        : undefined
+                    }
+                    tasksBadge={
+                      taskBadges[instance.id] && taskBadges[instance.id] > 0
+                        ? taskBadges[instance.id]
+                        : undefined
+                    }
+                  />
+                ))}
+              </div>
+            </SortableContext>
+            <DragOverlay dropAnimation={null}>
+              {draggingInstance && (
+                <div className="w-full max-w-[460px] rounded-lg shadow-pop">
+                  <ProviderCard
+                    instance={draggingInstance}
+                    snapshot={snapshotOf(draggingInstance.id)}
+                    flipped={flippedIds.has(draggingInstance.id)}
+                  />
+                </div>
+              )}
+            </DragOverlay>
+          </DndContext>
+        )}
       </main>
 
       <InstanceDialog
@@ -615,6 +612,7 @@ export function Dashboard() {
           if (!open) setTaskInstance(null);
         }}
       />
+      <SettingsSheet open={settingsOpen} focus={settingsFocus} onOpenChange={setSettingsOpen} />
       <DeleteInstanceDialog
         instance={deleting}
         open={deleting !== null}

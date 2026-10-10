@@ -9,12 +9,13 @@ import {
 } from "../../components/ui/alert-dialog";
 import { providerName } from "../../providers";
 import { displayName } from "../../lib/instance";
+import { useRetained } from "../../hooks/use-retained";
 import { useT } from "../../i18n";
 import type { ProviderInstance } from "../../types/ipc";
 
 /** 删除实例的二次确认：明说凭据、快照历史与通知一并删除 */
 export function DeleteInstanceDialog({
-  instance,
+  instance: incoming,
   open,
   onOpenChange,
   onConfirm,
@@ -25,6 +26,7 @@ export function DeleteInstanceDialog({
   onConfirm: () => void;
 }) {
   const t = useT();
+  const instance = useRetained(incoming);
   if (!instance) return null;
   const name = displayName(instance, t(providerName(instance.providerId)));
   return (

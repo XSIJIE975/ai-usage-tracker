@@ -11,7 +11,14 @@ import { ResetCardDetector, type ResetCardArrival, type ResetCardDetectorDeps } 
 import { TravelDetector, type TravelArrival, type TravelDetectorDeps } from "../alerts/travel-detector";
 import { renderTemplate } from "../i18n/apply-params";
 import { resolveLanguage, translateText } from "../i18n/translate";
-import type { AppSettings, ProviderInstance, ProviderSnapshot, StoredAlertState, StoredNotification, StoredSeenResetCards, StoredWorkbuddyCheckin, StoredWorkbuddyGrowthNotice, StoredWorkbuddyTravelClaim, StoredWorkbuddyTrial } from "../types/ipc";
+import {
+  readWorkbuddyState,
+  wbStateKind,
+  writeWorkbuddyState,
+  type WbStateKind,
+  type WorkbuddyStateRecord,
+} from "../lib/workbuddy-states";
+import type { AppSettings, ProviderInstance, ProviderSnapshot, StoredAlertState, StoredNotification, StoredSeenResetCards } from "../types/ipc";
 import { currentWindowLabel, useAppStore } from "./useAppStore";
 import { useNotificationStore } from "./useNotificationStore";
 
@@ -131,7 +138,7 @@ function createCheckinDetector(): CheckinDetector {
   const deps: CheckinDetectorDeps = {
     notify: (arrival: CheckinArrival) => {
       // ruleKey 传 null：签到不走告警冷却判重（ADR-0025）；判重权威是
-      // workbuddy_checkins 的按日记录（同一天的快照重放不再到达这里）
+      // workbuddy_states 的 checkin_notified 格（同一天的快照重放不再到达这里）
       void invoke<StoredNotification | null>("add_notification", {
         instanceId: arrival.instanceId,
         ruleKey: null,
@@ -148,12 +155,11 @@ function createCheckinDetector(): CheckinDetector {
           void sendSystemNotification(arrival);
         });
     },
-    onStateChange: (record: StoredWorkbuddyCheckin) => {
-      // 判重日期回写后端事实源；失败只留痕——重启后最坏重报一次签到
-      // （投递韧性优先于判重，与重置卡已见集合同口径）
-      void invoke("save_workbuddy_checkin", { checkin: record }).catch((error) => {
-        console.warn("签到通知判重回写失败", error);
-      });
+    onStateChange: (record: WorkbuddyStateRecord) => {
+      // 通知判重格（checkin_notified）回写 workbuddy_states；失败只留痕——重启后
+      // 最坏重报一次签到（投递韧性优先于判重，与重置卡已见集合同口径）。
+      // 走 writeWorkbuddyState 而非裸 invoke：它顺带更新会话投影，与例程读的是同一处
+      void writeWorkbuddyState(record.instance_id, record.kind, record.value);
     },
   };
   return new CheckinDetector(deps);
@@ -163,7 +169,7 @@ function createTravelDetector(): TravelDetector {
   const deps: TravelDetectorDeps = {
     notify: (arrival: TravelArrival) => {
       // ruleKey 传 null：领奖通知不走告警冷却判重（ADR-0025）；判重权威是
-      // workbuddy_travel_claims 的按行程记录（同一行程的快照重放不再到达这里）
+      // workbuddy_states 的 travel_notified 格（同一行程的快照重放不再到达这里）
       void invoke<StoredNotification | null>("add_notification", {
         instanceId: arrival.instanceId,
         ruleKey: null,
@@ -180,12 +186,10 @@ function createTravelDetector(): TravelDetector {
           void sendSystemNotification(arrival);
         });
     },
-    onStateChange: (record: StoredWorkbuddyTravelClaim) => {
-      // 判重行程键回写后端事实源；失败只留痕——重启后最坏重报一次领奖
-      // （投递韧性优先于判重，与签到判重同口径）
-      void invoke("save_workbuddy_travel_claim", { claim: record }).catch((error) => {
-        console.warn("旅行领奖判重回写失败", error);
-      });
+    onStateChange: (record: WorkbuddyStateRecord) => {
+      // 通知判重格（travel_notified，值为行程键）回写；失败只留痕——重启后最坏
+      // 重报一次领奖（投递韧性优先于判重，与签到判重同口径）
+      void writeWorkbuddyState(record.instance_id, record.kind, record.value);
     },
   };
   return new TravelDetector(deps);
@@ -195,7 +199,7 @@ function createGrowthNoticeDetector(): GrowthNoticeDetector {
   const deps: GrowthNoticeDetectorDeps = {
     notify: (arrival: GrowthNoticeArrival) => {
       // ruleKey 传 null：管家通知不走告警冷却判重（ADR-0025）；判重权威是
-      // workbuddy_growth_notices 的按日记录（同一天的快照重放不再到达这里）
+      // workbuddy_states 的 butler_notified 格（同一天的快照重放不再到达这里）
       void invoke<StoredNotification | null>("add_notification", {
         instanceId: arrival.instanceId,
         ruleKey: null,
@@ -212,12 +216,12 @@ function createGrowthNoticeDetector(): GrowthNoticeDetector {
           void sendSystemNotification(arrival);
         });
     },
-    onStateChange: (record: StoredWorkbuddyGrowthNotice) => {
-      // 判重日期回写后端事实源；失败只留痕——重启后最坏重报一次管家通知
-      // （投递韧性优先于判重，与签到判重同口径）
-      void invoke("save_workbuddy_growth_notice", { notice: record }).catch((error) => {
-        console.warn("管家通知判重回写失败", error);
-      });
+    onStateChange: (records: WorkbuddyStateRecord[]) => {
+      // 两格一起回写：butler_notified（按日通知判重）+ butler_detail（抽屉留档明细）；
+      // 失败只留痕——重启后最坏重报一次管家通知（投递韧性优先于判重，同签到口径）
+      for (const record of records) {
+        void writeWorkbuddyState(record.instance_id, record.kind, record.value);
+      }
     },
   };
   return new GrowthNoticeDetector(deps);
@@ -227,7 +231,7 @@ function createTrialDetector(): TrialDetector {
   const deps: TrialDetectorDeps = {
     notify: (arrival: TrialArrival) => {
       // ruleKey 传 null：一次性到账通知不走告警冷却判重（ADR-0025）；判重权威是
-      // workbuddy_trials 的实例级记录（领取成功只发生一次）
+      // workbuddy_states 的 trial_notified 格（领取成功只发生一次）
       void invoke<StoredNotification | null>("add_notification", {
         instanceId: arrival.instanceId,
         ruleKey: null,
@@ -244,11 +248,9 @@ function createTrialDetector(): TrialDetector {
           void sendSystemNotification(arrival);
         });
     },
-    onStateChange: (record: StoredWorkbuddyTrial) => {
-      // 判重标记回写后端事实源；失败只留痕——重启后最坏重报一次领取通知
-      void invoke("save_workbuddy_trial", { trial: record }).catch((error) => {
-        console.warn("试用加油包判重回写失败", error);
-      });
+    onStateChange: (record: WorkbuddyStateRecord) => {
+      // 通知判重格（trial_notified，一次性）回写；失败只留痕——重启后最坏重报一次
+      void writeWorkbuddyState(record.instance_id, record.kind, record.value);
     },
   };
   return new TrialDetector(deps);
@@ -314,48 +316,32 @@ export const useAlertStore = create<AlertStore>(() => ({
       .map((result) => (result.status === "fulfilled" ? result.value : null))
       .filter((item): item is StoredSeenResetCards => item !== null);
     resetCardDetector.hydrate(seen);
-    // 签到判重日期按实例逐个水合；失败不阻断——最坏同一天的旧快照重放重报一次
+    // 签到/旅行/管家/试用四路通知判据同在 workbuddy_states，按格逐个水合（ADR-0039）；
+    // 读失败按「没通知过」处理——最坏是同一天的旧快照重放重报一次，不阻断评估
     const workbuddyIds = useAppStore
       .getState()
       .instances.filter((instance) => instance.providerId === "workbuddy")
       .map((instance) => instance.id);
-    const checkinResults = await Promise.allSettled(
-      workbuddyIds.map((instanceId) => invoke<StoredWorkbuddyCheckin | null>("get_workbuddy_checkin", { instanceId })),
-    );
-    checkinDetector.hydrate(
-      checkinResults
-        .map((result) => (result.status === "fulfilled" ? result.value : null))
-        .filter((item): item is StoredWorkbuddyCheckin => item !== null),
-    );
-    // 旅行领奖判重按实例逐个水合（单行按行程键设计）；失败不阻断——最坏同行程的
-    // 旧快照重放重报一次
-    const travelResults = await Promise.allSettled(
-      workbuddyIds.map((instanceId) => invoke<StoredWorkbuddyTravelClaim | null>("get_workbuddy_travel_claim", { instanceId })),
-    );
-    travelDetector.hydrate(
-      travelResults
-        .map((result) => (result.status === "fulfilled" ? result.value : null))
-        .filter((item): item is StoredWorkbuddyTravelClaim => item !== null),
-    );
-    // 管家通知判重按实例逐个水合（单行按日设计）；失败不阻断——最坏同一天的旧快照
-    // 重放重报一次
-    const growthNoticeResults = await Promise.allSettled(
-      workbuddyIds.map((instanceId) => invoke<StoredWorkbuddyGrowthNotice | null>("get_workbuddy_growth_notice", { instanceId })),
-    );
-    growthNoticeDetector.hydrate(
-      growthNoticeResults
-        .map((result) => (result.status === "fulfilled" ? result.value : null))
-        .filter((item): item is StoredWorkbuddyGrowthNotice => item !== null),
-    );
-    // 试用加油包判重按实例逐个水合（实例级单行）；失败不阻断——最坏重报一次领取通知
-    const trialResults = await Promise.allSettled(
-      workbuddyIds.map((instanceId) => invoke<StoredWorkbuddyTrial | null>("get_workbuddy_trial", { instanceId })),
-    );
-    trialDetector.hydrate(
-      trialResults
-        .map((result) => (result.status === "fulfilled" ? result.value : null))
-        .filter((item): item is StoredWorkbuddyTrial => item !== null),
-    );
+    const hydrateKind = async (kind: WbStateKind): Promise<WorkbuddyStateRecord[]> => {
+      const values = await Promise.all(
+        workbuddyIds.map((instanceId) => readWorkbuddyState(instanceId, kind)),
+      );
+      return values
+        .map((value, index) =>
+          value === null ? null : { instance_id: workbuddyIds[index], kind, value },
+        )
+        .filter((row): row is WorkbuddyStateRecord => row !== null);
+    };
+    const [checkinRows, travelRows, butlerRows, trialRows] = await Promise.all([
+      hydrateKind(wbStateKind.checkinNotified),
+      hydrateKind(wbStateKind.travelNotified),
+      hydrateKind(wbStateKind.butlerNotified),
+      hydrateKind(wbStateKind.trialNotified),
+    ]);
+    checkinDetector.hydrate(checkinRows);
+    travelDetector.hydrate(travelRows);
+    growthNoticeDetector.hydrate(butlerRows);
+    trialDetector.hydrate(trialRows);
   },
   prune: (instanceId) => {
     coordinator.prune(instanceId);

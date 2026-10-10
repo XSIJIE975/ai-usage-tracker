@@ -8,7 +8,8 @@ export interface SegmentedOption<T extends string> {
 
 /**
  * 分段选择器规范（docs/DESIGN.md#分段选择器）：
- * 用于同层级 2-4 个视图的互斥切换（如 总览/设置、外观主题）。
+ * 用于同层级 2-4 个视图的互斥切换（如 主题模式、界面语言）。
+ * 选项一律不折行——窄容器里挤不下时该换行的是左侧文案，不是控件。
  */
 export function Segmented<T extends string>({
   options,
@@ -41,7 +42,7 @@ export function Segmented<T extends string>({
             aria-selected={active}
             onClick={() => onChange(option.value)}
             className={cn(
-              "inline-flex items-center gap-1.5 rounded-[5px] font-medium transition-all duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring",
+              "inline-flex items-center gap-1.5 whitespace-nowrap rounded-[5px] font-medium transition-all duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring",
               size === "md" ? "px-3 py-1.5 text-xs" : "px-2 py-1 text-xs",
               active
                 ? "bg-surface text-fg shadow-sm"

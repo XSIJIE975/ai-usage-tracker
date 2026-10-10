@@ -24,6 +24,7 @@ import { IconButton } from "../../components/ui/icon-button";
 import { EmptyState } from "../../components/ui/empty-state";
 import { Progress } from "../../components/ui/progress";
 import { SiteBadge } from "../../components/SiteBadge";
+import { useRetained } from "../../hooks/use-retained";
 import { TASKS_OPENED_EVENT, tasksOpenedKey } from "../../components/ProviderCard";
 import { renderTemplate, useT } from "../../i18n";
 import { displayName } from "../../lib/instance";
@@ -42,10 +43,12 @@ import {
   createGrowthContext,
   fetchLotterySummaryForDisplay,
   fetchStreakFull,
+  loadActivityStatus,
   loadLastButlerRecord,
   redeemSingleTier,
   runGrowthButler,
   tierStatus,
+  type ActivityStatus,
   type ButlerRecordDetail,
   type GrowthContext,
 } from "../../providers/workbuddy-growth";
@@ -74,7 +77,7 @@ interface RowFeedback {
 /** 成长任务抽屉（ADR-0036）：三层展示（可自动完成 / 可领取 / 已完成折叠），
  *  执行走 workbuddyTaskStore——关闭抽屉不中止执行，重开可见结果 */
 export function WorkbuddyTasksSheet({
-  instance,
+  instance: incoming,
   open,
   onOpenChange,
 }: {
@@ -83,6 +86,7 @@ export function WorkbuddyTasksSheet({
   onOpenChange: (open: boolean) => void;
 }) {
   const t = useT();
+  const instance = useRetained(incoming);
   // t 存 ref：reload 不依赖 t 引用，语言切换不触发重拉/清会话
   const tRef = useRef(t);
   tRef.current = t;
@@ -110,18 +114,23 @@ export function WorkbuddyTasksSheet({
   const [butlerRecord, setButlerRecord] = useState<ButlerRecordDetail | undefined>(undefined);
   const [tierBusy, setTierBusy] = useState<string | null>(null);
   const [tierError, setTierError] = useState<string | undefined>(undefined);
+  /** 今日活跃上报的状态（ADR-0039）：连登天数由这条上报点亮，所以这块要说清
+   *  「今天报了没有、没报是为啥」——抽屉打开时从 workbuddy_states 读，不另设事实源 */
+  const [activity, setActivity] = useState<ActivityStatus | null>(null);
 
-  /** 拉连登完整状态与抽奖次数（区块数据；失败静默标记，区块给失败文案） */
+  /** 拉连登完整状态、抽奖次数与今日活跃状态（区块数据；失败静默标记，区块给失败文案） */
   const reloadStreak = useCallback(async (ctx: GrowthContext | null) => {
     if (!ctx) return;
     setStreakFailed(false);
-    const [full, summary] = await Promise.all([
+    const [full, summary, activityStatus] = await Promise.all([
       fetchStreakFull(ctx),
       fetchLotterySummaryForDisplay(ctx),
+      loadActivityStatus(ctx.instance.id, cstDateString()),
     ]);
     setStreakFull(full);
     setStreakFailed(full === null);
     setLotteryChances(summary?.chances ?? null);
+    setActivity(activityStatus);
   }, []);
 
   useEffect(() => {
@@ -143,6 +152,7 @@ export function WorkbuddyTasksSheet({
       setButlerRecord(undefined);
       setLotteryChances(null);
       setTierError(undefined);
+      setActivity(null);
     }
   }, [open, instance, reloadStreak]);
 
@@ -260,7 +270,7 @@ export function WorkbuddyTasksSheet({
   }, [run?.running, reload]);
 
   if (!instance) return null;
-  // 能力位兜底：国际站入口已隐藏，此处防误开空抽屉（与 StatsSheet 同例）
+  // 能力位兜底：国际站入口已隐藏（没有成长中心），此处防误开空抽屉（与 StatsSheet 同例）
   if (!workbuddyApi(workbuddySiteOf(instance)).capabilities.tasks) return null;
 
   const kindName = t(providerName(instance.providerId));
@@ -350,6 +360,7 @@ export function WorkbuddyTasksSheet({
             butlerRunning={butlerRunning}
             tierBusy={tierBusy}
             tierError={tierError}
+            activity={activity}
             onRunButler={() => void runButler()}
             onRedeemTier={(tier) => void redeemTierOne(tier)}
           />
@@ -583,6 +594,7 @@ function StreakSection({
   butlerRunning,
   tierBusy,
   tierError,
+  activity,
   onRunButler,
   onRedeemTier,
 }: {
@@ -594,6 +606,7 @@ function StreakSection({
   butlerRunning: boolean;
   tierBusy: string | null;
   tierError?: string;
+  activity: ActivityStatus | null;
   onRunButler: () => void;
   onRedeemTier: (tier: string) => void;
 }) {
@@ -607,6 +620,23 @@ function StreakSection({
   const tierMeta = (tier: string) =>
     streakFull?.redemption_status?.tiers?.find((item) => item.tier === tier);
   const status = (tier: string) => (streakFull ? tierStatus(streakFull, tier) : "locked");
+  /** 今日活跃那行的文案（三态分开：已上报且天数在涨 / 已上报但天数为 0 / 没报成） */
+  const activityLine =
+    activity?.status === "reported"
+      ? typeof days === "number" && days > 0
+        ? t("今日已上报活跃")
+        : days === 0
+          ? t("今日已上报活跃，但连登天数仍为 0")
+          : t("今日已上报活跃，但连登状态读不到")
+      : activity?.status === "skipped"
+        ? t("今日未上报：拿不到账号 uid，改用扫码登录即可")
+        : activity?.status === "failed"
+          ? renderTemplate(
+              t("今日未上报：{detail}"),
+              { detail: activity.detail ?? t("未知原因") },
+              t,
+            )
+          : t("今日未上报");
 
   return (
     <section className="rounded-lg border border-line bg-surface shadow-card">
@@ -708,6 +738,10 @@ function StreakSection({
                 : t("暂无连登数据")}
           </p>
         )}
+        {/* 今日活跃上报状态（ADR-0039）：连登天数由这条上报点亮，签到不记天数。
+            天数是 0 或读不到时也照说——「没上报」「上报了没计分」「上报了读不回」
+            是三件事，卡片少一行什么也解释不了 */}
+        {activityLine && <p className="text-[11px] text-fg-muted">{activityLine}</p>}
         {tierError && (
           <p role="alert" className="text-[11px] text-danger">
             {tierError}

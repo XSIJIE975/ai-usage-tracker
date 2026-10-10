@@ -1,5 +1,6 @@
 import { alertTitle } from "./evaluate";
-import type { ProviderInstance, ProviderSnapshot, StoredWorkbuddyGrowthNotice } from "../types/ipc";
+import { wbStateKind, type WorkbuddyStateRecord } from "../lib/workbuddy-states";
+import type { ProviderInstance, ProviderSnapshot } from "../types/ipc";
 
 export interface GrowthNoticeArrival {
   instanceId: string;
@@ -10,7 +11,9 @@ export interface GrowthNoticeArrival {
 
 export interface GrowthNoticeDetectorDeps {
   notify: (arrival: GrowthNoticeArrival) => void;
-  onStateChange: (record: StoredWorkbuddyGrowthNotice) => void;
+  /** 本轮要回写的格子：butler_notified（按日通知判重）与 butler_detail（抽屉留档）
+   *  一个是日期、一个是明细，各占一格（ADR-0039） */
+  onStateChange: (records: WorkbuddyStateRecord[]) => void;
 }
 
 /** 连登奖励通知正文（纯函数，单测锚点）：一轮闭环可能同时发生补签/礼包/补偿/兑换/抽奖，
@@ -30,12 +33,14 @@ export function buildButlerNoticeBody(credit: number, energy: number, makeupUsed
 /**
  * WorkBuddy 连登奖励通知检测器：与签到检测器同构（按日判重）——自动闭环跟随每日
  * 首次刷新自动跑（ADR-0037），一轮可能产生多个事件但通知至多一条；判定权威是
- * Rust 端 workbuddy_growth_notices 行，落库快照随重启后的 reevaluate 重放时
- * （growthNotice 字段还在）同一天的重放直接跳过。不进告警冷却体系：管家是
+ * workbuddy_states 的 butler_notified 格（ADR-0039 收表），落库快照随重启后的
+ * reevaluate 重放时（growthNotice 字段还在）同一天的重放直接跳过。不进告警冷却体系：管家是
  * 每日至多一轮的事件，没有冷却参数。抽屉里手动「领取全部奖励」不产生快照字段、
  * 不走这里——用户主动触发的结果在行内即时可见，不需要再敲一条系统通知。
- * 回写时把本轮明细（detail_json）一起存进判重行：那是抽屉「最近一次领取」的唯一
- * 持久留档——快照上的 growthNotice 会被下一次刷新覆盖，不落库的抽屉就答不出昨天领了什么。
+ * 同轮回写 butler_detail 格存本轮明细：那是抽屉「最近一次领取」的唯一持久留档——
+ * 快照上的 growthNotice 会被下一次刷新覆盖，不落库的抽屉就答不出昨天领了什么。
+ * 与例程那格的分工：butler_acted 说「今天这轮已完整跑过」，butler_notified 说
+ * 「今天的事件已汇总通知过」。
  */
 export class GrowthNoticeDetector {
   /** instanceId → 最近一次发出通知的闭环日期（后端事实源的内存投影） */
@@ -44,9 +49,9 @@ export class GrowthNoticeDetector {
   constructor(private deps: GrowthNoticeDetectorDeps) {}
 
   /** 启动/重载后从后端事实源播种；失败的水合行静默跳过（最坏重报一次） */
-  hydrate(rows: StoredWorkbuddyGrowthNotice[]): void {
+  hydrate(rows: WorkbuddyStateRecord[]): void {
     for (const row of rows) {
-      this.notified.set(row.instance_id, row.notified_date);
+      this.notified.set(row.instance_id, row.value);
     }
   }
 
@@ -67,11 +72,10 @@ export class GrowthNoticeDetector {
       body: buildButlerNoticeBody(credit, energy, notice.makeupUsed),
       params: { ...params, credit, energy },
     });
-    this.deps.onStateChange({
-      instance_id: instance.id,
-      notified_date: notice.date,
-      detail_json: JSON.stringify(notice),
-    });
+    this.deps.onStateChange([
+      { instance_id: instance.id, kind: wbStateKind.butlerNotified, value: notice.date },
+      { instance_id: instance.id, kind: wbStateKind.butlerDetail, value: JSON.stringify(notice) },
+    ]);
   }
 
   /** 删除实例后清理其投影；后端事实源由 delete_instance 级联清理 */

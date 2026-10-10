@@ -56,6 +56,73 @@
   --transition-duration-fast: 120ms;
   --transition-duration-normal: 200ms;
   --transition-duration-slow: 450ms;
+
+  /* 缓动：进场用强缓出（无过冲，与面板级联进场同一条），离场用缓入让元素加速离开 */
+  --ease-enter: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+
+  /* 弹层进出：Radix 用 data-state 标记开合，关闭动画跑完才卸载元素。
+     居中弹窗的位移靠 Tailwind 的 translate 属性（-translate-x/y-1/2），
+     这里只动 transform，两者相乘不冲突，别改成 translate 会抢掉居中 */
+  @keyframes overlay-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes overlay-out {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 0;
+    }
+  }
+  @keyframes sheet-in {
+    from {
+      transform: translateX(100%);
+    }
+    to {
+      transform: translateX(0);
+    }
+  }
+  @keyframes sheet-out {
+    from {
+      transform: translateX(0);
+    }
+    to {
+      transform: translateX(100%);
+    }
+  }
+  @keyframes dialog-in {
+    from {
+      opacity: 0;
+      transform: scale(0.97);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+  @keyframes dialog-out {
+    from {
+      opacity: 1;
+      transform: scale(1);
+    }
+    to {
+      opacity: 0;
+      transform: scale(0.97);
+    }
+  }
+  --animate-overlay-in: overlay-in var(--transition-duration-normal) var(--ease-enter) both;
+  --animate-overlay-out: overlay-out var(--transition-duration-fast) var(--ease-exit) both;
+  --animate-sheet-in: sheet-in var(--transition-duration-normal) var(--ease-enter) both;
+  /* Sheet 走完整宽位移，120ms 内跑完等于看不见，进出同档 */
+  --animate-sheet-out: sheet-out var(--transition-duration-normal) var(--ease-exit) both;
+  --animate-dialog-in: dialog-in var(--transition-duration-normal) var(--ease-enter) both;
+  --animate-dialog-out: dialog-out var(--transition-duration-fast) var(--ease-exit) both;
 }
 
 /* ---------- 语义 Token：浅色主题（默认） ---------- */
@@ -398,7 +465,7 @@ input {
    刻意不响应 prefers-reduced-motion：系统关闭「显示动画」时 WebView2 恒定上报 reduce，
    若在此让步，面板将永远没有进场动画（已实际发生）；这些 200ms 级微反馈不是大幅运动 */
 .panel-enter {
-  animation: panel-enter 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: panel-enter 240ms var(--ease-enter) both;
 }
 
 /* 用量数值变化的平滑过渡（进度条宽度 / 用量环弧长与颜色） */

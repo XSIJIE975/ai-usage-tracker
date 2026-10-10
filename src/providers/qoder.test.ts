@@ -10,15 +10,20 @@ import type { HttpResult, ProviderInstance, ProviderSnapshot } from "../types/ip
 import { primaryProgressLine } from "../alerts/metric";
 import {
   isValidSessionCookieValue,
+  parseDeviceUsageView,
   parseNextReset,
+  parseQoderExpiry,
   parseQuotaSummary,
   parseUsageLines,
   parseUsageView,
   processUsageResult,
   qoderProvider,
+  QODER_DEVICE_EXPIRED_MESSAGE,
+  qoderDeviceUsageUrl,
   qoderSiteOf,
   qoderUsageHeaders,
   qoderUsageUrl,
+  resolveQoderChannel,
   SESSION_COOKIE_NAME,
 } from "./qoder";
 import type { QoderUsageData } from "./qoder";
@@ -474,7 +479,9 @@ describe("fetchQoderSnapshot", () => {
     mockInvoke.mockResolvedValue({});
     const snapshot = await qoderProvider.fetch(makeInstance());
     expect(snapshot.status).toBe("needs_config");
-    expect(snapshot.message).toBe("请在设置中粘贴 Qoder 会话 Cookie（qoder_session_cookie）的值");
+    expect(snapshot.message).toBe(
+      "请在设置中扫码登录 Qoder，或粘贴会话 Cookie（qoder_session_cookie）的值",
+    );
   });
 
   it("requests the site URL via the qoder_cookie channel and maps the payload", async () => {
@@ -514,5 +521,213 @@ describe("fetchQoderSnapshot", () => {
     const snapshot = await qoderProvider.fetch(makeInstance());
     expect(snapshot.status).toBe("error");
     expect(snapshot.message).toBe("Qoder 登录凭据无效或已过期，请在设置中重新粘贴 qoder_session_cookie 的值");
+  });
+});
+
+// ─── 扫码 token 通道（ADR-0041）───
+
+/** 2026-10-09 真机扫码回体（订阅已失效的号：plan 格恒零、addOn 是唯一有分配的窗）。
+ *  userId 之类的身份字段本模块不读，故样本里不带 */
+const DEVICE_BODY = {
+  displayMode: "qoder",
+  qoderUsage: {
+    userType: "personal_standard",
+    usageType: "credits",
+    totalUsagePercentage: 0.29,
+    isQuotaExceeded: false,
+    // 9999-12-31 哨兵：无期限账号的「到期」，绝不能画成刷新时刻
+    expiresAt: 253402214400000,
+    upgradeUrl: "https://qoder.com/pricing?client=qoder",
+    userQuota: { total: 0, used: 0, remaining: 0, percentage: 0, unit: "credits" },
+    addOnQuota: {
+      total: 2100,
+      used: 607,
+      remaining: 1493,
+      percentage: 0.29,
+      unit: "credits",
+      detailUrl: "https://qoder.com/account/usage",
+    },
+    isPlanQuotaProrated: false,
+  },
+};
+
+describe("resolveQoderChannel（登录方式即通道，ADR-0035 互斥）", () => {
+  it("accessToken 非空走扫码，cookie 非空走 Cookie，都缺为 null", () => {
+    expect(resolveQoderChannel({ accessToken: true, cookie: true })).toBe("device");
+    expect(resolveQoderChannel({ cookie: true })).toBe("cookie");
+    expect(resolveQoderChannel({})).toBeNull();
+  });
+});
+
+describe("parseDeviceUsageView", () => {
+  it("真机回体：只有资源包窗出行，汇总位本地相加，哨兵到期不挂", () => {
+    const view = parseDeviceUsageView(DEVICE_BODY as never);
+    expect(view).not.toBeNull();
+    expect(view?.windows.map((window) => window.key)).toEqual(["package"]);
+    expect(view?.aggregate).toEqual({ used: 607, total: 2100, remaining: 1493, percent: (607 / 2100) * 100 });
+    expect(view?.resetsAt).toBeNull();
+    expect(view?.windows[0]?.resetsAt).toBeNull();
+  });
+
+  it("百分比本地算，不取上游两位舍入的 0.29", () => {
+    const view = parseDeviceUsageView(DEVICE_BODY as never);
+    // 28.9047…% 而不是 29%：上游那个数是两位舍入的产物（ADR-0030 §4 同口径）
+    expect(view?.windows[0]?.percent).toBeCloseTo(28.9047, 3);
+  });
+
+  it("displayMode 不是 qoder：即使带了 qoderUsage 也整体判失败（企业号形态未证实，不猜）", () => {
+    expect(
+      parseDeviceUsageView({
+        displayMode: "enterprise",
+        qoderUsage: { userQuota: { total: 100, used: 1 } },
+      } as never),
+    ).toBeNull();
+  });
+
+  it("容器在场却读不出：整体判失败，不当成「这个号没分配」", () => {
+    // 上游把 total 下发成字符串时，静默跳窗会画成「未分配积分」并把阈值告警一起弄哑
+    expect(
+      parseDeviceUsageView({
+        displayMode: "qoder",
+        qoderUsage: { addOnQuota: { total: "2100", used: "607" } },
+      } as never),
+    ).toBeNull();
+    expect(
+      parseDeviceUsageView({
+        displayMode: "qoder",
+        qoderUsage: { userQuota: { total: 0, used: 0 }, dedicatedResourcePackages: [{ total: 5 }] },
+      } as never),
+    ).toBeNull();
+  });
+
+  it("付费形状（合成样本：dedicatedResourcePackages 与真实 expiresAt 都未见于真机）：三窗出行、专属包到期只看有余量的那些", () => {
+    const future = new Date(Date.now() + 15 * 86_400_000).toISOString();
+    const view = parseDeviceUsageView({
+      displayMode: "qoder",
+      qoderUsage: {
+        expiresAt: new Date(Date.now() + 20 * 86_400_000).toISOString(),
+        userQuota: { total: 2000, used: 2000, remaining: 0 },
+        addOnQuota: { total: 1200, used: 534, remaining: 666 },
+        dedicatedResourcePackages: [
+          // 已耗尽的那包到期日更早，但它不代表剩下的点数什么时候没（谎报防线）
+          { total: 100, used: 100, remaining: 0, expiresAt: "2026-09-30T23:59:59Z" },
+          { total: 200, used: 50, remaining: 150, expiresAt: future },
+        ],
+      },
+    } as never);
+    expect(view?.windows.map((window) => window.key)).toEqual(["plan", "package", "dedicated"]);
+    expect(view?.windows[0]?.resetsAt?.toISOString()).toBeDefined();
+    expect(view?.windows[1]?.earliestExpiry).toBeNull();
+    expect(view?.windows[2]?.earliestExpiry?.toISOString()).toBe(future);
+    expect(view?.aggregate.total).toBe(3500);
+  });
+
+  it("displayMode 不是 qoder 或 qoderUsage 缺失：按解析失败处理，不猜形状", () => {
+    expect(parseDeviceUsageView({ displayMode: "enterprise" } as never)).toBeNull();
+    expect(parseDeviceUsageView({ displayMode: "qoder" } as never)).toBeNull();
+    expect(parseDeviceUsageView(undefined)).toBeNull();
+  });
+
+  it("恒零窗不出行，矛盾数据（零总量却有余量）整窗丢弃", () => {
+    const view = parseDeviceUsageView({
+      displayMode: "qoder",
+      qoderUsage: { userQuota: { total: 0, used: 0 }, addOnQuota: { total: 0, used: 5 } },
+    } as never);
+    expect(view?.windows).toEqual([]);
+  });
+});
+
+describe("parseQoderExpiry", () => {
+  it("ISO 串与毫秒数字串都读，坏值返回 null", () => {
+    const now = 1_791_500_000_000;
+    expect(parseQoderExpiry(new Date(now + 86_400_000).toISOString(), now)).toBe(86_400_000);
+    expect(parseQoderExpiry(String(now + 2000), now)).toBe(2000);
+    expect(parseQoderExpiry(undefined, now)).toBeNull();
+    expect(parseQoderExpiry("不是时间", now)).toBeNull();
+  });
+});
+
+describe("fetchQoderSnapshot 扫码通道", () => {
+  const deviceInstance = makeInstance();
+
+  it("accessToken 非空即打 openapi 的 sash 端点，并声明本轮没有明细源", async () => {
+    mockInvoke
+      .mockResolvedValueOnce({ accessToken: true, uid: true })
+      .mockResolvedValueOnce({ expiresAt: new Date(Date.now() + 25 * 86_400_000).toISOString() })
+      .mockResolvedValueOnce(httpResult(DEVICE_BODY));
+    const snapshot = await qoderProvider.fetch(deviceInstance);
+
+    expect(snapshot.status).toBe("ok");
+    expect(snapshot.statsAvailable).toBe(false);
+    expect(snapshot.lines).toHaveLength(2);
+    // 到期日后缀不该出现（普通资源包在这一族响应里没有独立到期字段）
+    expect(snapshot.lines[1]?.value).toBe("余 {remain}");
+    const call = mockInvoke.mock.calls.find(([command]) => command === "provider_request");
+    const options = (call?.[1] ?? {}) as Record<string, unknown>;
+    expect(options.auth).toBe("qoder_device");
+    expect(options.url).toBe(qoderDeviceUsageUrl("china"));
+    expect(options.url).toBe("https://openapi.qoder.com.cn/sash/api/v2/me/usage");
+    expect(options.credentialSlot).toBeUndefined();
+  });
+
+  it("国际站走 openapi.qoder.sh 的同名端点（ADR-0041 二批接入）", async () => {
+    mockInvoke
+      .mockResolvedValueOnce({ accessToken: true, uid: true })
+      .mockResolvedValueOnce({ expiresAt: new Date(Date.now() + 25 * 86_400_000).toISOString() })
+      .mockResolvedValueOnce(httpResult(DEVICE_BODY));
+    const snapshot = await qoderProvider.fetch(makeInstance({ site: "international" }));
+    const call = mockInvoke.mock.calls.find(([command]) => command === "provider_request");
+    const options = (call?.[1] ?? {}) as Record<string, unknown>;
+    expect(options.url).toBe(qoderDeviceUsageUrl("international"));
+    expect(options.url).toBe("https://openapi.qoder.sh/sash/api/v2/me/usage");
+    expect(snapshot.status).toBe("ok");
+  });
+
+  it("expiresAt 不足 7 天时先续期再取数", async () => {
+    mockInvoke
+      .mockResolvedValueOnce({ accessToken: true })
+      .mockResolvedValueOnce({ expiresAt: new Date(Date.now() + 3 * 86_400_000).toISOString() })
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(httpResult(DEVICE_BODY));
+    const snapshot = await qoderProvider.fetch(deviceInstance);
+    expect(snapshot.status).toBe("ok");
+    const commands = mockInvoke.mock.calls.map(([command]) => command);
+    expect(commands.indexOf("qoder_token_refresh")).toBeGreaterThan(-1);
+    expect(commands.indexOf("qoder_token_refresh")).toBeLessThan(commands.indexOf("provider_request"));
+  });
+
+  it("expiresAt 还很远就不续期", async () => {
+    mockInvoke
+      .mockResolvedValueOnce({ accessToken: true })
+      .mockResolvedValueOnce({ expiresAt: new Date(Date.now() + 25 * 86_400_000).toISOString() })
+      .mockResolvedValueOnce(httpResult(DEVICE_BODY));
+    await qoderProvider.fetch(deviceInstance);
+    expect(mockInvoke.mock.calls.map(([command]) => command)).not.toContain("qoder_token_refresh");
+  });
+
+  it("401 先续一次再重试一次，重试成功就出数（点名重扫由下一条用例覆盖）", async () => {
+    mockInvoke
+      .mockResolvedValueOnce({ accessToken: true })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce(httpResult("nope", 401))
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(httpResult(DEVICE_BODY));
+    const snapshot = await qoderProvider.fetch(deviceInstance);
+    expect(snapshot.status).toBe("ok");
+    const requests = mockInvoke.mock.calls.filter(([command]) => command === "provider_request");
+    expect(requests).toHaveLength(2);
+  });
+
+  it("续期也救不回来时报扫码失效（而不是 Cookie 那套话）", async () => {
+    mockInvoke
+      .mockResolvedValueOnce({ accessToken: true })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce(httpResult("nope", 401))
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(httpResult("nope", 401));
+    const snapshot = await qoderProvider.fetch(deviceInstance);
+    expect(snapshot.status).toBe("error");
+    expect(snapshot.message).toBe(QODER_DEVICE_EXPIRED_MESSAGE);
+    expect(snapshot.statsAvailable).toBe(false);
   });
 });

@@ -25,14 +25,40 @@ import type { WorkbuddyPackage, WorkbuddyResourceData } from "./workbuddy";
 
 const mockInvoke = vi.mocked(invoke);
 
+/** workbuddy_states 的测试替身（ADR-0039）：一张 Map 充当表，get/save 走它。
+ *  「当日已签就跳过调用」「同一行程只领一次」这类用例判的就是格子里的值，
+ *  替身必须真存得下——不能让它们靠「读不到」蒙过 */
+const states = new Map<string, string>();
+
+const stateKey = (instanceId: string, kind: string): string => `${instanceId}:${kind}`;
+
+/** 拦下两个判据命令并给出返回值；handled=false 表示这条 invoke 不是判据命令 */
+const handleStateCommand = (
+  cmd: string,
+  payload?: unknown,
+): { handled: true; value: string | null } | { handled: false } => {
+  if (cmd === "get_workbuddy_state") {
+    const { instanceId, kind } = payload as { instanceId: string; kind: string };
+    return { handled: true, value: states.get(stateKey(instanceId, kind)) ?? null };
+  }
+  if (cmd === "save_workbuddy_state") {
+    const { record } = payload as {
+      record: { instance_id: string; kind: string; value: string };
+    };
+    states.set(stateKey(record.instance_id, record.kind), record.value);
+    return { handled: true, value: null };
+  }
+  return { handled: false };
+};
+
 const httpResult = (body: unknown, status = 200): HttpResult => ({
   status,
   headers: {},
   bodyText: typeof body === "string" ? body : JSON.stringify(body),
 });
 
-/** 每个用例独立实例 id：provider 模块的「今日已签」内存标记按实例记录，
- *  同文件内复用 id 会让后续用例跳过签到调用，污染调用次数断言 */
+/** 每个用例独立实例 id：provider 的「今日已签」等判据按 (实例, 格子) 记在
+ *  workbuddy_states，同文件复用 id 会让后续用例跳过签到调用，污染调用次数断言 */
 let nextId = 0;
 const makeInstance = (): ProviderInstance => {
   nextId += 1;
@@ -129,6 +155,10 @@ const mockFetchSequence = (opts: {
   travelDepart?: HttpResult;
   resource: HttpResult;
   streak?: HttpResult;
+  /** Cookie 通道的账号摘要响应（不声明则视为取不到 → account=null，活跃上报被跳过） */
+  account?: HttpResult;
+  /** 活跃上报的响应（缺省成功） */
+  report?: HttpResult;
   heatmap?: HttpResult;
   gift?: HttpResult;
   compensation?: HttpResult;
@@ -137,6 +167,8 @@ const mockFetchSequence = (opts: {
 }) => {
   const travelStatusQueue = opts.travelStatus ?? [httpResult({ code: 0, msg: "OK", data: {} })];
   mockInvoke.mockImplementation(async (cmd: string, payload?: unknown) => {
+    const state = handleStateCommand(cmd, payload);
+    if (state.handled) return state.value;
     if (cmd === "vault_credential_status") return opts.credentialStatus ?? credentialStatus();
     if (cmd !== "provider_request") throw new Error(`意外的命令：${cmd}`);
     const url =
@@ -159,6 +191,13 @@ const mockFetchSequence = (opts: {
     }
     if (url.endsWith("/activity/growth/streak")) {
       return opts.streak ?? httpResult({ code: 0, msg: "OK", data: {} });
+    }
+    if (url.endsWith("/console/account")) {
+      if (!opts.account) throw new Error(`意外的账号摘要请求（用例未声明）：${url}`);
+      return opts.account;
+    }
+    if (url.endsWith("/v2/report")) {
+      return opts.report ?? httpResult({ code: 0, msg: "OK" });
     }
     if (url.endsWith("/activity/growth/heatmap")) {
       return opts.heatmap ?? httpResult({ code: 0, msg: "OK", data: { cells: [] } });
@@ -373,6 +412,15 @@ describe("parseStreakLine", () => {
     expect(parseStreakLine({ streak: { days: 0 } })).toBeNull();
     expect(parseStreakLine(undefined)).toBeNull();
   });
+
+  it("无成长中心的站点（国际站）不带距档尾巴：只说天数，不许诺不存在的档位", () => {
+    expect(parseStreakLine({ streak: { days: 8 } }, false)).toEqual({
+      type: "text",
+      label: "连登",
+      value: "{days} 天",
+      valueParams: { days: 8 },
+    });
+  });
 });
 
 describe("parseExpiry / cstDateString", () => {
@@ -468,6 +516,7 @@ describe("parseTravelLine", () => {
 describe("workbuddyProvider.fetch", () => {
   beforeEach(() => {
     mockInvoke.mockReset();
+    states.clear();
   });
 
   it("无凭据时快照为 needs_config，不发任何请求", async () => {
@@ -527,6 +576,35 @@ describe("workbuddyProvider.fetch", () => {
     expect(snapshot.lines.map((line) => line.label)).toEqual(["积分余量", "月度套餐", "连登"]);
   });
 
+  it("刷新链顺序：签到 → 活跃上报 → 连登回读（本轮读到的天数才是上报之后的值）", async () => {
+    const instance = makeInstance();
+    mockFetchSequence({
+      checkin: httpResult({ code: 0, msg: "OK", data: { credit: 30 } }),
+      account: httpResult({ code: 0, msg: "OK", data: { uid: "u-order", nickname: "n" } }),
+      resource: httpResult(resourcePayload([totalPackage()])),
+      streak: httpResult(streakPayload(2)),
+    });
+    const snapshot = await workbuddyProvider.fetch(instance);
+    const urls = mockInvoke.mock.calls
+      .filter((call) => call[0] === "provider_request")
+      .map((call) => String((call[1] as { url?: string }).url ?? ""));
+    const checkinAt = urls.findIndex((url) => url.endsWith("/daily-checkin"));
+    const reportAt = urls.findIndex((url) => url.endsWith("/v2/report"));
+    const streakAt = urls.findIndex((url) => url.endsWith("/activity/growth/streak"));
+    expect(checkinAt).toBeGreaterThanOrEqual(0);
+    expect(checkinAt).toBeLessThan(reportAt);
+    expect(reportAt).toBeLessThan(streakAt);
+    // 上报事件体带 uid（Cookie 通道前端替换），成功即写 activity_acted 格
+    const reportCall = mockInvoke.mock.calls.find((call) =>
+      String((call[1] as { url?: string }).url ?? "").endsWith("/v2/report"),
+    );
+    const event = JSON.parse(String((reportCall?.[1] as { bodyText?: string }).bodyText))[0];
+    expect(event.userId).toBe("u-order");
+    expect(states.get(stateKey(instance.id, "activity_acted"))).toBe(cstDateString());
+    // 上报不发积分、不改余额：快照里它只是连登那行的前一步，主源仍是余额
+    expect(snapshot.status).toBe("ok");
+  });
+
   it("当日已签（10001）→ 不携带 checkin 字段、不发通知事件，同日再刷跳过签到调用", async () => {
     const instance = makeInstance();
     mockFetchSequence({
@@ -537,7 +615,7 @@ describe("workbuddyProvider.fetch", () => {
     const first = await workbuddyProvider.fetch(instance);
     expect(first.checkin).toBeUndefined();
 
-    // 同一实例第二次刷新：内存标记生效，不再调用签到接口
+    // 同一实例第二次刷新：checkin_acted 格已记今日，不再调用签到接口
     mockInvoke.mockReset();
     mockFetchSequence({
       resource: httpResult(resourcePayload([totalPackage()])),
@@ -605,6 +683,7 @@ describe("workbuddyProvider.fetch", () => {
 describe("workbuddyProvider.fetch 喵喵旅行", () => {
   beforeEach(() => {
     mockInvoke.mockReset();
+    states.clear();
   });
 
   it("到站自动领奖并出发：快照携带 travel 字段与旅行行，claim 带 record_id", async () => {
@@ -634,7 +713,7 @@ describe("workbuddyProvider.fetch 喵喵旅行", () => {
     });
   });
 
-  it("同一行程跨刷新只领一次（内存行程键），但名额未用尽会继续出发", async () => {
+  it("同一行程跨刷新只领一次（travel_tried 记行程键），但名额未用尽会继续出发", async () => {
     const instance = makeInstance();
     const firstMocks = {
       checkin: httpResult({ code: 10001, msg: "已签到" }),
@@ -727,6 +806,7 @@ describe("站点端点与能力表（ADR-0031）", () => {
   // 本文件只有部分 describe 重置 invoke mock；这里要断言调用次数，自己重置
   beforeEach(() => {
     mockInvoke.mockReset();
+    states.clear();
   });
 
   it("中国站：端点与 referer 指向 www.workbuddy.cn，成长体系能力全开", () => {
@@ -738,6 +818,7 @@ describe("站点端点与能力表（ADR-0031）", () => {
     expect(api.capabilities).toEqual({
       checkin: true,
       streak: true,
+      activity: true,
       travel: true,
       stats: true,
       tasks: true,
@@ -746,14 +827,15 @@ describe("站点端点与能力表（ADR-0031）", () => {
     });
   });
 
-  it("国际站：Origin/Referer 随域切换，成长运营关掉、消耗明细与 trial 保留", () => {
+  it("国际站：Origin/Referer 随域切换，成长写面关掉、连登读与活跃上报开、消耗明细与 trial 保留", () => {
     const api = workbuddyApi("international");
     expect(api.urls.resource).toBe("https://www.workbuddy.ai/billing/meter/get-user-resource");
     expect(api.headers.billing.Origin).toBe("https://www.workbuddy.ai");
     expect(api.headers.travel.Referer).toBe("https://www.workbuddy.ai/profile/growth-center");
     expect(api.capabilities).toEqual({
       checkin: false,
-      streak: false,
+      streak: true,
+      activity: true,
       travel: false,
       stats: true,
       tasks: false,
@@ -781,8 +863,10 @@ describe("站点端点与能力表（ADR-0031）", () => {
     }
   });
 
-  it("国际站刷新只打取数与 trial 接口：签到、连登、旅行一个都不发", async () => {
+  it("国际站：签到/旅行/管家写面一个都不发，连登读与活跃上报照常（ADR-0039）", async () => {
     mockInvoke.mockImplementation(async (command: string, payload?: unknown) => {
+      const state = handleStateCommand(command, payload);
+      if (state.handled) return state.value;
       if (command === "vault_credential_status")
             return { session: true, session2: true, userAgent: true };
       const url =
@@ -793,6 +877,11 @@ describe("站点端点与能力表（ADR-0031）", () => {
         // 404：端点未上线（真机验证项）——4xx 归入「已处理」，不再重试
         return httpResult("not found", 404);
       }
+      if (url.endsWith("/console/account")) {
+        return httpResult({ code: 0, msg: "OK", data: { uid: "u-intl", nickname: "nick" } });
+      }
+      if (url.endsWith("/v2/report")) return httpResult({ code: 0, msg: "OK" });
+      if (url.endsWith("/activity/growth/streak")) return httpResult(streakPayload(1));
       return httpResult(
         resourcePayload([
           {
@@ -815,14 +904,27 @@ describe("站点端点与能力表（ADR-0031）", () => {
       .map((call) => (call[1] as { url: string }).url);
 
     expect(snapshot.status).toBe("ok");
-    // trial（国际站专属，ADR-0037）随取数尝试一次；console/account 是 Cookie 通道
-    // 上下文构造的账号摘要探测（取数不需要 uid，失败静默）；成长运营四件套照旧整段跳过
-    expect(urls).toHaveLength(3);
-    expect(urls).toContain("https://www.workbuddy.ai/billing/meter/get-user-resource");
-    expect(urls).toContain("https://www.workbuddy.ai/billing/ide/trial");
-    expect(urls).toContain("https://www.workbuddy.ai/console/account");
     // 周期制套餐按 CycleCapacitySize 口径出进度行
     expect(snapshot.lines[0].limit).toBe(250);
+    // 写面整段不发：这些是国际站没有的成长运营（2026-09-22 真机确认）
+    for (const forbidden of [
+      "/billing/meter/daily-checkin",
+      "/buddy/travel/",
+      "/activity/growth/redeem",
+      "/activity/growth/heatmap",
+      "/activity/growth/makeup-cards/",
+      "/lottery/",
+      "/claim-gift",
+      "/claim-compensation",
+    ]) {
+      expect(urls.some((url) => url.includes(forbidden)), forbidden).toBe(false);
+    }
+    // 放开的是连登的两路：读天数 + 点亮当天的活跃上报（参考项目 PR #91 实证国际版可用）
+    expect(urls.some((url) => url.endsWith("/activity/growth/streak"))).toBe(true);
+    expect(urls.some((url) => url.endsWith("/v2/report"))).toBe(true);
+    // trial 与 console/account 照旧：前者国际站专属，后者是 Cookie 通道的 uid 来源
+    expect(urls).toContain("https://www.workbuddy.ai/billing/ide/trial");
+    expect(urls).toContain("https://www.workbuddy.ai/console/account");
   });
 
   it("国际站缺凭据仍是 needs_config", async () => {
@@ -865,6 +967,7 @@ describe("三格输入的合法性判定", () => {
 describe("token 通道（扫码登录，ADR-0034）", () => {
   beforeEach(() => {
     mockInvoke.mockReset();
+    states.clear();
   });
 
   /** token 通道的调用按命令分派（次序由 runResource/签到链决定，sequence 难维护）。
@@ -881,6 +984,8 @@ describe("token 通道（扫码登录，ADR-0034）", () => {
   }) => {
     // 第二参加宽为 unknown 再收窄：按 { url?: string } 声明会对 InvokeArgs 逆变
     mockInvoke.mockImplementation(async (cmd: string, payload?: unknown) => {
+      const state = handleStateCommand(cmd, payload);
+      if (state.handled) return state.value;
       if (cmd === "vault_credential_status") {
         return credentialStatus({ accessToken: true, session: false });
       }

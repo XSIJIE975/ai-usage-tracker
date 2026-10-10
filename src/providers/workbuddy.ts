@@ -1,4 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
+import {
+  readWorkbuddyState,
+  wbStateKind,
+  writeWorkbuddyState,
+} from "../lib/workbuddy-states";
 import type {
   HttpResult,
   InstanceCredentialStatus,
@@ -23,6 +28,7 @@ import {
 import {
   createGrowthContext,
   fetchStreakFull,
+  runDailyActivityReport,
   runDailyCheckin,
   runGrowthButler,
   runTravelMachine,
@@ -90,19 +96,17 @@ export interface WorkbuddyResourceData {
   Response?: { Data?: { Accounts?: WorkbuddyPackage[] } };
 }
 
-/** 每实例「今日已续期」内存标记：每日一刷挂每天第一次刷新链（签到同位置，ADR-0034）。
- *  失败不设标记——旧 token 原样保留，下轮再试。续期/扫码授权三端点不在前端拼 URL：
- *  由 Rust 侧 workbuddy_token_refresh / workbuddy_qr_* 直连授权域
- *  （国区 https://copilot.tencent.com，国际站 https://www.workbuddy.ai） */
-const tokenRenewedToday = new Map<string, string>();
-
+/** 「今日已续期」记在 workbuddy_states 的 token_renewed 格（值为 CST 日期）。每日一刷
+ *  挂每天第一次刷新链（签到同位置，ADR-0034）；失败不写格——旧 token 原样保留，下轮再试。
+ *  续期/扫码授权三端点不在前端拼 URL：由 Rust 侧 workbuddy_token_refresh / workbuddy_qr_*
+ *  直连授权域（国区 https://copilot.tencent.com，国际站 https://www.workbuddy.ai） */
 async function renewTokenOnce(instance: ProviderInstance, today: string): Promise<void> {
   // 实例级开关默认开；关掉即「token 用到失效为止」，只有 401 即时救仍会尝试
   if (instance.tokenAutoRenew === false) return;
-  if (tokenRenewedToday.get(instance.id) === today) return;
+  if ((await readWorkbuddyState(instance.id, wbStateKind.tokenRenewed)) === today) return;
   try {
     await invoke("workbuddy_token_refresh", { instanceId: instance.id });
-    tokenRenewedToday.set(instance.id, today);
+    void writeWorkbuddyState(instance.id, wbStateKind.tokenRenewed, today);
   } catch {
     // 静默：续期失败不阻断取数（accessToken 仍可能有效），下轮刷新再试
   }
@@ -358,22 +362,25 @@ function butlerHasEvents(butler: GrowthButlerOutcome): boolean {
   );
 }
 
-/** 成长例程包（签到 → 旅行 → 连登 → 管家 → trial）：每步独立容错，任何失败静默——
+/** 成长例程包（签到 → 活跃上报 → 旅行 → 连登 → 管家 → trial）：每步独立容错，任何失败静默——
  *  余额主源才是快照成败的判定者。返回值喂快照瞬时字段（checkin/travel 喂各自检测器、
  *  growthNotice 喂管家通知、trial 喂试用通知）与连登卡片行 */
 async function runGrowthRituals(ctx: NonNullable<Awaited<ReturnType<typeof createGrowthContext>>>, today: string) {
   // 先签到后取数（ADR-0029）：签到到账的积分当轮即可见
   const checkin = await runDailyCheckin(ctx, today);
+  // 活跃上报紧跟签到（ADR-0039）：连登天数由这条事件点亮，签到只发积分。必须在下面的
+  // 连登回读之前发——本轮读到的天数才是「上报之后」的值，抽屉那行的判定靠这个顺序
+  await runDailyActivityReport(ctx, today);
   // 旅行（领奖 → 出发 → 回查）：领到的积分当轮余额可见
   const { travel, travelLine } = await runTravelMachine(ctx);
   // 连登完整状态（辅助源：失败无行）；管家闭环消费同一份数据省一次 GET
   let streakFull = await fetchStreakFull(ctx);
-  let streakLine = parseStreakLine(streakFull ?? undefined);
+  let streakLine = parseStreakLine(streakFull ?? undefined, ctx.capabilities.butler);
   // 管家闭环（自动跟随刷新，ADR-0037）：当日已完整跑过/能力位门控返回 null
   const butler = await runGrowthButler(ctx, today, streakFull);
   if (butler?.streakFull) {
     streakFull = butler.streakFull;
-    streakLine = parseStreakLine(streakFull ?? undefined);
+    streakLine = parseStreakLine(streakFull ?? undefined, ctx.capabilities.butler);
   }
   // 国际站试用加油包（一次性，已领永久静默）
   const trial = await runTrialClaim(ctx);

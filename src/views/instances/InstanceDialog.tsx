@@ -23,11 +23,15 @@ import { SecretField, StatusBadge } from "../settings/CredentialInput";
 import { DiagnosisButton } from "../settings/DiagnosisButton";
 import { useVaultCredentials } from "../settings/use-vault-credentials";
 import { SaveMessageBanner, type SaveMessage } from "../settings/provider-settings";
-import { WorkbuddyQrLogin, WORKBUDDY_TOKEN_SLOTS } from "./WorkbuddyQrLogin";
+import { QrLoginPanel, type QrCommands } from "./QrLoginPanel";
+import { WORKBUDDY_TOKEN_SLOTS } from "../../providers/workbuddy-channel";
+import { QODER_TOKEN_SLOTS } from "../../providers/qoder";
+import { MIMO_PASS_CLEAR_SLOTS } from "../../providers/mimo";
 import {
   testDeepSeekApiKey,
   testDeepSeekUserToken,
   testGlmCodingPlanKey,
+  testMimoCredential,
   testOpenCodeApiKey,
   testOpenCodeConnection,
   testQoderCookie,
@@ -48,7 +52,7 @@ function siteOptions(kind: ProviderKind): { value: ProviderSite; label: string }
   if (!profiles) return [];
   return providerSites(kind).map((site) => ({
     value: site,
-    label: `${SITE_LABELS[site]}（${profiles[site].domain}）`,
+    label: `${SITE_LABELS[site]}（${profiles[site]?.domain ?? ""}）`,
   }));
 }
 
@@ -86,13 +90,22 @@ function diagnosisFor(
   }
 }
 
-/** 成对/成组才有意义的凭据按组探测：WorkBuddy 三值缺一即 401（ADR-0029），
- *  所以它不挂在哪一格下面，而是三格之后一次探测这三格 */
+/** 成对/成组才有意义的凭据按组探测：WorkBuddy 三值缺一即 401（ADR-0029）、MiMo 的
+ *  serviceToken 与 userId 同为必需（ADR-0038），所以它们不挂在哪一格下面，而是几格之后
+ *  一次探测这几格 */
 function groupDiagnosisFor(
   kind: ProviderKind,
   values: Record<string, string>,
   site: ProviderSite,
 ) {
+  if (kind === "mimo") {
+    const serviceToken = values.serviceToken ?? "";
+    const userId = values.userId ?? "";
+    return {
+      test: () => testMimoCredential(serviceToken, userId),
+      disabled: !serviceToken.trim() || !userId.trim(),
+    };
+  }
   if (kind !== "workbuddy") return null;
   const session = values.session ?? "";
   const session2 = values.session2 ?? "";
@@ -102,6 +115,65 @@ function groupDiagnosisFor(
     disabled: !session.trim() || !session2.trim() || !userAgent.trim(),
   };
 }
+
+/**
+ * 三家的扫码档案（ADR-0034 / ADR-0041 / ADR-0042）。共用 QrLoginPanel 那台状态机，
+ * 差异只有这五项：
+ * - commands：Rust 侧各自的 start/poll/claim 三命令（URL 与凭据一律不在前端拼）
+ * - slots：退出扫码 / 净切到 Cookie 时要一并清除的槽位。**只放该通道独占的槽**——
+ *   两通道共用的那一格（MiMo 的 userId）清掉会让用户刚填的框凭空变空
+ * - pollIntervalMs：WorkBuddy 与 Qoder 是「问一次答一次」的定时轮；MiMo 的 lp 是上游
+ *   挂起式长连接，传 0 表示上一轮返回后立刻续下一次
+ * - renewable：只有 WorkBuddy 有「每日一刷」这个动作要开关（它的 token 会被官方客户端
+ *   互踢）。Qoder 按 expiresAt 提前续 + 401 即时救，自带节流，不需要开关；MiMo 每轮
+ *   现铸会话 Cookie，根本没有续期动作
+ * - 两句文案：扫码主体不同（腾讯 / Qoder 网页 / 小米账号），不能共用一句
+ */
+const QR_PROFILES: Record<
+  "workbuddy" | "qoder" | "mimo",
+  {
+    commands: QrCommands;
+    slots: readonly string[];
+    pollIntervalMs: number;
+    renewable: boolean;
+    helpText: string;
+    scanHint: string;
+  }
+> = {
+  workbuddy: {
+    commands: {
+      start: "workbuddy_qr_start",
+      poll: "workbuddy_qr_poll",
+      claim: "workbuddy_qr_claim",
+    },
+    slots: WORKBUDDY_TOKEN_SLOTS,
+    pollIntervalMs: 3000,
+    renewable: true,
+    helpText: "手机扫码完成 WorkBuddy 登录，自动获取凭据并每日续期。",
+    scanHint: "用手机浏览器或微信扫码，完成登录后此处自动继续。",
+  },
+  qoder: {
+    commands: {
+      start: "qoder_qr_start",
+      poll: "qoder_qr_poll",
+      claim: "qoder_qr_claim",
+    },
+    slots: QODER_TOKEN_SLOTS,
+    pollIntervalMs: 3000,
+    renewable: false,
+    helpText: "手机扫码完成 Qoder 登录，自动获取凭据并按有效期续期。",
+    scanHint: "用手机浏览器扫码打开授权页，完成登录后此处自动继续。",
+  },
+  mimo: {
+    commands: { start: "mimo_qr_start", poll: "mimo_qr_poll", claim: "mimo_qr_claim" },
+    slots: MIMO_PASS_CLEAR_SLOTS,
+    // 挂起式长轮询：Rust 一次挂着最多 75 秒，返回 pending 就立刻续上
+    pollIntervalMs: 0,
+    renewable: false,
+    helpText: "扫码或另一台设备登录小米账号完成授权，一次约可续 30 天。",
+    scanHint: "用小米手机「设置 > 小米账号」扫码，或在另一台设备打开链接登录小米账号。",
+  },
+};
 
 function defaultsFor(instance: ProviderInstance | null, kind: ProviderKind): InstanceFormValues {
   return {
@@ -188,25 +260,38 @@ export function InstanceDialog({
 
   // 凭据没读出来时不能拿空格子当「用户清空」，必填校验要放行（见 buildInstanceSchema）。
   const credentialsLoaded = !editing || credentials !== null;
-  const tokenConfigured = Boolean(credentialStatus?.accessToken);
-  // 登录方式互斥（ADR-0035）：workbuddy 表单二选一——扫码登录 / Cookie 登录，一次只
-  // 渲染所选方式的录入区块。初值按库里凭据形态校正（token 非空即扫码、三格非空即
-  // Cookie、都空默认扫码=主推路径），用户动过选择后以选择为准；qrSessionKey 是
-  // 新增态扫码确认后待认领的会话（保存建实例时才 claim，凭据不经前端）
+  // 登录方式互斥（ADR-0035，Qoder/MiMo 沿用同一模型见 ADR-0041/0042）：表单二选一——
+  // 扫码登录 / Cookie 登录，一次只渲染所选方式的录入区块。初值按库里凭据形态校正
+  // （扫码主槽非空即扫码、Cookie 槽非空即 Cookie、都空默认扫码=主推路径），
+  // 用户动过选择后以选择为准；qrSessionKey 是新增态扫码确认后待认领的会话
+  // （保存建实例时才 claim，凭据不经前端）
   const [loginMethod, setLoginMethod] = useState<"qr" | "cookie">("qr");
   const [qrSessionKey, setQrSessionKey] = useState<string | null>(null);
   const methodTouched = useRef(false);
+  // 扫码通道的「已配置」判据：各家主凭据槽不同名，但都只有一格是决定性的
+  const qrConfigured = Boolean(
+    kind === "mimo" ? credentialStatus?.passToken : credentialStatus?.accessToken,
+  );
+  // Cookie 通道的「已配置」判据：任一二选一的槽非空即算有（净切换提示用它点名后果）
   const hasCookieCredentials = Boolean(
-    credentialStatus?.session || credentialStatus?.session2 || credentialStatus?.userAgent,
+    credentialStatus?.session ||
+      credentialStatus?.session2 ||
+      credentialStatus?.userAgent ||
+      credentialStatus?.cookie ||
+      credentialStatus?.serviceToken,
   );
   useEffect(() => {
     if (methodTouched.current) return;
-    setLoginMethod(tokenConfigured ? "qr" : hasCookieCredentials ? "cookie" : "qr");
-  }, [tokenConfigured, hasCookieCredentials]);
-  const qrMethod = kind === "workbuddy" && loginMethod === "qr";
+    setLoginMethod(qrConfigured ? "qr" : hasCookieCredentials ? "cookie" : "qr");
+  }, [qrConfigured, hasCookieCredentials]);
+  // 表单口径的扫码种类：种类是实例创建时就定下的，与站点无关（schema 必须在 useForm
+  // 之前定下来，而站点是表单值）
+  const qrKind = kind === "workbuddy" || kind === "qoder" || kind === "mimo";
+  const qrProfile =
+    kind === "workbuddy" || kind === "qoder" || kind === "mimo" ? QR_PROFILES[kind] : null;
   const schema = useMemo(
-    () => buildInstanceSchema(kind, credentialsLoaded, qrMethod),
-    [kind, credentialsLoaded, qrMethod],
+    () => buildInstanceSchema(kind, credentialsLoaded, qrKind && loginMethod === "qr"),
+    [kind, credentialsLoaded, qrKind, loginMethod],
   );
 
   const {
@@ -229,6 +314,9 @@ export function InstanceDialog({
 
   const credentialValues = useWatch({ control, name: "credentials" }) ?? {};
   const watchedSite = useWatch({ control, name: "site" });
+  // 三家、两站都有扫码：Qoder 国际站的 client_id 与回调 scheme 出自已上线的第三方实现
+  // （magpie，注释标 verified against live captures），端点存在性另经零凭据探测确认
+  const qrMethod = qrKind && loginMethod === "qr";
   const [message, setMessage] = useState<SaveMessage>(null);
 
   // 打开时重置表单：编辑模式回填备注/开关/阈值/站点（凭据明文由下方 effect 补）
@@ -285,8 +373,8 @@ export function InstanceDialog({
     setMessage(null);
     // 登录方式未就绪拦截（ADR-0035 按净效果判定）：净切到扫码但凭据没到手就保存，
     // 编辑态会把生效中的 Cookie 凭据静默拆掉、新增态建出壳实例——都拦在顶部横幅。
-    // 扫码实例（tokenConfigured）与两边都空的未配置实例不在此列，备注照常可改
-    if (qrMethod && !tokenConfigured && !qrSessionKey && (hasCookieCredentials || !editing)) {
+    // 扫码实例（qrConfigured）与两边都空的未配置实例不在此列，备注照常可改
+    if (qrMethod && !qrConfigured && !qrSessionKey && (hasCookieCredentials || !editing)) {
       setMessage({ kind: "error", text: t("请先完成扫码登录，或改用 Cookie 登录。") });
       return;
     }
@@ -322,9 +410,9 @@ export function InstanceDialog({
               const prev = credentials?.[field.slot] ?? null;
               if (written[field.slot] !== prev) delta[field.slot] = written[field.slot];
             }
-            // 净切到 Cookie 登录（token 还在库）：保存时清 token 五槽，互斥不变量在此成立
-            if (kind === "workbuddy" && tokenConfigured) {
-              for (const slot of WORKBUDDY_TOKEN_SLOTS) delta[slot] = null;
+            // 净切到 Cookie 登录（扫码凭据还在库）：保存时清那一族的槽，互斥不变量在此成立
+            if (qrProfile && qrConfigured) {
+              for (const slot of qrProfile.slots) delta[slot] = null;
             }
           }
           if (Object.keys(delta).length > 0) await saveInstanceCredentials(instance.id, delta);
@@ -333,9 +421,9 @@ export function InstanceDialog({
         await reload();
         await refreshInstance(instance.id);
       } else {
-        if (qrMethod && qrSessionKey) {
-          // 扫码方式新增（ADR-0035）：空凭据建实例 → claim 认领扫码产物（Rust 暂存的
-          // token 族写入并顺手清三格），凭据全程不过前端
+        if (qrMethod && qrSessionKey && qrProfile) {
+          // 扫码方式新增（ADR-0035，Qoder/MiMo 沿用见 ADR-0041/0042）：空凭据建实例 →
+          // claim 认领扫码产物（Rust 暂存的凭据写入并顺手清对向的槽），凭据全程不过前端
           const created = await addInstance(kind, values.note.trim(), {}, {
             autoRefresh: values.autoRefresh,
             threshold: threshold === "" ? null : Number(threshold),
@@ -343,7 +431,7 @@ export function InstanceDialog({
               spec.balanceThreshold && balanceThreshold !== "" ? Number(balanceThreshold) : null,
             ...(hasMultipleSites(kind) ? { site: values.site } : {}),
           });
-          await invoke("workbuddy_qr_claim", { instanceId: created.id, sessionKey: qrSessionKey });
+          await invoke(qrProfile.commands.claim, { instanceId: created.id, sessionKey: qrSessionKey });
           await reloadInstances();
           await refreshInstance(created.id);
           onOpenChange(false);
@@ -450,7 +538,7 @@ export function InstanceDialog({
             </>
           )}
 
-          {kind === "workbuddy" && (
+          {qrKind && qrProfile && (
             <>
               <Separator />
               <div className="flex items-center justify-between gap-4">
@@ -469,7 +557,7 @@ export function InstanceDialog({
                 {t("两种方式二选一，切换后原方式的凭据将被清除。")}
               </p>
               {/* 净切换的后果提示（ADR-0035）：只在真有另一方式的凭据待清时显示 */}
-              {editing && credentialsLoaded && (loginMethod === "cookie" ? tokenConfigured : loginMethod === "qr" && hasCookieCredentials) && (
+              {editing && credentialsLoaded && (loginMethod === "cookie" ? qrConfigured : loginMethod === "qr" && hasCookieCredentials) && (
                 <p className="text-[13px] leading-relaxed text-fg-muted">
                   {loginMethod === "cookie"
                     ? t("保存后将改用 Cookie 登录，扫码凭据将被清除。")
@@ -478,14 +566,21 @@ export function InstanceDialog({
               )}
               {loginMethod === "qr" && (
                 <div className="space-y-3">
-                  <WorkbuddyQrLogin
+                  <QrLoginPanel
                     site={watchedSite}
                     instance={editing && instance ? instance : undefined}
-                    tokenConfigured={tokenConfigured}
+                    configured={qrConfigured}
                     nickname={credentials?.nickname}
-                    uid={credentials?.uid}
+                    // MiMo 没有昵称也没有 uid 槽：账号标识取 userId 那格；它也不存有效期
+                    // （passToken 的 30 天没落槽），摘要行会自己少掉那一段
+                    uid={kind === "mimo" ? credentials?.userId : credentials?.uid}
                     expiresAt={credentials?.expiresAt}
                     busy={saveDisabled || isSubmitting}
+                    commands={qrProfile.commands}
+                    slots={qrProfile.slots}
+                    pollIntervalMs={qrProfile.pollIntervalMs}
+                    helpText={t(qrProfile.helpText)}
+                    scanHint={t(qrProfile.scanHint)}
                     onChanged={async () => {
                       if (!instance) return;
                       await reload();
@@ -496,7 +591,7 @@ export function InstanceDialog({
                     }
                     onPendingClaim={setQrSessionKey}
                   />
-                  {editing && instance && tokenConfigured && (
+                  {qrProfile.renewable && editing && instance && qrConfigured && (
                     <div className="flex items-center justify-between gap-4">
                       <div>
                         <FieldLabel>{t("token 自动续期")}</FieldLabel>

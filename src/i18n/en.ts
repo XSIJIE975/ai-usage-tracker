@@ -7,7 +7,6 @@ export const en: Record<string, string> = {
   "AI 用量助手": "AI Usage Tracker",
   "最近更新": "Updated",
   "等待刷新": "Waiting for refresh",
-  "总览": "Overview",
   "统计": "Usage",
   "设置": "Settings",
   "刷新": "Refresh",
@@ -33,6 +32,7 @@ export const en: Record<string, string> = {
   "编辑配置": "Edit settings",
   "查看统计": "View stats",
   "获取数据后可查看统计": "Available after data is fetched",
+  "获取数据后可打开成长中心": "Available after data is fetched",
   "用量统计": "Usage stats",
   "还没有供应商": "No providers yet",
   "凭据无效或已过期": "Credentials invalid or expired",
@@ -85,12 +85,22 @@ export const en: Record<string, string> = {
   "退出扫码登录": "Sign out of QR login",
   "发起扫码": "Start QR sign-in",
   "扫码账号：{name} · 有效期至 {date}": "Signed in as {name} · valid until {date}",
+  "扫码账号：{name}": "Signed in as {name}",
+  "有效期至 {date}": "Valid until {date}",
   "未知账号": "unknown account",
   "未知": "unknown",
   "手机扫码完成 WorkBuddy 登录，自动获取凭据并每日续期。":
     "Scan with your phone to sign in to WorkBuddy — credentials are fetched and renewed daily.",
   "用手机浏览器或微信扫码，完成登录后此处自动继续。":
     "Scan with your phone browser or WeChat; this continues automatically once you sign in.",
+  "手机扫码完成 Qoder 登录，自动获取凭据并按有效期续期。":
+    "Scan with your phone to sign in to Qoder — credentials are fetched and renewed before they expire.",
+  "用手机浏览器扫码打开授权页，完成登录后此处自动继续。":
+    "Open the sign-in page from your phone browser; this continues automatically once you sign in.",
+  "扫码或另一台设备登录小米账号完成授权，一次约可续 30 天。":
+    "Scan, or sign in to your Xiaomi account on another device — one authorisation lasts about 30 days.",
+  "用小米手机「设置 > 小米账号」扫码，或在另一台设备打开链接登录小米账号。":
+    "Scan with Settings > Xiaomi Account on a Xiaomi device, or open the link on another device and sign in.",
   "复制登录链接": "Copy sign-in link",
   "换一个": "New code",
   "二维码已过期，请重新发起扫码。": "The QR code has expired — start a new one.",
@@ -115,6 +125,10 @@ export const en: Record<string, string> = {
     "Qoder credentials are invalid or expired — paste the qoder_session_cookie value again in Settings",
   "请在设置中粘贴 Qoder 会话 Cookie（qoder_session_cookie）的值":
     "Paste the Qoder session cookie value (qoder_session_cookie) in Settings",
+  "请在设置中扫码登录 Qoder，或粘贴会话 Cookie（qoder_session_cookie）的值":
+    "Scan to sign in to Qoder in Settings, or paste the session cookie value (qoder_session_cookie)",
+  "Qoder 扫码登录已失效，请在设置中重新扫码；或改用 Cookie 登录":
+    "The Qoder scan-in session is invalid or expired — re-scan in Settings, or switch to cookie sign-in",
   "积分接口返回 HTTP {status}{detail}": "Credits API returned HTTP {status}{detail}",
   "积分接口查询失败：{detail}": "Credits query failed: {detail}",
   "积分接口返回数据解析失败：{detail}": "Failed to parse credits response: {detail}",
@@ -147,8 +161,6 @@ export const en: Record<string, string> = {
     "How to get them: sign in at www.workbuddy.ai → open DevTools (F12) → Network → reload → pick any www.workbuddy.ai request → Request Headers, then take the three values as each field's hint below describes. All three must come from the same request (the gateway wants the two cookies as a pair and a byte-identical UA) — values only, no names.",
   "Qoder 会话 Cookie": "Qoder session cookie",
   "只粘贴 qoder_session_cookie 的值": "Paste only the qoder_session_cookie value",
-  "只粘贴 qoder_session_cookie 的值：不要带「Cookie:」前缀或键名，也不能包含分号、空格、换行或中文":
-    'Paste only the qoder_session_cookie value — no "Cookie:" prefix, no cookie name, and no semicolons, spaces, line breaks, or non-ASCII text',
   "获取方式：登录 qoder.com.cn → F12 → Application(应用) → Cookies → https://qoder.com.cn → 找到名为 qoder_session_cookie 的 Cookie，只复制它的 Value 粘贴（不要带键名或「Cookie:」前缀）。":
     "How to get it: sign in at qoder.com.cn → open DevTools (F12) → Application → Cookies → https://qoder.com.cn → find the cookie named qoder_session_cookie and copy its Value only (no cookie name, no leading \"Cookie:\").",
   "获取方式：登录 qoder.com → F12 → Application(应用) → Cookies → https://qoder.com → 找到名为 qoder_session_cookie 的 Cookie，只复制它的 Value 粘贴（不要带键名或「Cookie:」前缀）。":
@@ -192,6 +204,13 @@ export const en: Record<string, string> = {
   "连登状态获取失败，可稍后重试": "Failed to load streak status; try again later",
   "暂无连登数据": "No streak data yet",
   "该档位尚未解锁，连登天数以官网为准": "This tier is not unlocked yet — the streak days on the official site is authoritative",
+  "今日已上报活跃": "Activity reported today",
+  "今日已上报活跃，但连登天数仍为 0": "Activity reported today, but the streak is still 0 days",
+  "今日已上报活跃，但连登状态读不到": "Activity reported today, but the streak status can't be read back",
+  "今日未上报：拿不到账号 uid，改用扫码登录即可": "Not reported today: no account uid — sign in with the QR code instead",
+  "今日未上报：{detail}": "Not reported today: {detail}",
+  "今日未上报": "Not reported today",
+  "未知原因": "unknown reason",
   "兑换失败，请稍后重试": "Redemption failed; try again later",
   "最近一次领取 · {date}": "Last claim · {date}",
   "暂无可领的奖励：档位已兑换、无抽奖次数、昨日无漏签": "Nothing to claim right now: tiers redeemed, no lottery chances, no missed day yesterday",
@@ -254,6 +273,17 @@ export const en: Record<string, string> = {
   "已上报小程序对话事件": "Reported the mini-program chat event",
   "已上报小程序对话事件 ×5": "Reported mini-program chat events ×5",
   "已上报专家使用事件（{name}）": "Reported expert-use event ({name})",
+  "进度已达标，无需补报": "Progress already met; no backfill needed",
+  "已补报 {count} 条对话事件": "Backfilled {count} chat event(s)",
+  "已按真人节奏补报 {count} 条对话事件": "Backfilled {count} chat event(s) at human pace",
+  "已上报模型对话事件（{model}）": "Reported the model chat event ({model})",
+  "模型对话已上报 PC 活跃（{model}）兜底": "Model chat backfilled via PC activity report ({model})",
+  "已上报灵感功能事件": "Reported the playbook event",
+  "灵感功能已上报 mp 指纹兜底": "Playbook backfilled via mini-program fingerprint",
+  "小程序创建定时任务": "Create a scheduled task in mini program",
+  "小程序体验 GLM-5.2 模型": "Try the GLM-5.2 model in mini program",
+  "小程序完成 10 次对话": "Have 10 chats in mini program",
+  "小程序体验灵感功能": "Try Playbook in mini program",
   "{message}；奖励此前已领取": "{message}; reward was already claimed",
   "{message}；已自动领取 +{credit} 分": "{message}; auto-claimed +{credit} credits",
   "{message}；已自动领取 +{credit} 分 +{energy} 能量": "{message}; auto-claimed +{credit} credits +{energy} energy",
@@ -335,13 +365,10 @@ export const en: Record<string, string> = {
   "账户余额": "Balance",
   "充值余额": "Top-up balance",
   "赠送余额": "Bonus balance",
-  "可用重置卡": "Reset cards",
   "5 小时 ×{fiveHour} · 周 ×{week}": "5-hour ×{fiveHour} · weekly ×{week}",
   "5 小时 ×{fiveHour}": "5-hour ×{fiveHour}",
   "周 ×{week}": "weekly ×{week}",
   "重置卡": "Reset cards",
-  "重置管理": "Manage resets",
-  "重置额度": "Reset quotas",
   "5小时额度": "5-hour quota",
   "周额度": "Weekly quota",
   "每条次数有独立有效期，过期自动失效。重置周额度时会同步重置 5h 额度，且不额外消耗 5h 次数。仅展示未使用或近 7 天已过期的重置次数": "Each reset has its own expiry and is lost when it passes; using a weekly reset also restores the 5-hour quota without consuming a 5-hour card. Only unused resets and those expired within 7 days are shown",
@@ -359,7 +386,6 @@ export const en: Record<string, string> = {
   "使用重置卡失败": "Failed to use the reset card",
   "使用重置卡失败：{detail}": "Failed to use the reset card: {detail}",
   "这张重置卡已不可用（可能已过期或被使用），请刷新后重试。": "This reset card is no longer available (it may have expired or been used). Refresh and try again.",
-  "每张重置卡可立即恢复对应窗口的额度，独立有效期、过期自动失效；使用周卡会同步重置 5 小时额度，不额外消耗 5 小时次数。": "Each reset card instantly restores its window's quota and expires on its own schedule; using a weekly card also resets the 5-hour quota without consuming a 5-hour card.",
   "智谱重置卡接口返回 HTTP {status}": "Zhipu reset card API returned HTTP {status}",
   "智谱重置卡查询失败：{detail}": "Zhipu reset card query failed: {detail}",
   "智谱重置卡响应无法解析": "Zhipu reset card response could not be parsed",
@@ -501,7 +527,7 @@ export const en: Record<string, string> = {
   "刷新间隔": "Refresh interval",
   "所有供应商共用同一间隔。": "Shared by all providers.",
   "外观": "Appearance",
-  "主题偏好仅保存在本机浏览器存储中。": "Theme preference is stored locally only.",
+  "主题偏好保存在本机设置中。": "Theme preference is saved in local app settings.",
   "主题模式": "Theme mode",
   "跟随系统": "System",
   "浅色": "Light",
@@ -568,8 +594,6 @@ export const en: Record<string, string> = {
   "Cookie 行里 session= 后面的那段值": "The session= value from the Cookie line",
   "Cookie 行里 session_2= 后面的那段值": "The session_2= value from the Cookie line",
   "User-Agent 行的整行值，须与登录时逐字节相同": "The full User-Agent line, byte-identical to the one used at sign-in",
-  "只粘贴该 Cookie 的值：不要带键名或「Cookie:」前缀，也不能包含分号、空格、换行或中文":
-    'Paste the cookie value only — no cookie name, no "Cookie:" prefix, and no semicolons, spaces, line breaks, or non-ASCII text',
   "只粘贴 User-Agent 的值：不要带「User-Agent:」前缀，也不能包含换行或中文":
     'Paste the User-Agent value only — no "User-Agent:" prefix, and no line breaks or non-ASCII text',
   "积分已用告警阈值（%）": "Credits usage alert threshold (%)",
@@ -797,6 +821,44 @@ export const en: Record<string, string> = {
   "点击显示该系列": "Click to show this series",
   "模型筛选": "Model filter",
   "密钥筛选": "Key filter",
+  "只粘贴该 Cookie 的值：不要带「Cookie:」前缀或键名，也不能包含分号、空格、换行或中文":
+    'Paste the cookie value only — no "Cookie:" prefix, no cookie name, and no semicolons, spaces, line breaks, or non-ASCII text',
+  // —— 小米 MiMo（第六家供应商，ADR-0038）——
+  "小米 MiMo": "Xiaomi MiMo",
+  "查询小米 MiMo 的 Token Plan 额度与账户余额":
+    "Track the Xiaomi MiMo Token Plan quota and account balance",
+  "请在设置中填写小米 MiMo 的 {slots}": "Enter the Xiaomi MiMo {slots} in Settings",
+  "请在设置中扫码登录小米 MiMo，或填写 {slots}":
+    "Scan to sign in to Xiaomi MiMo in Settings, or enter {slots}",
+  "小米账号授权已失效，请在设置中重新扫码（一次授权约可续 30 天）":
+    "The Xiaomi account authorisation has expired — re-scan in Settings (one scan lasts about 30 days)",
+  "小米 MiMo 登录凭据无效或已过期，请在设置中重新填写 serviceToken 与 userId":
+    "Xiaomi MiMo sign-in credential is invalid or expired — re-enter serviceToken and userId in Settings",
+  "请先填写小米 MiMo 的 serviceToken 与 userId":
+    "Enter the Xiaomi MiMo serviceToken and userId first",
+  "Token Plan 额度": "Token Plan quota",
+  "Token Plan 已过期": "Token Plan expired",
+  "暂无额度数据": "No quota data",
+  "code 字段缺失": "missing the code field",
+  "MiMo {api} 接口返回 HTTP {status}{detail}": "MiMo {api} returned HTTP {status}{detail}",
+  "MiMo {api} 接口返回 code={code}{message}": "MiMo {api} returned code={code}{message}",
+  "MiMo {api} 接口返回数据解析失败：{detail}": "Failed to parse the MiMo {api} response: {detail}",
+  "MiMo {api} 接口未返回可用数据": "MiMo {api} returned no usable data",
+  "MiMo {api} 接口查询失败：{detail}": "MiMo {api} request failed: {detail}",
+  "获取方式：登录 platform.xiaomimimo.com → F12 打开 Application(应用) → Cookies → 选中该站点，按每格提示分别复制 api-platform_serviceToken 与 userId 的 Value。":
+    "How to get it: sign in at platform.xiaomimimo.com → open DevTools (F12) → Application → Cookies → select the site, then copy the Value of api-platform_serviceToken and of userId as each field's hint describes.",
+  "Cookie 里 api-platform_serviceToken= 后面那段值": "The api-platform_serviceToken= value from the cookies",
+  "Cookie 里 userId= 后面那段值": "The userId= value from the cookies",
+  "Token Plan 额度告警阈值（%）": "Token Plan quota alert threshold (%)",
+  "Token Plan 额度已用达到该百分比时发送系统通知；留空不告警。":
+    "Send a system notification when the Token Plan quota reaches this percentage; leave empty for no alert.",
+  "余额告警阈值": "Balance alert threshold",
+  "账户余额低于该值时发送系统通知，按账户币种计量（接口下发，如 CNY、USD）；留空不告警。":
+    "Send a system notification when the account balance drops below this value, in your account currency (as returned by the API, e.g. CNY, USD); leave empty for no alert.",
+  "Token Plan 额度已用 {percent}%，达到 {threshold}%，注意分配剩余用量。":
+    "Token Plan quota is {percent}% used, reaching {threshold}% — watch the remaining allowance.",
+  "账户余额 {balance}，低于阈值 {threshold}，请及时充值。":
+    "Account balance {balance} is below the {threshold} threshold — top it up.",
   "通知中心（{count} 条未读）": "Notification center ({count} unread)",
   "新版本 v{version} 可用，前往设置安装":
     "Version v{version} is available — go to Settings to install",

@@ -5,7 +5,8 @@ import { cn } from "../../lib/utils";
 
 /**
  * 侧滑抽屉规范（docs/DESIGN.md §6.9）：
- * Sheet 承载详情类内容（如实例统计），右侧滑入、全高、宽 min(960px,100vw)。
+ * Sheet 承载需要滚动的长内容（实例统计、成长中心、设置抽屉），右侧滑入、全高，
+ * 默认宽 min(960px,100vw)，按内容用 className 收窄。
  */
 const Sheet = SheetPrimitive.Root;
 const SheetTrigger = SheetPrimitive.Trigger;
@@ -16,11 +17,11 @@ const SheetContent = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof SheetPrimitive.Content>
 >(({ className, children, ...props }, ref) => (
   <SheetPrimitive.Portal>
-    <SheetPrimitive.Overlay className="fixed inset-0 z-50 bg-canvas/60 backdrop-blur-[1px]" />
+    <SheetPrimitive.Overlay className="fixed inset-0 z-50 bg-canvas/60 backdrop-blur-[1px] data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
     <SheetPrimitive.Content
       ref={ref}
       className={cn(
-        "fixed inset-y-0 right-0 z-50 flex w-[min(960px,100vw)] flex-col border-l border-line bg-canvas shadow-pop outline-none transition-transform duration-normal",
+        "fixed inset-y-0 right-0 z-50 flex w-[min(960px,100vw)] flex-col border-l border-line bg-canvas shadow-pop outline-none data-[state=open]:animate-sheet-in data-[state=closed]:animate-sheet-out",
         className,
       )}
       {...props}

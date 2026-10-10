@@ -14,6 +14,7 @@ mod instances;
 mod tray_scheme;
 mod vault;
 
+use commands::QrLoginSession;
 use commands::WorkbuddyLoginSession;
 use db::Db;
 use vault::{KeyringKeyStore, Vault};
@@ -26,6 +27,9 @@ pub struct AppState {
     /// WorkBuddy 扫码登录进行中的会话（instance_id → 会话，ADR-0034）：进程内存态，
     /// 上游 state 15 分钟有效；重启丢会话只是要求重扫，无持久化价值
     pub workbuddy_logins: Mutex<HashMap<String, WorkbuddyLoginSession>>,
+    /// 扫码登录进行中的会话（会话键 → 会话，ADR-0041 / ADR-0042）：Qoder 设备码与
+    /// MiMo 长轮询共用一张表，进程内存态，重启丢会话只是要求重扫
+    pub qr_logins: Mutex<HashMap<String, QrLoginSession>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -64,6 +68,7 @@ pub fn run() {
                 db: Mutex::new(db),
                 quick_shortcut: Mutex::new(None),
                 workbuddy_logins: Mutex::new(HashMap::new()),
+                qr_logins: Mutex::new(HashMap::new()),
             });
             // 托盘呈现状态（图标方案/计量快照/语言）独立于 AppState，由 tray_scheme 模块消费
             app.manage(tray_scheme::TrayState::default());
@@ -189,14 +194,8 @@ pub fn run() {
             commands::save_alert_states,
             commands::get_seen_reset_cards,
             commands::save_seen_reset_cards,
-            commands::get_workbuddy_checkin,
-            commands::save_workbuddy_checkin,
-            commands::get_workbuddy_travel_claim,
-            commands::save_workbuddy_travel_claim,
-            commands::get_workbuddy_growth_notice,
-            commands::save_workbuddy_growth_notice,
-            commands::get_workbuddy_trial,
-            commands::save_workbuddy_trial,
+            commands::get_workbuddy_state,
+            commands::save_workbuddy_state,
             commands::list_notifications,
             commands::unread_notification_count,
             commands::mark_all_notifications_read,
@@ -207,6 +206,13 @@ pub fn run() {
             commands::workbuddy_qr_poll,
             commands::workbuddy_qr_claim,
             commands::workbuddy_token_refresh,
+            commands::qoder_qr_start,
+            commands::qoder_qr_poll,
+            commands::qoder_qr_claim,
+            commands::qoder_token_refresh,
+            commands::mimo_qr_start,
+            commands::mimo_qr_poll,
+            commands::mimo_qr_claim,
             commands::open_main_window,
             commands::hide_quick_window,
             commands::toggle_quick_window,
@@ -271,6 +277,26 @@ fn harden_release_webviews(app: &AppHandle) {
 #[cfg(not(windows))]
 fn harden_release_webviews(_app: &AppHandle) {}
 
+/// 优雅退出：先销毁全部 webview 窗口，给 WebView2 浏览器进程留出把 localStorage 等
+/// 浏览器侧存储写完落盘的时间，再退出进程。直接 `app.exit(0)` 会硬杀正在写盘的
+/// WebView2，在 LevelDB 日志里留下撕裂记录——其后同一数据块内的所有写入永远读不
+/// 回来（主题偏好重启即丢的根因）。
+/// 主窗口的 CloseRequested 监听会把 close() 拦成隐藏到托盘，这里必须用 destroy() 绕过。
+/// 在独立线程等待：销毁经事件循环处理，阻塞主线程会让自己等不到窗口清空。
+fn quit_gracefully(app: &AppHandle) {
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        for window in handle.webview_windows().values() {
+            let _ = window.destroy();
+        }
+        let deadline = Instant::now() + std::time::Duration::from_secs(3);
+        while !handle.webview_windows().is_empty() && Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        handle.exit(0);
+    });
+}
+
 fn setup_tray(app: &AppHandle, language: &str) -> tauri::Result<()> {
     let menu = build_tray_menu(app, language)?;
 
@@ -281,9 +307,7 @@ fn setup_tray(app: &AppHandle, language: &str) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open" => open_main(app),
             "quick" => toggle_quick(app),
-            "quit" => {
-                app.exit(0);
-            }
+            "quit" => quit_gracefully(app),
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {

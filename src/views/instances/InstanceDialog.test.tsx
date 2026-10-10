@@ -63,13 +63,16 @@ function harness(kind: ProviderKind, stored: Record<string, string>) {
   (invoke as unknown as Mock).mockImplementation(async (command: string) => {
     if (command === "vault_credentials") return { ...vault };
     if (command === "vault_credential_status") {
-      return {
-        ...Object.fromEntries(
-          providerFormSpecs[kind].fields.map((field) => [field.slot, Boolean(vault[field.slot])]),
-        ),
-        // workbuddy 登录方式互斥（ADR-0035）：accessToken 非空即扫码登录的凭据形态
-        accessToken: Boolean(vault.accessToken),
-      };
+      // 与 Rust 的 vault_credential_status 同口径：**库里有什么槽就报什么槽**，
+      // 不是只报表单字段（扫码槽 passToken/accessToken 都不在表单里）。
+      // 表单字段一并补成 false，是为了让「这一格没填」的断言写得出来
+      const stored = Object.fromEntries(
+        Object.entries(vault).map(([slot, value]) => [slot, Boolean(value)]),
+      );
+      const declared = Object.fromEntries(
+        providerFormSpecs[kind].fields.map((field) => [field.slot, Boolean(vault[field.slot])]),
+      );
+      return { ...declared, ...stored };
     }
     return undefined;
   });
@@ -192,7 +195,7 @@ describe("新建 WorkBuddy 实例的必填校验", () => {
 
     expect(
       await screen.findByText(
-        "只粘贴该 Cookie 的值：不要带键名或「Cookie:」前缀，也不能包含分号、空格、换行或中文",
+        "只粘贴该 Cookie 的值：不要带「Cookie:」前缀或键名，也不能包含分号、空格、换行或中文",
       ),
     ).toBeTruthy();
     expect(addInstance).not.toHaveBeenCalled();
@@ -432,6 +435,34 @@ describe("登录方式互斥（ADR-0035）", () => {
       session2: VALID.session2,
       userAgent: VALID.userAgent,
     });
+  });
+
+  it("MiMo 扫码实例切 Cookie 登录：只清扫码独占槽，userId 那格用用户填的值（ADR-0042）", async () => {
+    // 回归：净切换的清除表一度含 userId，而 userId 是两条通道共用的一格——
+    // 用户刚填的 userId 会被后面的 null 覆盖，存完直接 needs_config
+    const h = harness("mimo", { passToken: "V1:pass", userId: "123456789", deviceId: "pc_abc" });
+    render(
+      <InstanceDialog
+        open
+        onOpenChange={vi.fn()}
+        instance={h.instance}
+        providerId="mimo"
+      />,
+    );
+    await waitFor(() => expect(screen.getByRole("button", { name: "重新扫码" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("tab", { name: "Cookie 登录" }));
+    fill("serviceToken", "svc-token-value");
+    fill("userId", "123456789");
+    await save();
+
+    await waitFor(() => expect(h.saveCredentials).toHaveBeenCalledTimes(1));
+    const delta = h.saveCredentials.mock.calls[0][1];
+    expect(delta.passToken).toBeNull();
+    expect(delta.deviceId).toBeNull();
+    expect(delta.serviceToken).toBe("svc-token-value");
+    // 关键回归：userId 是两条通道共用的一格，净切换不许把它抹成 null
+    expect(delta.userId).not.toBeNull();
+    expect(h.vault.userId).toBe("123456789");
   });
 
   it("Cookie 实例切扫码未扫就保存：拦下，不写库", async () => {

@@ -66,6 +66,10 @@ export interface WorkbuddyCapabilities {
   checkin: boolean;
   /** 连登天数（activity/growth/streak） */
   streak: boolean;
+  /** 活跃上报（POST /v2/report 的 chat_request_send，点亮连登，ADR-0039）——
+   *  国际站也开：参考项目实测国际版该端点 code=0 并点亮连登（PR #91），
+   *  且 streak 读面同时打开，上报了能不能读回来这一轮刷新就给出证据 */
+  activity: boolean;
   /** 喵喵旅行领奖与出发（activity/growth/buddy/travel） */
   travel: boolean;
   /** 消耗明细统计页（billing/meter/get-user-request-usage） */
@@ -116,6 +120,7 @@ const SITES: Record<ProviderSite, WorkbuddySiteConfig> = {
     capabilities: {
       checkin: true,
       streak: true,
+      activity: true,
       travel: true,
       stats: true,
       tasks: true,
@@ -125,11 +130,17 @@ const SITES: Record<ProviderSite, WorkbuddySiteConfig> = {
   },
   international: {
     origin: "https://www.workbuddy.ai",
-    // 2026-09-22 真机确认：国际站没有签到与成长中心（连登、喵喵旅行、成长任务都不存在）；
-    // 用量页与中国站同款，消耗明细按同族端点接入。trial 是国际站专属端点（ADR-0037）
+    // 2026-09-22 真机确认：国际站没有签到与成长中心（喵喵旅行、成长任务、连登档位
+    // 兑换都不存在）；用量页与中国站同款，消耗明细按同族端点接入。trial 是国际站专属
+    // 端点（ADR-0037）。
+    // 2026-10-08 修订（ADR-0039）：streak 与 activity 放开——连登的「读」与「点亮」
+    // 两路都通，写面（兑换/抽奖/补签/签到/旅行/任务）照旧不发。参考项目实测国际版
+    // /v2/report 返回 code=0 并点亮连登（PR #91），而我们这边从来没有代发送过那条
+    // 上报，所以国际站是否真有一套连登此前根本无从判断；读面一起开，本轮刷新即出证据
     capabilities: {
       checkin: false,
-      streak: false,
+      streak: true,
+      activity: true,
       travel: false,
       stats: true,
       tasks: false,
@@ -354,6 +365,17 @@ export function resolveWorkbuddyChannel(
   return null;
 }
 
+/** 扫码产物槽位全集（ADR-0034）：退出扫码登录时一并清除；净切到 Cookie 登录时
+ *  表单层也用它清槽（ADR-0035 互斥） */
+export const WORKBUDDY_TOKEN_SLOTS = [
+  "accessToken",
+  "refreshToken",
+  "expiresAt",
+  "uid",
+  "nickname",
+  "enterpriseId",
+] as const;
+
 /** 签到日界按服务端时区 CST（UTC+8 固定无夏令时）计算 YYYY-MM-DD */
 export function cstDateString(atMs: number = Date.now()): string {
   return new Date(atMs + 8 * 3_600_000).toISOString().slice(0, 10);
@@ -429,11 +451,16 @@ export function nextTierGap(days: number): { tier: number; gap: number } | null 
   return next === undefined ? null : { tier: next, gap: next - days };
 }
 
-/** 连登卡片行：天数 + 距下一档尾巴（本地计算，不依赖服务端 next_tier 字段） */
-export function parseStreakLine(data: WorkbuddyStreakFullData | undefined): MetricLine | null {
+/** 连登卡片行：天数 + 距下一档尾巴（档位门槛本地计算，不依赖服务端 next_tier 字段）。
+ *  withTierGap 传站点的 butler 能力位——国际站没有成长中心（2026-10-08 用户确认官网
+ *  无该页面），给它写「距 7 天档还差 6 天」就是许诺一个那里不存在的奖励 */
+export function parseStreakLine(
+  data: WorkbuddyStreakFullData | undefined,
+  withTierGap = true,
+): MetricLine | null {
   const days = data?.streak?.days;
   if (typeof days !== "number" || !Number.isFinite(days) || days <= 0) return null;
-  const next = nextTierGap(days);
+  const next = withTierGap ? nextTierGap(days) : null;
   if (next) {
     return {
       type: "text",
