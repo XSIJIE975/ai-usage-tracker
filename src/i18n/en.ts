@@ -53,15 +53,46 @@ export const en: Record<string, string> = {
   "Coding Plan 配额接口返回 HTTP {status}{detail}": "Coding Plan quota API returned HTTP {status}{detail}",
   "Coding Plan 配额查询失败：{detail}": "Coding Plan quota query failed: {detail}",
   "Coding Plan 配额返回数据解析失败：{detail}": "Failed to parse Coding Plan quota response: {detail}",
-  "OpenCode Go 后台返回 HTTP {status}，请检查 Cookie 是否过期": "OpenCode Go console returned HTTP {status}; check whether the auth cookie has expired",
-  "请在设置中填写 Workspace ID 和 Auth Cookie": "Fill in the Workspace ID and Auth Cookie in Settings",
-  "OpenCode Go 后台返回登录/挑战页，请重新复制 auth Cookie": "OpenCode Go console returned a login/challenge page — copy the auth cookie again",
-  "未能从 OpenCode Go 后台解析额度窗口": "Could not parse quota windows from the OpenCode Go console",
-  "opencode.ai 接口返回 HTTP {status}": "opencode.ai API returned HTTP {status}",
-  "opencode.ai：{detail}。请核对设置中的 Workspace ID 与 Auth Cookie 是否来自同一账号": "opencode.ai: {detail}. Make sure the Workspace ID and Auth Cookie in Settings come from the same account",
-  "opencode.ai 服务端错误：{detail}": "opencode.ai server error: {detail}",
-  "opencode.ai 返回结构无法解析，可能已改版": "opencode.ai response structure could not be parsed — it may have changed",
-  "OpenCode 登录态已失效，请在设置中重新复制 Auth Cookie": "OpenCode session expired — copy the Auth Cookie again in Settings",
+  "请在配置中填写 OpenCode Go API Key": "Fill in the OpenCode Go API Key in the instance settings",
+  "OpenCode Go API Key 无效或已过期": "The OpenCode Go API Key is invalid or expired",
+  "该 API Key 未开通 OpenCode Go 订阅": "This API Key has no OpenCode Go subscription",
+  "OpenCode Go 用量接口返回 HTTP {status}": "OpenCode Go usage API returned HTTP {status}",
+  "OpenCode Go 用量接口返回结构无法解析": "Could not parse the OpenCode Go usage API response",
+  "Zen 余额": "Zen balance",
+  "请在配置中填写 Workspace ID 和 Cookie 才能查看请求日志":
+    "Fill in the Workspace ID and Cookie in the instance settings to view request logs",
+  "OpenCode 控制台要求 x-org-id，请核对 Workspace ID":
+    "The OpenCode console requires x-org-id — check the Workspace ID",
+  "OpenCode 控制台返回结构无法解析": "Could not parse the OpenCode console response",
+  "OpenCode 控制台返回 HTTP {status}": "OpenCode console returned HTTP {status}",
+  "OpenCode 用量接口返回 HTTP {status}": "OpenCode usage API returned HTTP {status}",
+  "OpenCode 用量接口返回结构无法解析": "Could not parse the OpenCode usage API response",
+  "当前 Cookie 不含 __Host-console_session，请重新复制控制台 Cookie":
+    "The current cookie has no __Host-console_session — copy the console cookie again",
+  "控制台仅保留最近 {days} 天日志":
+    "The console only retains logs for the last {days} days",
+  "概览": "Overview",
+  "请求日志": "Request logs",
+  "24 小时": "24 hours",
+  "7 天": "7 days",
+  "30 天": "30 days",
+  "每日用量": "Daily usage",
+  "所选区间的按日成本与 Token。": "Daily cost and tokens for the selected range.",
+  "按模型用量": "Usage by model",
+  "所选区间的模型明细。": "Per-model breakdown for the selected range.",
+  "所选区间暂无数据。": "No data for the selected range.",
+  "所选区间暂无模型用量。": "No model usage for the selected range.",
+  "所选区间的请求明细。": "Request details for the selected range.",
+  "所选区间没有请求记录。": "No requests in the selected range.",
+  "加载更多": "Load more",
+  "缓存读取": "Cache read",
+  "缓存写入": "Cache write",
+  "耗时": "Duration",
+  "状态": "Status",
+  "Tokens": "Tokens",
+  "OpenCode 控制台找不到该工作区（HTTP 404），请核对 Workspace ID":
+    "The OpenCode console does not know this workspace (HTTP 404) — check the Workspace ID",
+  "OpenCode 登录态已失效，请在配置中重新复制 Cookie": "OpenCode session expired — copy the cookie again in the instance settings",
   "智谱用量接口返回 HTTP {status}": "Zhipu usage API returned HTTP {status}",
   "智谱用量查询失败：{detail}": "Zhipu usage query failed: {detail}",
   "智谱用量响应无法解析": "Zhipu usage response could not be parsed",
@@ -337,8 +368,6 @@ export const en: Record<string, string> = {
   "阈值需在 {min}–{max} 之间": "Threshold must be between {min} and {max}",
   "留空不影响余额卡片，但用量统计页需要该令牌。":
     "Optional for the balance card; the usage page needs this token.",
-  "留空则按页面抓取用量；填了才走官方 /usage 接口。":
-    "Left empty, usage is scraped from the console page; set it to use the official /usage API.",
   "本机设备密钥已丢失，保存时将重建凭据库。": "Device key lost — saving will rebuild the vault.",
   "本机设备密钥已丢失（常见于换机、重装系统或重置账户密码），原凭据无法恢复。请删除对应供应商后重新添加，保存时将重建凭据库。": "The device key is missing (common after switching devices, reinstalling the OS, or resetting your account password). Existing credentials can't be recovered. Delete the provider and add it again — saving will rebuild the vault.",
   "跟随全局刷新间隔，手动刷新不受此开关影响。": "Follows the global refresh interval; manual refresh is unaffected.",
@@ -446,8 +475,6 @@ export const en: Record<string, string> = {
   "下一月": "Next month",
   "按模型细分的使用成本，本月合计": "Usage cost by model — this month total",
   "当前筛选条件下暂无使用记录。": "No usage records for the current filter.",
-  "缺少凭据配置": "Credentials missing",
-  "请前往设置页配置 Workspace ID 和 Auth Cookie。": "Configure Workspace ID and Auth Cookie in Settings.",
   "通用": "General",
 
   // ── 快速面板 ──
@@ -576,12 +603,23 @@ export const en: Record<string, string> = {
   "DeepSeek UserToken": "DeepSeek UserToken",
   "获取方式：打开 platform.deepseek.com 并登录 → F12 打开开发者工具 → Application(应用) → Local Storage → https://platform.deepseek.com → 找到键 userToken，其值为 JSON 对象，复制其中 token 字段的字符串值。": "How to get: open platform.deepseek.com and sign in → F12 dev tools → Application → Local Storage → https://platform.deepseek.com → find the userToken key; its value is a JSON object — copy the token string field.",
   "OpenCode Go Workspace ID": "OpenCode Go Workspace ID",
-  "OpenCode Auth Cookie": "OpenCode Auth Cookie",
-  "OpenCode Go API Key（可选）": "OpenCode Go API Key (optional)",
-  "获取方式：打开 opencode.ai 后台，按 F12 → Application → Cookies → opencode.ai，复制名为 auth 的 Value；不要带 Cookie: 或 auth= 前缀。": "How to get: open the opencode.ai console, F12 → Application → Cookies → opencode.ai, copy the auth cookie's Value; don't include a Cookie: or auth= prefix.",
-  "官方 /usage 接口上线后使用": "For when the official /usage API ships",
+  "OpenCode Cookie": "OpenCode Cookie",
+  "OpenCode Go API Key": "OpenCode Go API Key",
+  "OpenCode 控制台生成的服务 Key（oc_sk_…），用于读取 5 小时/周/月额度。":
+    "The service key generated in the OpenCode console (oc_sk_…), used for the 5-hour, weekly and monthly quotas.",
+  "填控制台 URL 里的 wrk_...、org_... 或 wk_...。":
+    "Use the wrk_..., org_... or wk_... id from the console URL.",
+  "与 Cookie 一起填写后查询 Zen 余额和请求日志；留空不影响额度与概览统计。":
+    "Fill it together with the cookie to read the Zen balance and request logs; leaving it empty does not affect the quotas or overview stats.",
+  "控制台接口需要 __Host-console_session；旧版 auth Cookie 可保存，但读不到余额与请求日志。":
+    "The console API requires __Host-console_session; a legacy auth cookie can be saved but cannot read the balance or request logs.",
+  "与 Workspace ID 一起填写后查询 Zen 余额和请求日志；留空不影响额度与概览统计。":
+    "Fill it together with the Workspace ID to read the Zen balance and request logs; leaving it empty does not affect the quotas or overview stats.",
+  "Cookie 需包含 auth、__Host-auth 或 __Host-console_session；值里不能含空格或换行，总长不超过 8 KB":
+    "The cookie must contain auth, __Host-auth or __Host-console_session; values cannot contain spaces or line breaks, and the header must stay under 8 KB",
+  "Workspace ID 应以 wrk_、org_ 或 wk_ 开头，只含字母、数字、下划线或连字符":
+    "The Workspace ID should start with wrk_, org_ or wk_ and contain only letters, digits, underscores or hyphens",
   "platform.deepseek.com 登录令牌": "platform.deepseek.com login token",
-  "只粘贴 auth Cookie 的 Value": "Paste only the auth cookie's Value",
   "智谱 Coding Plan API Key": "Zhipu Coding Plan API Key",
   "粘贴 API Key": "Paste API key",
   "获取方式：打开 bigmodel.cn 控制台 → Coding Plan 页 → 「生成 API Key」，复制生成的 API Key 粘贴到上方。":
@@ -612,11 +650,10 @@ export const en: Record<string, string> = {
   // ── 凭据诊断 ──
   "请先填写 API Key": "Fill in the API Key first",
   "请先填写 UserToken": "Fill in the UserToken first",
-  "请先填写 Workspace ID 和 Auth Cookie": "Fill in the Workspace ID and Auth Cookie first",
+  "请先填写 Workspace ID 和 Cookie": "Fill in the Workspace ID and Cookie first",
   "请先填写凭据值": "Fill in the credential value first",
   "网络请求失败：{detail}": "Network request failed: {detail}",
   "连接正常（{latency}ms）": "Connection OK ({latency}ms)",
-  "Cookie 已失效（页面跳转到登录）": "Cookie expired (redirected to login)",
   "凭据无效或已过期（HTTP {status}）": "Invalid or expired credentials (HTTP {status})",
   "接口返回 HTTP {status}": "Endpoint returned HTTP {status}",
 
@@ -628,7 +665,8 @@ export const en: Record<string, string> = {
   "查询智谱 Coding Plan 配额、用量与账户余额": "Zhipu Coding Plan quota, usage and account balance",
   "查询 WorkBuddy 积分余量、套餐明细、连登天数、签到与喵喵旅行": "WorkBuddy credits, package details, daily streak, check-in and buddy travel",
   "查询 DeepSeek 官方 API 余额和可用状态": "Query balance and availability via the official DeepSeek API",
-  "读取 OpenCode Go 订阅的 5 小时/周/月额度": "Read OpenCode Go subscription 5-hour/weekly/monthly quotas",
+  "读取 OpenCode Go 订阅的 5 小时/周/月额度与 Zen 余额":
+    "Read OpenCode Go subscription 5-hour/weekly/monthly quotas and Zen balance",
   "积分明细接口返回 HTTP {status}": "Usage log API returned HTTP {status}",
   "积分明细查询失败：{detail}": "Usage log query failed: {detail}",
   "积分明细返回数据解析失败：{detail}": "Failed to parse the usage log response: {detail}",

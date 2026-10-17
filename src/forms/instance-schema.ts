@@ -75,6 +75,28 @@ function thresholdFieldSpec(spec: ThresholdSpec) {
   });
 }
 
+/**
+ * 成对选填：`requiredWith` 指向的兄弟槽位填了，本槽位就必须填；两边都空则整组免填。
+ * 目前只有 opencode-go：Workspace ID 与 Cookie 成对填才查 Zen 余额。
+ * 放在对象级是因为单格校验看不到兄弟槽位的值。
+ */
+function applyRequiredWith(
+  kind: ProviderKind,
+  credentials: Record<string, string>,
+  ctx: z.RefinementCtx,
+  credentialsLoaded: boolean,
+  qrMethodSelected: boolean,
+) {
+  if (!credentialsLoaded || qrMethodSelected) return;
+  for (const field of providerFormSpecs[kind].fields) {
+    if (!field.requiredWith) continue;
+    const sibling = (credentials[field.requiredWith] ?? "").trim();
+    if (sibling && !(credentials[field.slot] ?? "").trim()) {
+      ctx.addIssue({ code: "custom", path: [field.slot], message: "required" satisfies FormErrorCode });
+    }
+  }
+}
+
 /** qrMethodSelected 仅对 workbuddy 有意义（登录方式选「扫码登录」，三格免必填），其余种类恒 false */
 export function buildInstanceSchema(
   kind: ProviderKind,
@@ -88,13 +110,17 @@ export function buildInstanceSchema(
     autoRefresh: z.boolean(),
     threshold: thresholdFieldSpec(spec.threshold),
     balanceThreshold: thresholdFieldSpec(spec.balanceThreshold ?? spec.threshold),
-    credentials: z.object(
-      Object.fromEntries(
-        spec.fields.map((field) => [
-          field.slot,
-          credentialFieldSpec(field, credentialsLoaded, qrMethodSelected),
-        ]),
-      ),
-    ),
+    credentials: z
+      .object(
+        Object.fromEntries(
+          spec.fields.map((field) => [
+            field.slot,
+            credentialFieldSpec(field, credentialsLoaded, qrMethodSelected),
+          ]),
+        ),
+      )
+      .superRefine((credentials, ctx) => {
+        applyRequiredWith(kind, credentials, ctx, credentialsLoaded, qrMethodSelected);
+      }),
   });
 }

@@ -274,23 +274,22 @@ describe("编辑已有实例：表单值就是事实源", () => {
   });
 
   it("选填格点「清除」后保存：按 null 写回，真的清掉（以前删不掉）", async () => {
-    const h = harness("opencode-go", {
-      workspaceId: "wrk_abcdef",
-      cookie: "abcdefghij",
-      apiKey: "sk-official-key",
+    const h = harness("deepseek", {
+      apiKey: "sk-abcdef123456",
+      userToken: "eyJ0b2tlbiI6Im9rIn0",
     });
     await openEditor(h.instance);
 
-    fireEvent.click(field("apiKey").closest("div")?.querySelector('[aria-label="清除"]') as Element);
-    await waitFor(() => expect(field("apiKey").value).toBe(""));
+    fireEvent.click(field("userToken").closest("div")?.querySelector('[aria-label="清除"]') as Element);
+    await waitFor(() => expect(field("userToken").value).toBe(""));
 
     await save();
 
     await waitFor(() => expect(h.saveCredentials).toHaveBeenCalledTimes(1));
     // 只发变化的那一格：回填进去又原样保存的格子不该被重写
-    expect(h.saveCredentials.mock.calls[0][1]).toEqual({ apiKey: null });
-    expect(h.vault.apiKey).toBeUndefined();
-    expect(h.vault.workspaceId).toBe("wrk_abcdef");
+    expect(h.saveCredentials.mock.calls[0][1]).toEqual({ userToken: null });
+    expect(h.vault.userToken).toBeUndefined();
+    expect(h.vault.apiKey).toBe("sk-abcdef123456");
   });
 });
 
@@ -555,5 +554,99 @@ describe("登录方式互斥（ADR-0035）", () => {
       );
       expect(claim?.[1]).toEqual({ instanceId: h.instance.id, sessionKey: "s2" });
     });
+  });
+});
+
+describe("OpenCode Go 表单（API Key 必填，网页凭据成对选填）", () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  function setupNewInstance() {
+    const addInstance = vi.fn(
+      async (
+        _providerId: ProviderKind,
+        _note: string,
+        _credentials?: Record<string, string>,
+      ) => ({
+        id: "new",
+        providerId: "opencode-go" as const,
+        note: "",
+        sortOrder: 0,
+        pinned: false,
+        autoRefresh: true,
+        threshold: null,
+        balanceThreshold: null,
+        site: "china" as const,
+        tokenAutoRenew: true,
+        createdAt: 0,
+      }),
+    );
+    useAppStore.setState({
+      addInstance,
+      reloadInstances: vi.fn(),
+      refreshInstance: vi.fn(),
+      saveInstanceCredentials: vi.fn(),
+      vaultStatus: { initialized: true, unlocked: true, needsMigration: false, keychainLost: false },
+    });
+    (invoke as unknown as Mock).mockImplementation(async (command: string) => {
+      if (command === "vault_credential_status") return {};
+      if (command === "vault_credentials") return {};
+      return undefined;
+    });
+    return addInstance;
+  }
+
+  async function openNewInstance() {
+    render(<InstanceDialog open onOpenChange={vi.fn()} instance={null} providerId="opencode-go" />);
+    await waitFor(() => expect(document.activeElement?.id).toBe("instance-note"));
+  }
+
+  it("旧版 auth-only Cookie 仍可保存，不被新校验卡住", async () => {
+    const h = harness("opencode-go", {
+      apiKey: "oc_sk_test",
+      workspaceId: "wrk_TEST123",
+      cookie: "Fe26.2**legacy",
+    });
+    await openEditor(h.instance);
+    expect(field("cookie").value).toBe("Fe26.2**legacy");
+
+    await save();
+
+    await waitFor(() => expect(h.updateInstance).toHaveBeenCalledTimes(1));
+    // 原值不动：normalize 后与库里一致，不应被当成「改动」重写
+    expect(h.saveCredentials).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Cookie 需包含/)).toBeNull();
+    expect(screen.queryByText("该项为必填")).toBeNull();
+  });
+
+  it("只填 API Key 可以保存", async () => {
+    const addInstance = setupNewInstance();
+    await openNewInstance();
+
+    fill("apiKey", "oc_sk_test");
+    await save();
+
+    await waitFor(() => expect(addInstance).toHaveBeenCalledTimes(1));
+    expect(addInstance.mock.calls[0][2]).toEqual({ apiKey: "oc_sk_test" });
+    expect(screen.queryByText("该项为必填")).toBeNull();
+  });
+
+  it("填了 Workspace ID 后 Cookie 变为必填", async () => {
+    const addInstance = setupNewInstance();
+    await openNewInstance();
+
+    fill("apiKey", "oc_sk_test");
+    fill("workspaceId", "wrk_TEST123");
+    await save();
+
+    expect(await screen.findByText("该项为必填")).toBeTruthy();
+    expect(addInstance).not.toHaveBeenCalled();
+
+    fill("cookie", "__Host-console_session=test");
+    await save();
+    await waitFor(() => expect(addInstance).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText("该项为必填")).toBeNull();
   });
 });

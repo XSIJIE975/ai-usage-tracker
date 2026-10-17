@@ -407,7 +407,11 @@ export function InstanceDialog({
             // 清三格只发生在扫码认领（claim 在 Rust 内清）与退出扫码登录
           } else {
             for (const field of spec.fields) {
-              const prev = credentials?.[field.slot] ?? null;
+              // 存量库里的值可能是归一化前的旧形态（如裸 auth 值）；比较前按同一规则
+              // 归一化，否则「没动过这一格」也会被当成变化写回一遍
+              const stored = credentials?.[field.slot] ?? null;
+              const prev =
+                stored === null ? null : field.normalize ? field.normalize(stored) : stored;
               if (written[field.slot] !== prev) delta[field.slot] = written[field.slot];
             }
             // 净切到 Cookie 登录（扫码凭据还在库）：保存时清那一族的槽，互斥不变量在此成立
@@ -633,11 +637,21 @@ export function InstanceDialog({
                       ? null
                       : diagnosisFor(kind, field.slot, credentialValues, watchedSite);
                     const slotError = errors.credentials?.[field.slot];
+                    // 成对选填：兄弟槽（如 opencode-go 的 workspaceId/cookie）填了而本格空着，
+                    // 本格转为必填；两格都填后不再画星号
+                    const selfFilled = Boolean((credentialValues[field.slot] ?? "").trim());
+                    const required =
+                      field.required ||
+                      (!selfFilled &&
+                        Boolean(
+                          field.requiredWith &&
+                            (credentialValues[field.requiredWith] ?? "").trim(),
+                        ));
                     const hintId = `slot-${field.slot}-hint`;
                     const optionalHintId = `slot-${field.slot}-optional-hint`;
                     const errorId = `slot-${field.slot}-error`;
                     const describedBy = [
-                      field.optionalHint && !field.required ? optionalHintId : null,
+                      field.optionalHint && !required ? optionalHintId : null,
                       inlineHelp ? hintId : null,
                       slotError ? errorId : null,
                     ]
@@ -648,7 +662,7 @@ export function InstanceDialog({
                         <div className="flex items-center justify-between">
                           <FieldLabel
                             htmlFor={`slot-${field.slot}`}
-                            required={field.required}
+                            required={required}
                           >
                             {t(field.label)}
                           </FieldLabel>
@@ -677,7 +691,7 @@ export function InstanceDialog({
                           )}
                         />
                         <FieldErrorMessage id={errorId} error={slotError} />
-                        {field.optionalHint && !field.required && (
+                        {field.optionalHint && !required && (
                           <FieldDescription id={optionalHintId}>{t(field.optionalHint)}</FieldDescription>
                         )}
                         {inlineHelp && (

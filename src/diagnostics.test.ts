@@ -6,7 +6,14 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 import { invoke } from "@tauri-apps/api/core";
 import type { DiagnosisResult } from "./diagnostics";
-import { describeDiagnosis, testQoderCookie, testWorkbuddyCredential } from "./diagnostics";
+import {
+  describeDiagnosis,
+  testOpenCodeApiKey,
+  testOpenCodeConnection,
+  testQoderCookie,
+  testWorkbuddyCredential,
+} from "./diagnostics";
+import { FORM_ERROR_TEXT } from "./forms/error-codes";
 
 const mockInvoke = vi.mocked(invoke);
 
@@ -55,6 +62,45 @@ describe("testQoderCookie", () => {
     ).toBe(
       "只粘贴该 Cookie 的值：不要带「Cookie:」前缀或键名，也不能包含分号、空格、换行或中文",
     );
+  });
+});
+
+describe("OpenCode Go 凭据探测", () => {
+  it("余额凭据缺一格就不发请求", async () => {
+    const result = await testOpenCodeConnection("", "st_TEST-session-0000");
+    expect(result.code).toBe("missing-workspace-cookie");
+    expect(mockInvoke).not.toHaveBeenCalled();
+  });
+
+  it("余额探测走 billing/status，Cookie + x-org-id，404 映射为工作区找不到", async () => {
+    mockInvoke.mockResolvedValue({ ...ok, ok: false, status: 404, code: "http-error" });
+    const result = await testOpenCodeConnection("wrk_TEST123", "st_TEST-session-0000");
+    expect(result.code).toBe("opencode-workspace-not-found");
+    const [command, args] = mockInvoke.mock.calls[0] as [string, Record<string, unknown>];
+    expect(command).toBe("diagnose_request");
+    expect(args.url).toBe("https://opencode.ai/console/api/billing/status");
+    expect(args.auth).toBe("cookie");
+    expect((args.headers as Record<string, string>)["x-org-id"]).toBe("wrk_TEST123");
+    expect("expectHtml" in args).toBe(false);
+  });
+
+  it("API Key 探测走官方 usage，403 映射为未开通 Go 订阅", async () => {
+    mockInvoke.mockResolvedValue({ ...ok, ok: false, status: 403, code: "http-error" });
+    const result = await testOpenCodeApiKey("oc_sk_test");
+    expect(result.code).toBe("no-go-subscription");
+    const [, args] = mockInvoke.mock.calls[0] as [string, Record<string, unknown>];
+    expect(args.url).toBe("https://opencode.ai/zen/go/v1/usage");
+    expect(args.auth).toBe("bearer");
+  });
+
+  it("Cookie 格式错误的展示文案与保存侧同一条", () => {
+    const t = (text: string) => text;
+    expect(
+      describeDiagnosis(
+        { ok: false, status: 0, latencyMs: 0, code: "opencode-cookie-format" },
+        t,
+      ),
+    ).toBe(FORM_ERROR_TEXT.opencode_cookie_invalid);
   });
 });
 

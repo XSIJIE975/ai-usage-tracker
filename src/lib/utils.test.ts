@@ -7,6 +7,9 @@ import {
   formatRefreshLabel,
   formatReset,
   formatResetAt,
+  hasOpenCodeConsoleSession,
+  isValidOpenCodeCookieHeader,
+  MAX_OPENCODE_COOKIE_HEADER_LENGTH,
   normalizeOpenCodeAuthCookie,
 } from "./utils";
 import { translateText } from "../i18n/translate";
@@ -15,21 +18,88 @@ import { translateText } from "../i18n/translate";
 const tEn = (text: string) => translateText(text, "en");
 
 describe("normalizeOpenCodeAuthCookie", () => {
-  it("keeps a bare cookie value", () => {
-    expect(normalizeOpenCodeAuthCookie(" abc ")).toBe("abc");
+  it("treats a bare value as the console session by default", () => {
+    expect(normalizeOpenCodeAuthCookie(" abc ")).toBe("__Host-console_session=abc");
+    expect(normalizeOpenCodeAuthCookie("st_TEST-session-0000")).toBe(
+      "__Host-console_session=st_TEST-session-0000",
+    );
+    // base64 padding 不应让裸值被误判成整段 Cookie 头
+    expect(normalizeOpenCodeAuthCookie("st_TEST-session-0000==")).toBe(
+      "__Host-console_session=st_TEST-session-0000==",
+    );
+    expect(normalizeOpenCodeAuthCookie("Fe26.2**abc==")).toBe("auth=Fe26.2**abc==");
   });
 
-  it("strips an auth= prefix", () => {
-    expect(normalizeOpenCodeAuthCookie("auth=abc")).toBe("abc");
-    expect(normalizeOpenCodeAuthCookie("AUTH=abc")).toBe("abc");
+  it("treats a bare Iron Session value as the legacy auth cookie", () => {
+    expect(normalizeOpenCodeAuthCookie("Fe26.2**abc")).toBe("auth=Fe26.2**abc");
+  });
+
+  it("keeps auth= with a canonical name", () => {
+    expect(normalizeOpenCodeAuthCookie("auth=abc")).toBe("auth=abc");
+    expect(normalizeOpenCodeAuthCookie("AUTH=abc")).toBe("auth=abc");
   });
 
   it("strips a Cookie header prefix", () => {
-    expect(normalizeOpenCodeAuthCookie("Cookie: auth=abc")).toBe("abc");
+    expect(normalizeOpenCodeAuthCookie("Cookie: auth=abc")).toBe("auth=abc");
   });
 
-  it("extracts the auth cookie from a full cookie list", () => {
-    expect(normalizeOpenCodeAuthCookie("foo=1; auth=abc; bar=2")).toBe("abc");
+  it("keeps only OpenCode's own cookies from a full header", () => {
+    expect(normalizeOpenCodeAuthCookie("foo=1; auth=abc; bar=2")).toBe("auth=abc");
+    expect(
+      normalizeOpenCodeAuthCookie(
+        "auth=abc; __Host-console_session=def; oc_locale=zh",
+      ),
+    ).toBe("auth=abc; __Host-console_session=def");
+    expect(normalizeOpenCodeAuthCookie("__Host-console_session=def")).toBe(
+      "__Host-console_session=def",
+    );
+  });
+
+  it("rejects a header without a recognized cookie or with header injection", () => {
+    expect(normalizeOpenCodeAuthCookie("foo=1")).toBe("");
+    expect(normalizeOpenCodeAuthCookie("auth=abc\r\nX-Injected: 1")).toBe("");
+    expect(normalizeOpenCodeAuthCookie("auth=abc def")).toBe("");
+    // Rust 侧对空值直接报错，TS 不能放行
+    expect(normalizeOpenCodeAuthCookie("auth=; __Host-console_session=def")).toBe("");
+    expect(normalizeOpenCodeAuthCookie("__Host-console_session=")).toBe("");
+    // 与 Rust 的 8 KiB 上限对齐
+    expect(
+      normalizeOpenCodeAuthCookie(`auth=${"a".repeat(MAX_OPENCODE_COOKIE_HEADER_LENGTH)}`),
+    ).toBe("");
+  });
+});
+
+describe("isValidOpenCodeCookieHeader", () => {
+  it("accepts any recognized cookie, including the legacy auth value", () => {
+    expect(isValidOpenCodeCookieHeader("__Host-console_session=def")).toBe(true);
+    expect(isValidOpenCodeCookieHeader("auth=abc; __Host-console_session=def")).toBe(true);
+    // 旧实例只存了 auth：仍要能保存（余额/日志另由 hasOpenCodeConsoleSession 判定）
+    expect(isValidOpenCodeCookieHeader("auth=abc")).toBe(true);
+    expect(isValidOpenCodeCookieHeader("__Host-auth=abc")).toBe(true);
+  });
+
+  it("rejects empty, unknown-only, injected, or overlong headers", () => {
+    expect(isValidOpenCodeCookieHeader("")).toBe(false);
+    expect(isValidOpenCodeCookieHeader("foo=1")).toBe(false);
+    expect(isValidOpenCodeCookieHeader("__Host-console_session=def\r\nX-Injected: 1")).toBe(false);
+    expect(isValidOpenCodeCookieHeader("__Host-console_session=")).toBe(false);
+    expect(isValidOpenCodeCookieHeader("auth=abc def")).toBe(false);
+    // 任一可识别键为空即整条非法（与 Rust 同口径，不能靠另一个好键放行）
+    expect(isValidOpenCodeCookieHeader("auth=; __Host-console_session=def")).toBe(false);
+    expect(isValidOpenCodeCookieHeader("auth=abc; __Host-console_session=")).toBe(false);
+    expect(
+      isValidOpenCodeCookieHeader(`auth=${"a".repeat(MAX_OPENCODE_COOKIE_HEADER_LENGTH)}`),
+    ).toBe(false);
+  });
+});
+
+describe("hasOpenCodeConsoleSession", () => {
+  it("only reports true when __Host-console_session is present and non-empty", () => {
+    expect(hasOpenCodeConsoleSession("__Host-console_session=def")).toBe(true);
+    expect(hasOpenCodeConsoleSession("auth=abc; __Host-console_session=def")).toBe(true);
+    expect(hasOpenCodeConsoleSession("auth=abc")).toBe(false);
+    expect(hasOpenCodeConsoleSession("__Host-console_session=")).toBe(false);
+    expect(hasOpenCodeConsoleSession("")).toBe(false);
   });
 });
 

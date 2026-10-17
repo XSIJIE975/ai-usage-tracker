@@ -20,6 +20,10 @@ export const FORM_ERROR_TEXT = {
   // 键写在字段的 placeholder 与取凭据指引里，错误文案里逐家复述就会三份漂移，还会在探测
   // 路径上把别家的键名说给用户（diagnostics 的 invalid-credential-format 用同一句）
   cookie_value: "只粘贴该 Cookie 的值：不要带「Cookie:」前缀或键名，也不能包含分号、空格、换行或中文",
+  opencode_cookie_invalid:
+    "Cookie 需包含 auth、__Host-auth 或 __Host-console_session；值里不能含空格或换行，总长不超过 8 KB",
+  opencode_workspace_id:
+    "Workspace ID 应以 wrk_、org_ 或 wk_ 开头，只含字母、数字、下划线或连字符",
   workbuddy_ua_value:
     "只粘贴 User-Agent 的值：不要带「User-Agent:」前缀，也不能包含换行或中文",
 } as const;

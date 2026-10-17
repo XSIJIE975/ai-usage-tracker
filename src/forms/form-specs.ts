@@ -1,4 +1,4 @@
-import { normalizeOpenCodeAuthCookie } from "../lib/utils";
+import { normalizeOpenCodeAuthCookie, isValidOpenCodeCookieHeader } from "../lib/utils";
 import type { ProviderKind, ProviderSite } from "../types/ipc";
 import type { FormErrorCode } from "./error-codes";
 import { isValidSessionCookieValue } from "../providers/qoder";
@@ -34,6 +34,11 @@ export interface CredentialFieldSpec {
   help?: string;
   /** 该槽位是否为该供应商正常出数所必需 */
   required: boolean;
+  /**
+   * 成对选填：同组另一个槽位（如 opencode-go 的 workspaceId/cookie）填了，本槽位就必填。
+   * 必填判定因此从单格挪到 instance-schema 的对象级规则，本字段只负责让单格检查让位。
+   */
+  requiredWith?: string;
   /** 展示前归一化（auth cookie 兼容多种粘贴格式） */
   normalize?: (value: string) => string;
   /** 格式校验：返回错误码，通过返回 null。只允许引用供应商模块已有的谓词 */
@@ -80,26 +85,35 @@ export const providerFormSpecs: Record<ProviderKind, ProviderFormSpec> = {
   "opencode-go": {
     fields: [
       {
+        slot: "apiKey",
+        label: "OpenCode Go API Key",
+        placeholder: "oc_sk_...",
+        help: "OpenCode 控制台生成的服务 Key（oc_sk_…），用于读取 5 小时/周/月额度。",
+        required: true, // opencode-go.ts：缺 Key 即 needs_config
+      },
+      {
         slot: "workspaceId",
         label: "OpenCode Go Workspace ID",
         placeholder: "wrk_...",
-        required: true, // opencode-go.ts:123 与 cookie 缺一即 needs_config
+        // 选填：与 Cookie 成对填写才查询 Zen 余额
+        required: false,
+        requiredWith: "cookie",
+        optionalHint: "与 Cookie 一起填写后查询 Zen 余额和请求日志；留空不影响额度与概览统计。",
+        help: "填控制台 URL 里的 wrk_...、org_... 或 wk_...。",
+        validate: (value) =>
+          /^(?:wrk|org|wk)_[A-Za-z0-9_-]+$/.test(value) ? null : "opencode_workspace_id",
       },
       {
         slot: "cookie",
-        label: "OpenCode Auth Cookie",
-        placeholder: "只粘贴 auth Cookie 的 Value",
-        help: "获取方式：打开 opencode.ai 后台，按 F12 → Application → Cookies → opencode.ai，复制名为 auth 的 Value；不要带 Cookie: 或 auth= 前缀。",
-        required: true,
-        normalize: normalizeOpenCodeAuthCookie,
-      },
-      {
-        slot: "apiKey",
-        label: "OpenCode Go API Key（可选）",
-        placeholder: "官方 /usage 接口上线后使用",
-        // opencode-go.ts:134 填了才走官方 /usage，否则回落 HTML 抓取
+        label: "OpenCode Cookie",
+        placeholder: "__Host-console_session=…",
+        // 选填：与 Workspace ID 成对填写才查询 Zen 余额
         required: false,
-        optionalHint: "留空则按页面抓取用量；填了才走官方 /usage 接口。",
+        requiredWith: "workspaceId",
+        optionalHint: "与 Workspace ID 一起填写后查询 Zen 余额和请求日志；留空不影响额度与概览统计。",
+        help: "控制台接口需要 __Host-console_session；旧版 auth Cookie 可保存，但读不到余额与请求日志。",
+        normalize: normalizeOpenCodeAuthCookie,
+        validate: (value) => (isValidOpenCodeCookieHeader(value) ? null : "opencode_cookie_invalid"),
       },
     ],
     threshold: { label: "本月额度告警阈值（%）", hint: "本月额度已用达到该百分比时发送系统通知；留空不告警。", min: 1, max: 100 },

@@ -13,7 +13,7 @@ const KINDS = Object.keys(providerFormSpecs) as ProviderKind[];
  */
 const REQUIRED_SLOTS: Record<ProviderKind, string[]> = {
   deepseek: ["apiKey"], // deepseek.ts:33
-  "opencode-go": ["workspaceId", "cookie"], // opencode-go.ts:123
+  "opencode-go": ["apiKey"], // opencode-go.ts：缺 Key 即 needs_config；workspace/cookie 选填
   glm: ["planKey"], // glm.ts:387
   workbuddy: ["session", "session2", "userAgent"], // workbuddy.ts:593
   qoder: ["cookie"], // qoder.ts:283
@@ -111,6 +111,17 @@ describe("必填矩阵", () => {
       expect(credentialErrors(kind, filled), kind).toEqual({});
     }
   });
+
+  it("opencode-go：API Key 必填，网页两格成对选填", () => {
+    expect(credentialErrors("opencode-go", {})).toEqual({ apiKey: ["required"] });
+    expect(credentialErrors("opencode-go", { apiKey: VALID.apiKey })).toEqual({});
+    expect(
+      credentialErrors("opencode-go", { apiKey: VALID.apiKey, workspaceId: "wrk_1" }),
+    ).toEqual({ cookie: ["required"] });
+    expect(
+      credentialErrors("opencode-go", { apiKey: VALID.apiKey, cookie: "__Host-console_session=abc" }),
+    ).toEqual({ workspaceId: ["required"] });
+  });
 });
 
 describe("空值语义：表单值就是事实源", () => {
@@ -126,7 +137,13 @@ describe("空值语义：表单值就是事实源", () => {
 
   it("选填槽清空合法（保存时按 null 写回，即真的删掉）", () => {
     expect(credentialErrors("deepseek", { apiKey: VALID.apiKey })).toEqual({});
-    expect(credentialErrors("opencode-go", { workspaceId: "wrk_1", cookie: "abcdefgh" })).toEqual({});
+    expect(
+      credentialErrors("opencode-go", {
+        apiKey: VALID.apiKey,
+        workspaceId: "wrk_1",
+        cookie: "abcdefgh",
+      }),
+    ).toEqual({});
   });
 
   it("凭据还没从库里读出来时不按必填拦：那时空格子代表「没读到」，不是用户清空", () => {
@@ -149,6 +166,15 @@ describe("格式校验：复用供应商模块的同口径谓词", () => {
     const errors = credentialErrors("workbuddy", { session: "a b", userAgent: "a\nb" });
     expect(errors.session).toContain("cookie_value");
     expect(errors.userAgent).toContain("workbuddy_ua_value");
+  });
+
+  it("opencode-go 拒不像工作区 ID 的值（避免把整条 URL 当 x-org-id 发出去）", () => {
+    const errors = credentialErrors("opencode-go", {
+      apiKey: VALID.apiKey,
+      workspaceId: "https://opencode.ai/workspace/wrk_1",
+      cookie: "__Host-console_session=abc",
+    });
+    expect(errors.workspaceId).toContain("opencode_workspace_id");
   });
 });
 

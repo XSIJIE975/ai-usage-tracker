@@ -9,8 +9,9 @@ describe("classifyError", () => {
         { status: 401, detail: '{"message":"Authentication Fails"}' },
       ),
     ).toBe("auth");
-    expect(classifyError("OpenCode Go 后台返回 HTTP {status}，请检查 Cookie 是否过期", { status: 502 })).toBe("auth");
-    expect(classifyError("OpenCode Go 后台返回登录/挑战页，请重新复制 auth Cookie")).toBe("auth");
+    expect(classifyError("OpenCode Go API Key 无效或已过期")).toBe("auth");
+    expect(classifyError("OpenCode 控制台返回 HTTP {status}", { status: 401 })).toBe("auth");
+    expect(classifyError("该 API Key 未开通 OpenCode Go 订阅")).toBe("auth");
     expect(
       classifyError("Coding Plan 配额查询失败：{detail}", { detail: "code=403 msg=未开通 Coding Plan" }),
     ).toBe("auth");
@@ -23,8 +24,9 @@ describe("classifyError", () => {
   });
 
   it("其余归为通用失败（状态码在 params 中也参与匹配）", () => {
-    expect(classifyError("未能从 OpenCode Go 后台解析额度窗口")).toBe("generic");
+    expect(classifyError("OpenCode Go 用量接口返回结构无法解析")).toBe("generic");
     expect(classifyError("DeepSeek 暂无余额信息")).toBe("generic");
+    expect(classifyError("参数无效")).toBe("generic");
     expect(classifyError("Coding Plan 配额接口返回 HTTP {status}", { status: 500 })).toBe("generic");
     expect(classifyError("DeepSeek 余额接口返回 HTTP {status}{detail}", { status: 401 })).toBe("auth");
   });
