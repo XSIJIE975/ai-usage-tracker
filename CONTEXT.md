@@ -42,7 +42,17 @@ _Avoid_：余额（单独说「余额」时分不清指账户余额还是配额�
 
 ## OpenCode Go
 
-第二个受支持的供应商（provider 标识 `opencode-go`），基于 opencode.ai 的用量服务。凭据为 Workspace ID 与 Auth Cookie（两者必填），可选配 API Key 供官方 usage 接口上线后使用。凭据在卡片触发的实例配置弹窗里填，不在设置抽屉——设置页原有的供应商页签已由 ADR-0011 撤除。
+第二个受支持的供应商（provider 标识 `opencode-go`），基于 opencode.ai 的用量服务。凭据分两层：API Key 必填，用于读取 5 小时/周/月三个额度窗口与统计概览；Workspace ID 与 OpenCode Cookie 头成对选填，填了才查询 Zen 余额与请求日志。凭据在卡片触发的实例配置弹窗里填，不在设置抽屉——设置页原有的供应商页签已由 ADR-0011 撤除。
+
+## OpenCode 控制台
+
+opencode.ai 的账号与订阅管理界面（`/console`）。三个额度窗口由官方 API Key 的用量接口提供；控制台 JSON 提供 Zen 余额、按日/按模型的用量统计与请求日志——概览统计走 API Key，余额与请求日志走控制台登录态，不再解析旧工作区页面。与「OpenCode Go」是数据源与供应商的关系，不是另一个供应商。
+_Avoid_：后台（太泛，DeepSeek/智谱也有后台）、控制台页面（它现在给的是 JSON 而不是可抓取的页面）
+
+## OpenCode Cookie 头
+
+用户从 opencode.ai 复制的一整段登录态 Cookie，通常包含 `auth` 与 `__Host-console_session` 两个键。程序只转发 `auth`、`__Host-auth`、`__Host-console_session`，其余分析、语言等 Cookie 丢弃；Zen 余额与请求日志只认 `__Host-console_session`。
+_Avoid_：Auth Cookie（只说了其中一个键，不足以覆盖控制台余额与日志）
 
 ## 智谱 GLM
 
@@ -221,7 +231,7 @@ _Avoid_：托盘面板、迷你面板（统一叫「速览面板」）；勿与�
 
 ## 统计抽屉
 
-卡片「查看统计」打开的右侧详情弹层（`views/stats/StatsSheet`），按供应商挂载各自的统计模块，除小米 MiMo 外五家都有（分站点经营的供应商在标题上带站点徽标）。时间档位全供应商共用一组，但可选上限与默认档由 `statsRangePolicy(kind)` 按各家实际能力声明——Qoder 可选到一年，其余 30 天，拒收文案会说明这个上限是官方接口给的还是本工具定的；OpenCode Go 按自然月取数，不走这套档位。抽屉按需取数，与总览的快照刷新各走各的。
+卡片「查看统计」打开的右侧详情弹层（`views/stats/StatsSheet`），按供应商挂载各自的统计模块，除小米 MiMo 外五家都有（分站点经营的供应商在标题上带站点徽标）。时间档位全供应商共用一组，但可选上限与默认档由 `statsRangePolicy(kind)` 按各家实际能力声明——Qoder 可选到一年，其余 30 天，拒收文案会说明这个上限是官方接口给的还是本工具定的；OpenCode Go 用自己的 24 小时 / 7 天 / 30 天档位（控制台统计接口）。抽屉按需取数，与总览的快照刷新各走各的。
 _Avoid_：统计页（它曾是顶层页签，现已下沉为抽屉）、报表（不导出文件）
 
 ## 设置抽屉
@@ -307,7 +317,7 @@ _Avoid_：主密钥、机器密钥、机器绑定密钥（它不是从机器派�
 ## 表单校验规格
 
 `src/forms/form-specs.ts` 一张表定下每个供应商该填哪些凭据格、哪格必填、贴错了怎么提示、选填留空有什么后果、分站点去哪取凭据；`instance-schema.ts` 管跨字段规则（备注长度、阈值取值范围）。校验只产出**错误码**，文案推迟到渲染时翻译。必填性与各 provider 判定「待配置」的判据由测试钉住一致，两处不许各说各话（见 ADR-0033）。
-_Avoid_：把校验当成「帮用户把凭据修好」——值只判定不加工（唯一例外是 OpenCode Go 的 `auth` Cookie 仍保留取值兼容）；静默 clamp 超范围的阈值（旧行为，已改为报错）
+_Avoid_：把校验当成「帮用户把凭据修好」——值只判定不加工（唯一例外是 OpenCode Go 的 Cookie 头仍保留取值兼容：裸 `auth` 值补成 `auth=…`，整段头只留 OpenCode 认的键）；静默 clamp 超范围的阈值（旧行为，已改为报错）
 
 ## 凭据目的地白名单
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import type { StatsResult } from "../../providers/stats-result";
 import type { UsageCache } from "../../stats/usage-cache";
 import type { StatsAsyncState } from "./StatsStateCard";
@@ -39,17 +39,27 @@ export function useStatsFetch<T>(
   loaderRef.current = loader;
   // 记录上一次的 state，用于判断是否为"已有数据的刷新"
   const prevStateRef = useRef<StatsAsyncState<T>>({ kind: "loading" });
+  // 区间/实例切换会换 cacheKey：那不是刷新，旧数据不能挂在新标签下
+  const prevKeyRef = useRef<string | null>(null);
 
-  useEffect(() => {
+  // 绘制前处理：key 变化时先回到 loading，避免旧区间数字先闪一帧
+  useLayoutEffect(() => {
     if (cacheKey === null) return;
     const requestId = ++requestIdRef.current;
 
-    const hadData = prevStateRef.current.kind === "ready";
+    const keyChanged = prevKeyRef.current !== cacheKey;
+    prevKeyRef.current = cacheKey;
+    if (keyChanged) {
+      // 旧 key 的 ready 不能被新 key 的刷新误判成「已有数据」
+      prevStateRef.current = { kind: "loading" };
+    }
+    const hadData = !keyChanged && prevStateRef.current.kind === "ready";
     if (hadData) {
-      // 刷新：保留旧数据，标记 refreshing
+      // 同 key 刷新：保留旧数据，标记 refreshing
       setIsRefreshing(true);
     } else {
-      // 首次加载或从错误/配置态恢复：全屏 loading
+      // 首次加载、切换区间/实例，或从错误/配置态恢复：全屏 loading
+      setIsRefreshing(false);
       setState({ kind: "loading" });
     }
 

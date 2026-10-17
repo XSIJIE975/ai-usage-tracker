@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer } from "react";
+import { useCallback, useLayoutEffect, useReducer } from "react";
 
 /**
  * 图表图例状态（用于替代 ECharts 内置图例的自定义图例）。
@@ -87,7 +87,9 @@ export function useChartLegend(allNames: string[]) {
   const namesKey = allNames.join("\0");
   const [state, dispatch] = useReducer(legendReducer, allNames, initLegendState);
 
-  useEffect(() => {
+  // 系列名变化（如成本/Tokens 切换）必须在绘制前重置选中集，
+  // 否则首帧用旧名字过滤新系列，图表会闪一下空白
+  useLayoutEffect(() => {
     dispatch({ type: "reset", names: allNames });
   }, [namesKey]);
 

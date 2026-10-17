@@ -18,11 +18,9 @@ describe("statsRangePolicy", () => {
     }
   });
 
-  it("WorkBuddy / OpenCode Go 的 30 天是沿用值而非实测上限，成因必须写「本工具的上限」", () => {
-    for (const kind of ["workbuddy", "opencode-go"] as const) {
-      expect(statsRangePolicy(kind).maxCustomDays).toBe(30);
-      expect(statsRangePolicy(kind).limitNote).toBe("本工具的上限");
-    }
+  it("WorkBuddy 的 30 天是沿用值而非实测上限，成因必须写「本工具的上限」", () => {
+    expect(statsRangePolicy("workbuddy").maxCustomDays).toBe(30);
+    expect(statsRangePolicy("workbuddy").limitNote).toBe("本工具的上限");
   });
 
   it("qoder 放开到一年，默认近 30 天（histories 实测任意区间，ADR-0030）", () => {

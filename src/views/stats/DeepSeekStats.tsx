@@ -225,7 +225,13 @@ export function DeepSeekStats({ instance }: { instance: ProviderInstance }) {
   }
 
   if (state.kind !== "ready") {
-    return <StatsStateCard state={state} onRetry={refresh} />;
+    // 切换区间会短暂回到 loading：工具条必须留在原地，否则范围选择器/自定义日期会卸载
+    return (
+      <div className="space-y-4">
+        {filterToolbar}
+        <StatsStateCard state={state} onRetry={refresh} />
+      </div>
+    );
   }
 
   return (

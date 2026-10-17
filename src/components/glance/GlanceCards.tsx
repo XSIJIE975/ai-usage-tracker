@@ -31,7 +31,6 @@ function GlanceCard({
   translate: Translate;
 }) {
   const percent = item.primaryPercent;
-  const detail = windowDetail(item);
   const resetText = item.primaryResetsAt
     ? formatReset(item.primaryResetsAt, Date.now(), translate)
     : null;
@@ -45,7 +44,7 @@ function GlanceCard({
       // 级联进场：形态切换/范围变化时卡片依次上浮淡入（首挂载才动画，数值更新不重放）
       style={{ animationDelay: `${Math.min(index * 24, 180)}ms` }}
     >
-      <div className="flex items-center gap-3">
+      <div className="flex items-start gap-3">
         {percent !== null ? (
           <UsageRing percent={percent} alert={item.alertActive} />
         ) : item.balanceText ? (
@@ -74,27 +73,43 @@ function GlanceCard({
               <LoaderCircle className="h-3.5 w-3.5 shrink-0 animate-spin text-fg-muted" />
             )}
           </div>
-          <div className="mt-0.5 truncate text-[11px] leading-4 text-fg-muted">
-            {percent !== null
-              ? detail || item.primaryLabel || translate("暂无数据")
-              : item.balanceText ?? <StatusText item={item} translate={translate} />}
-          </div>
+          {/* 窗口逐行列出：面板只有 320px 宽，英文标签并排一行必被截断 */}
+          {percent !== null ? (
+            <div className="mt-1 space-y-0.5 text-[11px] leading-4 text-fg-muted">
+              {item.windows.map((window, windowIndex) => (
+                <div key={`${window.label}:${windowIndex}`} className="truncate">
+                  {window.label} {Math.round(window.percent)}%
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="mt-0.5 truncate text-[11px] leading-4 text-fg-muted">
+              {item.balanceText ?? <StatusText item={item} translate={translate} />}
+            </div>
+          )}
+          {(resetText || (percent !== null && item.balanceText)) && (
+            <div
+              className={cn(
+                "mt-1 flex items-center gap-2 text-[11px] leading-4 text-fg-muted",
+                percent !== null && item.balanceText && resetText
+                  ? "justify-between"
+                  : percent !== null && item.balanceText
+                    ? "justify-start"
+                    : "justify-end",
+              )}
+            >
+              {percent !== null && item.balanceText ? (
+                <span className="tnum min-w-0 truncate">
+                  {translate("账户余额")} {item.balanceText}
+                </span>
+              ) : null}
+              {resetText ? <span className="tnum shrink-0">{resetText}</span> : null}
+            </div>
+          )}
         </div>
       </div>
-      {(resetText || (percent !== null && item.balanceText)) && (
-        <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-fg-muted">
-          <span className="tnum min-w-0 truncate">
-            {percent !== null && item.balanceText ? `${translate("账户余额")} ${item.balanceText}` : ""}
-          </span>
-          {resetText && <span className="tnum shrink-0">{resetText}</span>}
-        </div>
-      )}
     </div>
   );
-}
-
-function windowDetail(item: GlanceInstance): string {
-  return item.windows.map((window) => `${window.label} ${Math.round(window.percent)}%`).join(" · ");
 }
 
 /**

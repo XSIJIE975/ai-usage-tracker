@@ -37,7 +37,7 @@ pub fn credential_label(kind: &str, slot: &str) -> Option<&'static str> {
         ("deepseek", "apiKey") => Some("DeepSeek API Key"),
         ("deepseek", "userToken") => Some("DeepSeek UserToken"),
         ("opencode-go", "workspaceId") => Some("OpenCode Go Workspace ID"),
-        ("opencode-go", "cookie") => Some("OpenCode Auth Cookie"),
+        ("opencode-go", "cookie") => Some("OpenCode Cookie"),
         ("opencode-go", "apiKey") => Some("OpenCode Go API Key"),
         ("glm", "planKey") => Some("智谱 Coding Plan API Key"),
         ("workbuddy", "session") => Some("WorkBuddy session"),

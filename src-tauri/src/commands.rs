@@ -280,30 +280,81 @@ fn validate_qoder_session_value(value: &str) -> Result<(), ()> {
     Ok(())
 }
 
-fn normalize_auth_cookie(value: &str) -> String {
+/// OpenCode 认的 Cookie 键：auth 覆盖旧页面与 /_server，__Host-console_session 覆盖新版控制台。
+const OPENCODE_COOKIE_NAMES: [&str; 3] = ["auth", "__Host-auth", "__Host-console_session"];
+/// 整段 Cookie 头的长度上限：正常登录态只有几百字节，超长基本是误贴了别的内容。
+const MAX_OPENCODE_COOKIE_HEADER_LENGTH: usize = 8_192;
+
+fn opencode_cookie_name(name: &str) -> Option<&'static str> {
+    OPENCODE_COOKIE_NAMES
+        .iter()
+        .copied()
+        .find(|allowed| allowed.eq_ignore_ascii_case(name))
+}
+
+/// 把用户粘贴的 OpenCode Cookie 输入归一化成可发送的 Cookie 头。
+///
+/// 兼容两种形态：裸值（没有 `=`）与整段 Cookie 头。裸值里 Iron Session 的 auth 值以
+/// `Fe26.2` 开头，按 `auth=<value>` 处理；其余（控制台会话 `st_…`）按
+/// `__Host-console_session=<value>` 处理。整段头只保留 auth / __Host-auth /
+/// __Host-console_session，其余分析、语言等键丢弃。含换行或非法值字符一律拒绝，
+/// 避免头注入。
+fn opencode_cookie_header(value: &str) -> Result<String, String> {
     let mut cookie = value.trim();
     if cookie.to_ascii_lowercase().starts_with("cookie:") {
         cookie = cookie["cookie:".len()..].trim();
     }
-
-    if cookie.contains(';') {
-        for part in cookie.split(';') {
-            if let Some((name, rest)) = part.trim().split_once('=') {
-                if name.trim().eq_ignore_ascii_case("auth") {
-                    return rest.trim().to_string();
-                }
-            }
+    if cookie.is_empty() {
+        return Err("缺少 OpenCode Cookie".to_string());
+    }
+    if cookie.len() > MAX_OPENCODE_COOKIE_HEADER_LENGTH {
+        return Err("OpenCode Cookie 过长，请确认只粘贴了 Cookie 头".to_string());
+    }
+    // 裸值判定：没有 `=`，或 st_/Fe26.2 前缀且 `=` 只作为 base64 padding 出现在末尾。
+    // 不能只按「有没有 =」判断——真实裸值可能带 `==` 填充。
+    let first_eq = cookie.find('=');
+    let bare_with_padding = first_eq.is_some_and(|idx| {
+        !cookie.contains(';')
+            && (cookie.starts_with("Fe26.2") || cookie.starts_with("st_"))
+            && cookie[idx..].chars().all(|c| c == '=')
+    });
+    if first_eq.is_none() || bare_with_padding {
+        if !instances::is_cookie_value_chars(cookie) {
+            return Err(
+                "OpenCode Cookie 值包含非法字符（不能带空格、引号、分号或控制符）".to_string(),
+            );
         }
+        let name = if cookie.starts_with("Fe26.2") {
+            "auth"
+        } else {
+            "__Host-console_session"
+        };
+        return Ok(format!("{name}={cookie}"));
     }
 
-    if cookie
-        .get(..5)
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("auth="))
-    {
-        return cookie[5..].trim().to_string();
+    let mut parts: Vec<String> = Vec::new();
+    let mut seen: Vec<&'static str> = Vec::new();
+    for part in cookie.split(';') {
+        let Some((raw_name, raw_value)) = part.trim().split_once('=') else {
+            continue;
+        };
+        let Some(name) = opencode_cookie_name(raw_name.trim()) else {
+            continue;
+        };
+        let value = raw_value.trim();
+        if value.is_empty() || !instances::is_cookie_value_chars(value) {
+            return Err(format!("OpenCode Cookie 的 {name} 值包含非法字符"));
+        }
+        if seen.contains(&name) {
+            continue;
+        }
+        seen.push(name);
+        parts.push(format!("{name}={value}"));
     }
-
-    cookie.to_string()
+    if parts.is_empty() {
+        return Err("Cookie 里没有 auth 或 __Host-console_session".to_string());
+    }
+    Ok(parts.join("; "))
 }
 
 #[tauri::command]
@@ -633,7 +684,7 @@ pub struct MimoCookieInput {
 }
 
 /// 用"刚输入、尚未保存"的凭据值发起一次真实探测请求，验证连通性。
-/// auth: "bearer"（携带 credential 作为 Bearer token）| "cookie"（auth=<normalized credential>）
+/// auth: "bearer"（携带 credential 作为 Bearer token）| "cookie"（credential 是归一化后的整段 Cookie 头）
 /// session_triple：WorkBuddy 的 session / session_2 / 登录 UA 三个值——走与 provider_request
 /// 的 session_cookie 通道同一个拼装与校验入口；给出时忽略 auth/credential
 /// mimo_pair：MiMo 的 serviceToken / userId 两个值，同走 instances::mimo_cookies
@@ -642,7 +693,6 @@ pub async fn diagnose_request(
     url: String,
     auth: Option<String>,
     credential: Option<String>,
-    expect_html: Option<bool>,
     session_triple: Option<WorkbuddySessionInput>,
     mimo_pair: Option<MimoCookieInput>,
     // 随探测附加的静态协议头（如 Qoder 的 Origin/Referer/Bx-V、WorkBuddy 的 x-client-platform），
@@ -707,8 +757,19 @@ pub async fn diagnose_request(
                     Some(cookie) => cookie,
                     None => return Ok(DiagnosisResult::new(false, 0, 0, "missing-credential", None)),
                 };
-                let normalized = normalize_auth_cookie(&cookie);
-                request = request.header("Cookie", format!("auth={normalized}"));
+                let header = match opencode_cookie_header(&cookie) {
+                    Ok(header) => header,
+                    Err(_) => {
+                        return Ok(DiagnosisResult::new(
+                            false,
+                            0,
+                            0,
+                            "opencode-cookie-format",
+                            None,
+                        ))
+                    }
+                };
+                request = request.header("Cookie", header);
                 request = request.header(
                     "User-Agent",
                     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Gecko/20100101 Firefox/148.0",
@@ -759,14 +820,9 @@ pub async fn diagnose_request(
     };
 
     let status = response.status().as_u16();
-    let body = response.text().await.unwrap_or_default();
 
     let (ok, code) = if status == 200 {
-        if expect_html == Some(true) && body.contains("openauth") {
-            (false, "login-redirect")
-        } else {
-            (true, "ok")
-        }
+        (true, "ok")
     } else if status == 401 || status == 403 {
         (false, "invalid-credentials")
     } else {
@@ -1004,9 +1060,9 @@ pub async fn provider_request(
         }
         Some("cookie") if kind == "opencode-go" => {
             let cookie = instances::instance_credential(&instance_credentials, "cookie")
-                .ok_or_else(|| "缺少 OpenCode Auth Cookie".to_string())?;
-            let normalized = normalize_auth_cookie(cookie);
-            headers.insert("Cookie".to_string(), format!("auth={normalized}"));
+                .ok_or_else(|| "缺少 OpenCode Cookie".to_string())?;
+            let header = opencode_cookie_header(cookie)?;
+            headers.insert("Cookie".to_string(), header);
             headers
                 .entry("User-Agent".to_string())
                 .or_insert_with(|| {
@@ -2575,12 +2631,60 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_opencode_go_auth_cookie_inputs() {
-        assert_eq!(normalize_auth_cookie(" abc "), "abc");
-        assert_eq!(normalize_auth_cookie("auth=abc"), "abc");
-        assert_eq!(normalize_auth_cookie("AUTH=abc"), "abc");
-        assert_eq!(normalize_auth_cookie("Cookie: auth=abc"), "abc");
-        assert_eq!(normalize_auth_cookie("foo=1; auth=abc; bar=2"), "abc");
+    fn normalizes_opencode_go_cookie_inputs() {
+        assert_eq!(
+            opencode_cookie_header(" abc ").unwrap(),
+            "__Host-console_session=abc"
+        );
+        assert_eq!(
+            opencode_cookie_header("st_TEST-session-0000").unwrap(),
+            "__Host-console_session=st_TEST-session-0000"
+        );
+        // base64 padding 不应让裸值被误判成整段 Cookie 头
+        assert_eq!(
+            opencode_cookie_header("st_TEST-session-0000==").unwrap(),
+            "__Host-console_session=st_TEST-session-0000=="
+        );
+        assert_eq!(
+            opencode_cookie_header("Fe26.2**abc==").unwrap(),
+            "auth=Fe26.2**abc=="
+        );
+        assert_eq!(
+            opencode_cookie_header("Fe26.2**abc").unwrap(),
+            "auth=Fe26.2**abc"
+        );
+        assert_eq!(opencode_cookie_header("auth=abc").unwrap(), "auth=abc");
+        assert_eq!(opencode_cookie_header("AUTH=abc").unwrap(), "auth=abc");
+        assert_eq!(opencode_cookie_header("Cookie: auth=abc").unwrap(), "auth=abc");
+        assert_eq!(
+            opencode_cookie_header("foo=1; auth=abc; bar=2").unwrap(),
+            "auth=abc"
+        );
+        assert_eq!(
+            opencode_cookie_header("auth=abc; __Host-console_session=def").unwrap(),
+            "auth=abc; __Host-console_session=def"
+        );
+        assert_eq!(
+            opencode_cookie_header("__HOST-CONSOLE_SESSION=def").unwrap(),
+            "__Host-console_session=def"
+        );
+        // 同名重复只留第一份，避免把两条 auth 拼进同一个头
+        assert_eq!(
+            opencode_cookie_header("auth=a; auth=b").unwrap(),
+            "auth=a"
+        );
+        // 没有 OpenCode 认的键、值里带换行（头注入）、或可识别键为空值一律拒绝
+        assert!(opencode_cookie_header("foo=1").is_err());
+        assert!(opencode_cookie_header("auth=abc\r\nX-Injected: 1").is_err());
+        assert!(opencode_cookie_header("auth=; __Host-console_session=def").is_err());
+        assert!(opencode_cookie_header("__Host-console_session=").is_err());
+        // 三个键都在白名单内；超长整头拒绝
+        assert_eq!(
+            opencode_cookie_header("__Host-auth=abc").unwrap(),
+            "__Host-auth=abc"
+        );
+        let overlong = format!("auth={}", "a".repeat(MAX_OPENCODE_COOKIE_HEADER_LENGTH));
+        assert!(opencode_cookie_header(&overlong).is_err());
     }
 
     #[test]

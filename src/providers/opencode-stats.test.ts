@@ -1,5 +1,4 @@
-import { readFileSync } from "node:fs";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const invokeMock = vi.hoisted(() => vi.fn());
 
@@ -7,24 +6,15 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: invokeMock,
 }));
 
-import { invoke } from "@tauri-apps/api/core";
-import type { ProviderInstance } from "../types/ipc";
 import {
-  OPENCODE_RPC_ENDPOINT,
-  OPENCODE_RPC_ID_HISTORY,
-  OPENCODE_RPC_ID_MONTHLY,
-  buildRpcEnvelope,
-  fetchOpenCodeHistoryPage,
-  fetchOpenCodeMonthlyCost,
-  formatTimezoneOffset,
+  fetchOpenCodeLogs,
+  fetchOpenCodeOverview,
+  parseOpenCodeDailyCost,
+  parseOpenCodeModelUsage,
+  parseOpenCodeRequestLogs,
+  parseOpenCodeSummary,
 } from "./opencode-stats";
-
-const mockInvoke = vi.mocked(invoke);
-
-const readFixture = (name: string): string =>
-  readFileSync(new URL(`./__fixtures__/${name}`, import.meta.url), "utf8");
-
-const vaultCredentials = { workspaceId: "wrk_test_ws", cookie: "Fe26.2" };
+import type { HttpResult, ProviderInstance } from "../types/ipc";
 
 const instance: ProviderInstance = {
   id: "opencode-go",
@@ -40,239 +30,411 @@ const instance: ProviderInstance = {
   createdAt: 0,
 };
 
-describe("buildRpcEnvelope", () => {
-  it("serializes the monthly envelope with string/number typed args and l=4", () => {
-    expect(buildRpcEnvelope(["wrk_demo", 2026, 7, "+08:00"])).toBe(
-      '{"t":{"t":9,"i":0,"l":4,"a":[{"t":1,"s":"wrk_demo"},{"t":0,"s":2026},{"t":0,"s":7},{"t":1,"s":"+08:00"}],"o":0},"f":31,"m":[]}',
-    );
+/** 合成夹具：字段形状照控制台，数值均为假数据。 */
+const summaryPayload = {
+  totalRequests: "42",
+  totalInputTokens: "1000",
+  totalOutputTokens: "500",
+  totalCacheReadTokens: "2000",
+  totalCacheWrite5mTokens: "100",
+  totalCacheWrite1hTokens: "50",
+  totalCostMicroCents: "12345678",
+  services: [],
+};
+
+const dailyPayload = [
+  {
+    date: "2020-01-02",
+    totalCostMicroCents: "12345678",
+    totalTokens: "3650",
+    totalRequests: "42",
+  },
+];
+
+const modelsPayload = {
+  items: [
+    {
+      model: "test-model",
+      provider: "opencode-go",
+      totalRequests: "42",
+      totalInputTokens: "1000",
+      totalOutputTokens: "500",
+      totalCacheReadTokens: "2000",
+      totalCacheWrite5mTokens: "100",
+      totalCacheWrite1hTokens: "50",
+      totalCostMicroCents: "12345678",
+    },
+  ],
+  pageInfo: { page: 1, pageSize: 100, total: 1, pageCount: 1 },
+};
+
+const logsPayload = {
+  items: [
+    {
+      id: "log-1",
+      startedAt: 1_600_000_000_000,
+      durationMs: 1500,
+      outcome: "succeeded",
+      statusCode: 200,
+      model: "test-model",
+      provider: "opencode",
+      inputTokens: 100,
+      outputTokens: 200,
+      reasoningTokens: 20,
+      cacheReadTokens: 300,
+      cacheWriteTokens: 0,
+      cost: 0.0012,
+      sessionID: "sess-test-1",
+    },
+    {
+      id: "log-2",
+      startedAt: 1_600_000_100_000,
+      outcome: "failed",
+      statusCode: 500,
+      path: "/console/api/usage/summary",
+    },
+  ],
+  nextCursor: "cursor-test-1",
+  retentionDays: 30,
+};
+
+function http(status: number, bodyText: string): HttpResult {
+  return { status, headers: {}, bodyText };
+}
+
+type RequestArgs = { url: string; auth?: string; headers?: Record<string, string> };
+
+function mockBackend(options: {
+  credentials?: Record<string, string>;
+  respond: (request: RequestArgs) => HttpResult;
+}) {
+  const calls: RequestArgs[] = [];
+  invokeMock.mockImplementation((command: string, args?: RequestArgs) => {
+    if (command === "vault_credentials") {
+      return Promise.resolve({ ...options.credentials });
+    }
+    if (command === "provider_request") {
+      calls.push(args as RequestArgs);
+      return Promise.resolve(options.respond(args as RequestArgs));
+    }
+    return Promise.reject(new Error(`unexpected command ${command}`));
+  });
+  return calls;
+}
+
+const credentials = {
+  workspaceId: "wrk_TEST123",
+  cookie: "__Host-console_session=test",
+};
+
+const apiKeyCredentials = { apiKey: "oc_sk_test" };
+
+describe("parsers", () => {
+  it("parses summary totals and micro-cent cost", () => {
+    const summary = parseOpenCodeSummary(summaryPayload);
+    expect(summary.requests).toBe(42);
+    expect(summary.costUsd).toBeCloseTo(0.12345678, 8);
+    expect(summary.totalTokens).toBe(3650);
+    expect(summary.cacheWriteTokens).toBe(150);
   });
 
-  it("serializes the history envelope with l=2", () => {
-    expect(buildRpcEnvelope(["wrk_demo", 3])).toBe(
-      '{"t":{"t":9,"i":0,"l":2,"a":[{"t":1,"s":"wrk_demo"},{"t":0,"s":3}],"o":0},"f":31,"m":[]}',
-    );
-  });
-});
-
-describe("formatTimezoneOffset", () => {
-  it("formats positive, negative and zero offsets as ±HH:MM", () => {
-    expect(formatTimezoneOffset(480)).toBe("+08:00");
-    expect(formatTimezoneOffset(-300)).toBe("-05:00");
-    expect(formatTimezoneOffset(90)).toBe("+01:30");
-    expect(formatTimezoneOffset(0)).toBe("+00:00");
-  });
-});
-
-describe("fetchOpenCodeMonthlyCost", () => {
-  beforeEach(() => {
-    invokeMock.mockReset();
-    vi.spyOn(Date.prototype, "getTimezoneOffset").mockReturnValue(-480);
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it("posts the RPC envelope with the monthly x-server-id and maps cost to USD", async () => {
-    invokeMock
-      .mockResolvedValueOnce(vaultCredentials)
-      .mockResolvedValueOnce({ status: 200, headers: {}, bodyText: readFixture("opencode-rpc-monthly.txt") });
-
-    const result = await fetchOpenCodeMonthlyCost(instance, 2026, 8);
-
-    expect(result.status).toBe("ok");
-    if (result.status !== "ok") return;
-    expect(result.data.costs).toHaveLength(6);
-    const aug14 = result.data.costs.find((row) => row.date === "2026-08-14" && row.model === "deepseek-v4-flash");
-    expect(aug14?.costUsd).toBe(3);
-    expect(aug14?.keyId).toBe("key_TESTKEYAAAAAAAAAAAAAAAAA");
-    expect(result.data.keys).toEqual([
-      { id: "key_TESTKEYAAAAAAAAAAAAAAAAA", displayName: "user@example.com - Default API Key" },
-      { id: "key_TESTKEYBBBBBBBBBBBBBBBBB", displayName: "user@example.com - workbuddy" },
+  it("parses daily buckets and model pages", () => {
+    expect(parseOpenCodeDailyCost(dailyPayload)).toEqual([
+      { date: "2020-01-02", costUsd: 0.12345678, tokens: 3650, requests: 42 },
     ]);
+    expect(parseOpenCodeDailyCost({})).toEqual([]);
+    // 接口若按倒序返回，图表仍按日期升序
+    expect(
+      parseOpenCodeDailyCost([
+        { date: "2020-01-03", totalCostMicroCents: "1" },
+        { date: "2020-01-01", totalCostMicroCents: "1" },
+      ]).map((item) => item.date),
+    ).toEqual(["2020-01-01", "2020-01-03"]);
 
-    expect(mockInvoke).toHaveBeenNthCalledWith(1, "vault_credentials", { instanceId: "opencode-go" });
-    expect(mockInvoke).toHaveBeenNthCalledWith(2, "provider_request", {
-      instanceId: "opencode-go",
-      url: OPENCODE_RPC_ENDPOINT,
-      method: "POST",
-      auth: "cookie",
-      headers: {
-        "Content-Type": "application/json",
-        "x-server-id": OPENCODE_RPC_ID_MONTHLY,
-        "x-server-instance": "server-fn:0",
-      },
-      bodyText:
-        '{"t":{"t":9,"i":0,"l":4,"a":[{"t":1,"s":"wrk_test_ws"},{"t":0,"s":2026},{"t":0,"s":7},{"t":1,"s":"+08:00"}],"o":0},"f":31,"m":[]}',
+    const models = parseOpenCodeModelUsage(modelsPayload);
+    expect(models.pageCount).toBe(1);
+    expect(models.items[0]).toMatchObject({
+      model: "test-model",
+      requests: 42,
+      costUsd: 0.12345678,
     });
   });
 
-  it("returns needs_config without any request when workspace id is missing", async () => {
-    invokeMock.mockResolvedValueOnce({ workspaceId: "   ", cookie: "" });
+  it("parses request logs, keeping missing cost/duration as unknown", () => {
+    const page = parseOpenCodeRequestLogs(logsPayload);
+    expect(page.nextCursor).toBe("cursor-test-1");
+    expect(page.retentionDays).toBe(30);
+    expect(page.items[0]).toMatchObject({
+      id: "log-1",
+      model: "test-model",
+      statusCode: 200,
+      durationMs: 1500,
+      inputTokens: 100,
+      outputTokens: 200,
+      costUsd: 0.0012,
+      sessionId: "sess-test-1",
+    });
+    expect(page.items[1]).toMatchObject({
+      model: "",
+      costUsd: null,
+      durationMs: null,
+    });
+  });
 
-    const result = await fetchOpenCodeMonthlyCost(instance, 2026, 8);
+  it("builds a stable id fallback when id and requestID are missing", () => {
+    const page = parseOpenCodeRequestLogs({
+      items: [{ startedAt: 1_600_000_000_000, sessionID: "sess-test-2" }],
+    });
+    expect(page.items[0].id).toBe("1600000000000:sess-test-2");
+  });
+
+  it("keeps explicit zero cost/duration instead of treating them as missing", () => {
+    const page = parseOpenCodeRequestLogs({
+      items: [{ id: "log-zero", startedAt: 1_600_000_000_000, cost: 0, durationMs: 0 }],
+    });
+    expect(page.items[0]).toMatchObject({ costUsd: 0, durationMs: 0 });
+  });
+});
+
+describe("fetchOpenCodeOverview", () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+  });
+
+  it("requests summary, daily cost and models with the console credentials", async () => {
+    const calls = mockBackend({
+      credentials: apiKeyCredentials,
+      respond: (request) => {
+        if (request.url.includes("/usage/summary")) {
+          return http(200, JSON.stringify(summaryPayload));
+        }
+        if (request.url.includes("/usage/cost-by-day")) {
+          return http(200, JSON.stringify(dailyPayload));
+        }
+        if (request.url.includes("/usage/models")) {
+          return http(200, JSON.stringify(modelsPayload));
+        }
+        return http(404, "{}");
+      },
+    });
+
+    const result = await fetchOpenCodeOverview(instance, "30d");
+
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") return;
+    expect(result.data.summary.costUsd).toBeCloseTo(0.12345678, 8);
+    expect(result.data.daily).toHaveLength(1);
+    expect(result.data.models).toHaveLength(1);
+    expect(calls).toHaveLength(3);
+    expect(calls.every((call) => call.auth === "bearer")).toBe(true);
+    expect(calls.every((call) => call.headers?.["x-org-id"] === undefined)).toBe(true);
+    expect(calls.some((call) => call.url.includes("bucket=day"))).toBe(true);
+  });
+
+  it("walks every model page", async () => {
+    const pages = [1, 2].map((page) => ({
+      items: [
+        {
+          model: `test-model-${page}`,
+          provider: "opencode-go",
+          totalRequests: "1",
+          totalCostMicroCents: "10000000",
+        },
+      ],
+      pageInfo: { page, pageSize: 100, total: 2, pageCount: 2 },
+    }));
+    const calls = mockBackend({
+      credentials: apiKeyCredentials,
+      respond: (request) => {
+        if (request.url.includes("/usage/models")) {
+          const page = Number(new URL(request.url).searchParams.get("page"));
+          return http(200, JSON.stringify(pages[page - 1]));
+        }
+        return http(200, "{}");
+      },
+    });
+
+    const result = await fetchOpenCodeOverview(instance, "7d");
+
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") return;
+    expect(result.data.models.map((item) => item.model)).toEqual([
+      "test-model-1",
+      "test-model-2",
+    ]);
+    expect(calls.filter((call) => call.url.includes("/usage/models"))).toHaveLength(2);
+  });
+
+  it("uses hourly buckets for the 24h range", async () => {
+    const calls = mockBackend({
+      credentials: apiKeyCredentials,
+      respond: () => http(200, JSON.stringify(dailyPayload)),
+    });
+
+    await fetchOpenCodeOverview(instance, "24h");
+
+    expect(calls.some((call) => call.url.includes("bucket=hour"))).toBe(true);
+  });
+
+  it("asks for the API Key when it is missing", async () => {
+    const calls = mockBackend({
+      credentials,
+      respond: () => http(200, "{}"),
+    });
+
+    const result = await fetchOpenCodeOverview(instance, "30d");
 
     expect(result).toEqual({
       status: "needs_config",
-      message: "请在设置中填写 Workspace ID 和 Auth Cookie",
+      message: "请在配置中填写 OpenCode Go API Key",
     });
-    expect(mockInvoke).toHaveBeenCalledTimes(1);
+    expect(calls).toHaveLength(0);
   });
 
-  it("returns an error carrying the HTTP status on non-200 responses", async () => {
-    invokeMock
-      .mockResolvedValueOnce(vaultCredentials)
-      .mockResolvedValueOnce({ status: 503, headers: {}, bodyText: "<html>down</html>" });
+  it("maps API key auth and server failures", async () => {
+    for (const [status, message] of [
+      [401, "OpenCode Go API Key 无效或已过期"],
+      [403, "该 API Key 未开通 OpenCode Go 订阅"],
+    ] as const) {
+      invokeMock.mockReset();
+      mockBackend({ credentials: apiKeyCredentials, respond: () => http(status, "{}") });
+      const result = await fetchOpenCodeOverview(instance, "30d");
+      expect(result.status).toBe("error");
+      if (result.status === "error") expect(result.message).toBe(message);
+    }
 
-    const result = await fetchOpenCodeMonthlyCost(instance, 2026, 8);
-
-    expect(result.status).toBe("error");
-    expect(result.status === "error" && result.params?.status).toBe(503);
-    expect(result.status === "error" && result.message).toBe("opencode.ai 接口返回 HTTP {status}");
-  });
-
-  it("surfaces the x-error server business message with a workspace-mismatch hint", async () => {
-    invokeMock
-      .mockResolvedValueOnce(vaultCredentials)
-      .mockResolvedValueOnce({
-        status: 200,
-        headers: { "x-error": 'actor of type "account" is not associated with a workspace' },
-        bodyText: ";0x1;((self.$R=self.$R||{})[\"server-fn:0\"]=[],($R=>$R[0]=Object.assign(new Error(\"boom\"),{stack:\"s\"}))($R[\"server-fn:0\"]))",
-      });
-
-    const result = await fetchOpenCodeMonthlyCost(instance, 2026, 8);
-
+    invokeMock.mockReset();
+    mockBackend({ credentials: apiKeyCredentials, respond: () => http(500, "{}") });
+    const result = await fetchOpenCodeOverview(instance, "30d");
     expect(result).toEqual({
       status: "error",
-      message: "opencode.ai：{detail}。请核对设置中的 Workspace ID 与 Auth Cookie 是否来自同一账号",
-      params: { detail: 'actor of type "account" is not associated with a workspace' },
+      message: "OpenCode 用量接口返回 HTTP {status}",
+      params: { status: 500 },
     });
   });
 
-  it("surfaces a friendly message for the server-side 'Invalid time value' bug", async () => {
-    invokeMock
-      .mockResolvedValueOnce(vaultCredentials)
-      .mockResolvedValueOnce({
-        status: 200,
-        headers: { "x-error": "Invalid time value" },
-        bodyText:
-          ';0x3;((self.$R=self.$R||{})["server-fn:0"]=[],($R=>$R[0]=Object.assign(new RangeError("Invalid time value"),{stack:"..."}))($R["server-fn:0"]))',
-      });
-
-    const result = await fetchOpenCodeMonthlyCost(instance, 2026, 8);
-
-    expect(result).toEqual({
-      status: "error",
-      message: "opencode.ai 服务端内部错误（时间处理异常），请稍后重试或切换到其他月份查看。",
-      params: {},
+  it("uses the usage wording when a bearer response is not JSON", async () => {
+    mockBackend({
+      credentials: apiKeyCredentials,
+      respond: (request) =>
+        request.url.includes("/usage/summary")
+          ? http(200, "not-json")
+          : http(200, "{}"),
     });
-  });
 
-  it("reports an expired login when the response redirects to /auth/authorize", async () => {
-    invokeMock
-      .mockResolvedValueOnce(vaultCredentials)
-      .mockResolvedValueOnce({
-        status: 200,
-        headers: { "x-error": "true" },
-        bodyText:
-          ';0x2;((self.$R=self.$R||{})["server-fn:0"]=[],($R=>$R[0]=new Response(null,$R[1]={headers:new Headers([["location","/auth/authorize"]]),status:302}))($R["server-fn:0"]))',
-      });
-
-    const result = await fetchOpenCodeMonthlyCost(instance, 2026, 8);
+    const result = await fetchOpenCodeOverview(instance, "30d");
 
     expect(result).toEqual({
       status: "error",
-      message: "OpenCode 登录态已失效，请在设置中重新复制 Auth Cookie",
-    });
-  });
-
-  it("returns the fixed revision-drift message when the body cannot be parsed", async () => {
-    invokeMock
-      .mockResolvedValueOnce(vaultCredentials)
-      .mockResolvedValueOnce({ status: 200, headers: {}, bodyText: "<html>unexpected</html>" });
-
-    const result = await fetchOpenCodeMonthlyCost(instance, 2026, 8);
-
-    expect(result).toEqual({
-      status: "error",
-      message: "opencode.ai 返回结构无法解析，可能已改版",
+      message: "OpenCode 用量接口返回结构无法解析",
     });
   });
 });
 
-describe("fetchOpenCodeHistoryPage", () => {
+describe("fetchOpenCodeLogs", () => {
   beforeEach(() => {
     invokeMock.mockReset();
-    vi.spyOn(Date.prototype, "getTimezoneOffset").mockReturnValue(-480);
   });
 
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
+  it("uses a rolling since window and no cursor on the first page", async () => {
+    const calls = mockBackend({
+      credentials,
+      respond: () => http(200, JSON.stringify(logsPayload)),
+    });
+    const before = Date.now();
 
-  it("maps usage records with USD costs, ISO timestamps and empty session ids kept", async () => {
-    invokeMock
-      .mockResolvedValueOnce(vaultCredentials)
-      .mockResolvedValueOnce({ status: 200, headers: {}, bodyText: readFixture("opencode-rpc-history.txt") });
-
-    const result = await fetchOpenCodeHistoryPage(instance, 0);
+    const result = await fetchOpenCodeLogs(instance, "24h");
 
     expect(result.status).toBe("ok");
     if (result.status !== "ok") return;
-    const records = result.data.records;
-    expect(records).toHaveLength(5);
-    expect(records[0]?.timeCreated).toBe("2026-08-24T01:49:24.000Z");
-    expect(records[3]?.model).toBe("mimo-v2.5");
-    expect(records[3]?.costUsd).toBe(0.00021);
-    expect(records[3]?.cacheReadTokens).toBe(46000);
-    expect(records[0]?.sessionId).toBe("ses_TESTSESSION00000000001");
-    expect(records[1]?.sessionId).toBe("");
-    expect(records[4]?.sessionId).not.toBe("");
+    expect(result.data.items).toHaveLength(2);
+    expect(result.data.nextCursor).toBe("cursor-test-1");
+    const url = new URL(calls[0].url);
+    expect(url.pathname).toBe("/console/api/request-logs");
+    expect(calls[0].auth).toBe("cookie");
+    expect(calls[0].headers?.["x-org-id"]).toBe("wrk_TEST123");
+    expect(url.searchParams.get("limit")).toBe("50");
+    expect(url.searchParams.get("category")).toBe("inference");
+    expect(url.searchParams.has("cursor")).toBe(false);
+    const since = Number(url.searchParams.get("since"));
+    expect(since).toBeGreaterThanOrEqual(before - 86_400_000 - 1_000);
   });
 
-  it("drops unmodeled fields such as enrichment and timeDeleted", async () => {
-    invokeMock
-      .mockResolvedValueOnce(vaultCredentials)
-      .mockResolvedValueOnce({ status: 200, headers: {}, bodyText: readFixture("opencode-rpc-history.txt") });
+  it("passes the cursor for the next page", async () => {
+    const calls = mockBackend({
+      credentials,
+      respond: () => http(200, JSON.stringify(logsPayload)),
+    });
 
-    const result = await fetchOpenCodeHistoryPage(instance, 0);
+    await fetchOpenCodeLogs(instance, "7d", "cursor-1");
+
+    const url = new URL(calls[0].url);
+    expect(url.searchParams.get("cursor")).toBe("cursor-1");
+  });
+
+  it("does not request logs without the web credentials", async () => {
+    const calls = mockBackend({
+      credentials: { cookie: "__Host-console_session=test" },
+      respond: () => http(200, "{}"),
+    });
+
+    const result = await fetchOpenCodeLogs(instance, "7d");
+
+    expect(result).toEqual({
+      status: "needs_config",
+      message: "请在配置中填写 Workspace ID 和 Cookie 才能查看请求日志",
+    });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("asks for a console session cookie when only the legacy auth value is stored", async () => {
+    const calls = mockBackend({
+      credentials: { workspaceId: "wrk_TEST123", cookie: "auth=test" },
+      respond: () => http(200, "{}"),
+    });
+
+    const result = await fetchOpenCodeLogs(instance, "7d");
+
+    expect(result).toEqual({
+      status: "needs_config",
+      message: "当前 Cookie 不含 __Host-console_session，请重新复制控制台 Cookie",
+    });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("accepts a bare console session value stored by older versions", async () => {
+    const calls = mockBackend({
+      credentials: { workspaceId: "wrk_TEST123", cookie: "st_TEST-session-0000" },
+      respond: () => http(200, JSON.stringify(logsPayload)),
+    });
+
+    const result = await fetchOpenCodeLogs(instance, "7d");
 
     expect(result.status).toBe("ok");
-    if (result.status !== "ok") return;
-    const record = result.data.records[0];
-    expect(Object.keys(record ?? {})).toEqual([
-      "id",
-      "timeCreated",
-      "model",
-      "inputTokens",
-      "outputTokens",
-      "reasoningTokens",
-      "cacheReadTokens",
-      "costUsd",
-      "keyId",
-      "sessionId",
-    ]);
+    expect(calls).toHaveLength(1);
   });
 
-  it("routes through the history x-server-id with a two-arg envelope", async () => {
-    invokeMock
-      .mockResolvedValueOnce(vaultCredentials)
-      .mockResolvedValueOnce({ status: 200, headers: {}, bodyText: readFixture("opencode-rpc-history.txt") });
+  it("maps console auth failures for logs", async () => {
+    for (const [status, message] of [
+      [401, "OpenCode 登录态已失效，请在配置中重新复制 Cookie"],
+      [403, "OpenCode 登录态已失效，请在配置中重新复制 Cookie"],
+      [400, "OpenCode 控制台要求 x-org-id，请核对 Workspace ID"],
+    ] as const) {
+      invokeMock.mockReset();
+      mockBackend({ credentials, respond: () => http(status, "{}") });
+      const result = await fetchOpenCodeLogs(instance, "7d");
+      expect(result.status).toBe("error");
+      if (result.status === "error") expect(result.message).toBe(message);
+    }
+  });
 
-    await fetchOpenCodeHistoryPage(instance, 2);
-
-    expect(mockInvoke).toHaveBeenNthCalledWith(2, "provider_request", {
-      instanceId: "opencode-go",
-      url: OPENCODE_RPC_ENDPOINT,
-      method: "POST",
-      auth: "cookie",
-      headers: {
-        "Content-Type": "application/json",
-        "x-server-id": OPENCODE_RPC_ID_HISTORY,
-        "x-server-instance": "server-fn:0",
-      },
-      bodyText:
-        '{"t":{"t":9,"i":0,"l":2,"a":[{"t":1,"s":"wrk_test_ws"},{"t":0,"s":2}],"o":0},"f":31,"m":[]}',
+  it("uses the console wording for non-auth log failures", async () => {
+    mockBackend({ credentials, respond: () => http(500, "{}") });
+    const result = await fetchOpenCodeLogs(instance, "7d");
+    expect(result).toEqual({
+      status: "error",
+      message: "OpenCode 控制台返回 HTTP {status}",
+      params: { status: 500 },
     });
   });
 });

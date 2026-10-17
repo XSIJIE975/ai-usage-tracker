@@ -23,14 +23,13 @@ const FALLBACK_POLICY: StatsRangePolicy = {
  * 时间范围策略按供应商声明（数值要有出处，别当分支写进各抽屉）：
  * - deepseek / glm：用量接口实测只支持约 30 天动态窗口，故成因写「官方接口限制」。
  * - workbuddy：沿用 30 天这个保守值，**未单独实测过上限**，故成因写「本工具的上限」。
- * - opencode-go：不走本模块（自己的区间口径），这里只为将来接入留位。
+ * - opencode-go：不走本模块，用自己的 24 小时 / 7 天 / 30 天档位（控制台统计接口）。
  * - qoder：`big_model_credits/histories` 实测 `page_size=1000` 一次回 535 条、
  *   `start_time`/`end_time` 任意区间都受理，且官网用量页自己就给近一年热力图（ADR-0030），
  *   故放开到 366 天；默认档取近 30 天（真机样本里一次重置跨了 95 天，7 天窗常常是空的）。
  */
 const POLICIES: Partial<Record<ProviderKind, StatsRangePolicy>> = {
   workbuddy: { maxCustomDays: 30, defaultRange: "7d", limitNote: "本工具的上限" },
-  "opencode-go": { maxCustomDays: 30, defaultRange: "7d", limitNote: "本工具的上限" },
   qoder: { maxCustomDays: 366, defaultRange: "30d", limitNote: "本工具的上限" },
 };
 

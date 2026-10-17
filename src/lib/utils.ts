@@ -6,26 +6,115 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+/** OpenCode 认的 Cookie 键：auth 覆盖旧页面与 /_server，__Host-console_session 覆盖新版控制台。 */
+const OPENCODE_COOKIE_NAMES = ["auth", "__Host-auth", "__Host-console_session"] as const;
+
+/** 与 Rust 侧 MAX_OPENCODE_COOKIE_HEADER_LENGTH 同口径，超长在表单阶段就拦下 */
+export const MAX_OPENCODE_COOKIE_HEADER_LENGTH = 8_192;
+
+/** 与 Rust 侧 instances::is_cookie_value_chars 同口径（RFC 6265 cookie-value）。 */
+function isCookieValueChars(value: string): boolean {
+  return [...value].every((char) => {
+    const code = char.charCodeAt(0);
+    return (
+      char === "!" ||
+      (code >= 0x23 && code <= 0x2b) ||
+      (code >= 0x2d && code <= 0x3a) ||
+      (code >= 0x3c && code <= 0x7e)
+    );
+  });
+}
+
+/**
+ * 把用户粘贴的 OpenCode Cookie 输入归一化成可发送的 Cookie 头。
+ * - 裸值（没有 `=`）：Iron Session 的 auth 值以 `Fe26.2` 开头，按 `auth=` 处理；
+ *   其余（控制台会话 `st_…`）按 `__Host-console_session=` 处理；
+ * - 整段 Cookie 头只保留 OpenCode 认的三个键，其余（分析/语言等）丢弃；
+ * - 含换行、非法值字符、空值、超长或没有可识别键时返回空串，由表单校验拦下。
+ */
 export function normalizeOpenCodeAuthCookie(value: string): string {
   let cookie = value.trim();
   if (cookie.toLowerCase().startsWith("cookie:")) {
     cookie = cookie.slice("cookie:".length).trim();
   }
+  if (!cookie || cookie.length > MAX_OPENCODE_COOKIE_HEADER_LENGTH || /[\r\n]/.test(cookie)) {
+    return "";
+  }
+  // 裸值判定：没有 `=`，或 st_/Fe26.2 前缀且 `=` 只作为 base64 padding 出现在末尾。
+  // 不能只按「有没有 =」判断——真实裸值可能带 `==` 填充。
+  const firstEq = cookie.indexOf("=");
+  const bareWithPadding =
+    firstEq >= 0 &&
+    !cookie.includes(";") &&
+    (cookie.startsWith("Fe26.2") || cookie.startsWith("st_")) &&
+    /^=+$/.test(cookie.slice(firstEq));
+  if (firstEq < 0 || bareWithPadding) {
+    if (!isCookieValueChars(cookie)) return "";
+    const name = cookie.startsWith("Fe26.2") ? "auth" : "__Host-console_session";
+    return `${name}=${cookie}`;
+  }
 
-  if (cookie.includes(";")) {
-    for (const part of cookie.split(";")) {
-      const [rawName, ...rest] = part.trim().split("=");
-      if (rawName?.trim().toLowerCase() === "auth") {
-        return rest.join("=").trim();
-      }
+  const parts: string[] = [];
+  for (const part of cookie.split(";")) {
+    const [rawName, ...rest] = part.trim().split("=");
+    const name = rawName?.trim();
+    if (!name || rest.length === 0) continue;
+    const canonical = OPENCODE_COOKIE_NAMES.find(
+      (allowed) => allowed.toLowerCase() === name.toLowerCase(),
+    );
+    if (!canonical) continue;
+    const cookieValue = rest.join("=").trim();
+    // Rust 侧对空值直接报错；这里同样视为非法，避免「保存成功、请求必败」
+    if (cookieValue === "" || !isCookieValueChars(cookieValue)) return "";
+    if (!parts.some((item) => item.startsWith(`${canonical}=`))) {
+      parts.push(`${canonical}=${cookieValue}`);
     }
   }
+  return parts.join("; ");
+}
 
-  if (/^auth=/i.test(cookie)) {
-    return cookie.slice("auth=".length).trim();
+/** 控制台接口（余额/请求日志）只认 __Host-console_session；旧版 auth 值可保存但不满足这条 */
+export function hasOpenCodeConsoleSession(value: string): boolean {
+  if (!value || /[\r\n]/.test(value)) return false;
+  return value.split(";").some((part) => {
+    const [rawName, ...rest] = part.trim().split("=");
+    const name = rawName?.trim().toLowerCase();
+    const cookieValue = rest.join("=").trim();
+    return (
+      name === "__host-console_session" &&
+      cookieValue !== "" &&
+      isCookieValueChars(cookieValue)
+    );
+  });
+}
+
+/**
+ * 表单校验：至少包含一个 OpenCode 认的 Cookie 键。
+ * 不强制 __Host-console_session——旧实例的 auth Cookie 仍要能保存（补 API Key），
+ * 余额/日志需要控制台会话时由 hasOpenCodeConsoleSession 单独给出提示。
+ */
+export function isValidOpenCodeCookieHeader(value: string): boolean {
+  if (
+    !value ||
+    value.length > MAX_OPENCODE_COOKIE_HEADER_LENGTH ||
+    /[\r\n]/.test(value)
+  ) {
+    return false;
   }
-
-  return cookie;
+  let found = false;
+  for (const part of value.split(";")) {
+    const [rawName, ...rest] = part.trim().split("=");
+    const name = rawName?.trim().toLowerCase();
+    const recognized = OPENCODE_COOKIE_NAMES.some(
+      (allowed) => allowed.toLowerCase() === name,
+    );
+    if (!recognized) continue;
+    const cookieValue = rest.join("=").trim();
+    // 与 Rust 一致：任一可识别键为空/非法即整条非法，而不是「有一个好的就放行」
+    if (cookieValue === "" || !isCookieValueChars(cookieValue)) return false;
+    found = true;
+  }
+  return found;
 }
 
 /** 小时数标签（刷新间隔与告警冷却预设共用）：整串模板，英文用缩写单位 */

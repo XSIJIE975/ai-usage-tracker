@@ -21,9 +21,14 @@ export type DiagnosisCode =
   | "missing-mimo-credential"
   /** 凭据原文没过保存侧同一份白名单（探测与保存同口径，ADR-0030 §2） */
   | "invalid-credential-format"
+  /** OpenCode 的 Cookie 头不含可识别键、含非法字符或超长（与保存侧同口径） */
+  | "opencode-cookie-format"
+  /** 控制台不认识该工作区（HTTP 404），通常是 Workspace ID 填错 */
+  | "opencode-workspace-not-found"
   | "network-error"
-  | "login-redirect"
   | "invalid-credentials"
+  /** OpenCode Go 的 API Key 有效，但该账号没有 Go 订阅（HTTP 403） */
+  | "no-go-subscription"
   | "http-error"
   /** 调用本身抛错（前端构造，非后端返回码），原文放 detail 直接展示 */
   | "unknown";
@@ -47,7 +52,7 @@ export function describeDiagnosis(result: DiagnosisResult, t: TFn): string {
     case "missing-user-token":
       return t("请先填写 UserToken");
     case "missing-workspace-cookie":
-      return t("请先填写 Workspace ID 和 Auth Cookie");
+      return t("请先填写 Workspace ID 和 Cookie");
     case "missing-credential":
       return t("请先填写凭据值");
     case "missing-mimo-credential":
@@ -58,14 +63,20 @@ export function describeDiagnosis(result: DiagnosisResult, t: TFn): string {
       return t(
         "只粘贴该 Cookie 的值：不要带「Cookie:」前缀或键名，也不能包含分号、空格、换行或中文",
       );
+    case "opencode-cookie-format":
+      return t(
+        "Cookie 需包含 auth、__Host-auth 或 __Host-console_session；值里不能含空格或换行，总长不超过 8 KB",
+      );
+    case "opencode-workspace-not-found":
+      return t("OpenCode 控制台找不到该工作区（HTTP 404），请核对 Workspace ID");
     case "network-error":
       return t("网络请求失败：{detail}").replace("{detail}", result.detail ?? "");
-    case "login-redirect":
-      return t("Cookie 已失效（页面跳转到登录）");
     case "ok":
       return t("连接正常（{latency}ms）").replace("{latency}", String(result.latencyMs));
     case "invalid-credentials":
       return t("凭据无效或已过期（HTTP {status}）").replace("{status}", String(result.status));
+    case "no-go-subscription":
+      return t("该 API Key 未开通 OpenCode Go 订阅");
     case "http-error":
       return t("接口返回 HTTP {status}").replace("{status}", String(result.status));
     default:
@@ -78,13 +89,13 @@ async function diagnose(
   url: string,
   auth: "bearer" | "cookie",
   credential: string,
-  expectHtml = false,
+  headers?: Record<string, string>,
 ): Promise<DiagnosisResult> {
   return invoke<DiagnosisResult>("diagnose_request", {
     url,
     auth,
     credential,
-    expectHtml,
+    headers,
   });
 }
 
@@ -111,23 +122,39 @@ export function testDeepSeekUserToken(token: string): Promise<DiagnosisResult> {
   );
 }
 
-/** OpenCode Go：Workspace ID + Auth Cookie（后台页面抓取探测，校验未跳转登录） */
-export function testOpenCodeConnection(workspaceId: string, authCookie: string): Promise<DiagnosisResult> {
-  if (!workspaceId.trim() || !authCookie.trim())
-    return Promise.resolve({ ok: false, status: 0, latencyMs: 0, code: "missing-workspace-cookie" });
-  return diagnose(
-    `https://opencode.ai/workspace/${encodeURIComponent(workspaceId.trim())}/go`,
+/**
+ * OpenCode Go 余额凭据：探测控制台 `/console/api/billing/status`（Cookie + x-org-id）。
+ * 404 单独映射为「工作区找不到」，避免和网络/服务端错误混在一起。
+ */
+export async function testOpenCodeConnection(
+  workspaceId: string,
+  cookie: string,
+): Promise<DiagnosisResult> {
+  const workspace = workspaceId.trim();
+  if (!workspace || !cookie.trim())
+    return { ok: false, status: 0, latencyMs: 0, code: "missing-workspace-cookie" };
+
+  const result = await diagnose(
+    "https://opencode.ai/console/api/billing/status",
     "cookie",
-    authCookie,
-    true,
+    cookie,
+    { Accept: "application/json", "x-org-id": workspace },
   );
+  if (!result.ok && result.status === 404) {
+    return { ...result, code: "opencode-workspace-not-found" };
+  }
+  return result;
 }
 
-/** OpenCode Go 可选 API Key：官方 usage 接口探测 */
-export function testOpenCodeApiKey(key: string): Promise<DiagnosisResult> {
+/** OpenCode Go API Key：官方 usage 接口探测；403 单独报「未开通 Go 订阅」 */
+export async function testOpenCodeApiKey(key: string): Promise<DiagnosisResult> {
   if (!key.trim())
-    return Promise.resolve({ ok: false, status: 0, latencyMs: 0, code: "missing-api-key" });
-  return diagnose("https://opencode.ai/zen/go/v1/usage", "bearer", key);
+    return { ok: false, status: 0, latencyMs: 0, code: "missing-api-key" };
+  const result = await diagnose("https://opencode.ai/zen/go/v1/usage", "bearer", key);
+  if (!result.ok && result.status === 403) {
+    return { ...result, code: "no-go-subscription" };
+  }
+  return result;
 }
 
 /** 小米 MiMo 登录凭据：余额端点探测（mimo_cookie 通道）。两个值交给 Rust 端的同一个拼装
