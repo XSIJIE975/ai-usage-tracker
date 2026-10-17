@@ -561,13 +561,11 @@ input {
   box-shadow: inset 0 0 0 2px var(--color-focus-ring);
 }
 
-/* 背面（数值面）按钮：贴图层局部左侧 + 预转 180°，圆角方向随镜像对调 */
+/* 背面（数值面）按钮：贴图层局部左侧 + 预转 180°。
+   整卡翻转 180° 与本按钮预转 180° 叠加后净旋转 360°，形状按原样呈现——
+   圆角必须与正面一致（右上贴卡片圆角、左下 13px），随镜像对调反而会错位 */
 .flip-toggle-back {
   justify-self: start;
-  border-top-right-radius: 0;
-  border-top-left-radius: calc(var(--radius-lg) - 1px);
-  border-bottom-left-radius: 0;
-  border-bottom-right-radius: 13px;
   transform: rotateY(180deg) translateZ(1px);
 }
 
