@@ -492,7 +492,9 @@ input {
     box-shadow var(--transition-duration-normal) ease;
 }
 
-.flip-card-flipped {
+/* 必须与 .flip-card 同时命中：单独一枚 .flip-card-flipped（例如快照转异常后
+   .flip-card 已被摘掉）会把整张普通卡镜像翻转，且没有背面可承接内容 */
+.flip-card.flip-card-flipped {
   /* perspective 内联在 transform 里：翻转元素的父级是瀑布流格子/列表容器，不便加 perspective 属性 */
   transform: perspective(1200px) rotateY(180deg);
 }
@@ -577,11 +579,11 @@ input {
 }
 
 .flip-toggle-back .flip-toggle-icon,
-.flip-card-flipped .flip-face-front .flip-toggle-icon {
+.flip-card.flip-card-flipped .flip-face-front .flip-toggle-icon {
   transform: rotateY(180deg);
 }
 
-.flip-card-flipped .flip-toggle-back .flip-toggle-icon {
+.flip-card.flip-card-flipped .flip-toggle-back .flip-toggle-icon {
   transform: rotateY(0deg);
 }
 

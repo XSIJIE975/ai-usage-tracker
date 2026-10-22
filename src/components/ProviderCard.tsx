@@ -630,7 +630,6 @@ export function ProviderCard({
   // 翻面朝向：受控（主窗口网格，拖拽浮起副本与占位卡共享）或内部自持（快速面板）。
   // 每卡片独立，不进全局设置，卡片之间、主/快窗口之间互不联动
   const [localFlipped, setLocalFlipped] = useState(false);
-  const flipped = flippedProp ?? localFlipped;
   const toggleFlip = () => (onToggleFlip ? onToggleFlip() : setLocalFlipped((value) => !value));
   const kindName = t(providerName(instance.providerId));
   const title = displayName(instance, kindName);
@@ -644,6 +643,12 @@ export function ProviderCard({
       line.used !== undefined &&
       line.limit !== undefined,
   );
+  // 朝向只在可翻卡时生效。快照转为错误/待配置（如 Key 失效）后进度行消失，
+  // canFlip 变 false、翻面按钮不再渲染；若仍保留 flip-card-flipped，整卡会被
+  // rotateY(180deg) 镜像且用户没有任何入口翻回来（回归：Key 失效后卡片文字倒置）。
+  // 这里是渲染期收敛而非清状态：原始朝向仍保留，数据恢复后会回到此前的数值面，
+  // 与 DESIGN「刷新数据保持、窗口重载才回百分比面」的语义一致。
+  const flipped = canFlip && (flippedProp ?? localFlipped);
 
   // 重置卡入口：读快照 availableResetIds，无卡（或该源本轮失败）即为 null，按钮不出现。
   // 明细的唯一宿主是弹窗，卡片正面不占行位（ADR-0014 修订）
