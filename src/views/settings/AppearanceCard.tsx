@@ -2,23 +2,18 @@ import { Monitor, Moon, Sun } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import { Label } from "../../components/ui/label";
 import { Segmented } from "../../components/ui/segmented";
-import { useThemeMode, setThemeMode, type ThemeMode } from "../../lib/theme";
+import type { ThemeMode } from "../../lib/theme";
+import { useThemeModeSetting } from "../../hooks/use-theme-mode-setting";
 import { useAppStore } from "../../store/useAppStore";
 import { useT } from "../../i18n";
 
 /** 外观与语言：主题与本机设置双写（localStorage 只作首帧缓存），语言存本机设置 */
 export function AppearanceCard() {
-  const mode = useThemeMode();
+  // 与主窗口头部的快捷按钮共用同一条写入路径（即时生效 + 广播 + 落库）
+  const [mode, changeThemeMode] = useThemeModeSetting();
   const t = useT();
   const settings = useAppStore((state) => state.settings);
   const saveSettings = useAppStore((state) => state.saveSettings);
-
-  function changeThemeMode(value: ThemeMode) {
-    // 先即时生效（data-theme + 跨窗口广播 + localStorage），再落库持久
-    setThemeMode(value);
-    const current = useAppStore.getState().settings;
-    void saveSettings({ ...current, themeMode: value });
-  }
 
   return (
     <Card>

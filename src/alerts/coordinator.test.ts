@@ -423,7 +423,7 @@ describe("WorkBuddy 积分阈值规则", () => {
     ...instance({ id: "wb-1", providerId: "workbuddy", threshold: 80, balanceThreshold: null }),
     ...overrides,
   });
-  /** WorkBuddy 快照：积分余量 progress 行 + 套餐明细 text 行（与真实快照结构一致） */
+  /** WorkBuddy 快照：积分额度 progress 行 + 套餐明细 text 行（与真实快照结构一致） */
   const wbSnapshot = (percent: number | null, remainText?: string): ProviderSnapshot => ({
     instanceId: "wb-1",
     providerId: "workbuddy",
@@ -432,8 +432,8 @@ describe("WorkBuddy 积分阈值规则", () => {
     updatedAt: 0,
     lines: [
       ...(percent !== null
-        ? [{ type: "progress" as const, label: "积分余量", used: 100 - percent!, limit: 100, percentUsed: percent! }]
-        : [{ type: "text" as const, label: "积分余量", value: remainText ?? "暂无有效套餐" }]),
+        ? [{ type: "progress" as const, label: "积分额度", used: 100 - percent!, limit: 100, percentUsed: percent! }]
+        : [{ type: "text" as const, label: "积分额度", value: remainText ?? "暂无有效套餐" }]),
     ],
   });
 

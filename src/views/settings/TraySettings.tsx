@@ -24,7 +24,7 @@ import {
 } from "../../hooks/use-tray-sync";
 import { multiRingLayerSpecs } from "../../lib/ring-layers";
 import { cn } from "../../lib/utils";
-import { useLanguage, useT } from "../../i18n";
+import { useLanguage, useT, type Language } from "../../i18n";
 import { SavedHint, useSaveFlash } from "./save-flash";
 
 /** 托盘计量图标（环/柱）的静态色：品牌色不随用量档位变化，仅告警强制红。
@@ -195,6 +195,9 @@ export function TraySettings() {
             layout={settings.glanceLayout}
             items={glanceItems}
             translate={t}
+            language={language}
+            resetDisplay={settings.resetTimeDisplay}
+            now={Date.now()}
           />
 
           <div className="flex items-center justify-between gap-4">
@@ -455,10 +458,16 @@ function GlancePreview({
   layout,
   items,
   translate,
+  language,
+  resetDisplay,
+  now,
 }: {
   layout: "list" | "cards";
   items: GlanceInstance[];
   translate: (text: string) => string;
+  language: Language;
+  resetDisplay: "relative" | "absolute";
+  now: number;
 }) {
   return (
     <div className="relative mx-auto h-60 w-80 overflow-hidden rounded-lg border border-line bg-canvas">
@@ -472,9 +481,21 @@ function GlancePreview({
             {translate("暂无展示内容")}
           </div>
         ) : layout === "cards" ? (
-          <GlanceCards items={items} translate={translate} />
+          <GlanceCards
+            items={items}
+            translate={translate}
+            language={language}
+            resetDisplay={resetDisplay}
+            now={now}
+          />
         ) : (
-          <GlanceRows items={items} translate={translate} />
+          <GlanceRows
+            items={items}
+            translate={translate}
+            language={language}
+            resetDisplay={resetDisplay}
+            now={now}
+          />
         )}
       </div>
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-canvas to-transparent" />

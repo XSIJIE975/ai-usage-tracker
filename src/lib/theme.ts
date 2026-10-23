@@ -10,6 +10,17 @@ import { emit, listen } from "@tauri-apps/api/event";
  */
 export type ThemeMode = "system" | "light" | "dark";
 
+/** 头部快捷按钮的循环顺序：与设置里「跟随系统 / 浅色 / 深色」的排列一致 */
+const NEXT_THEME_MODE: Record<ThemeMode, ThemeMode> = {
+  system: "light",
+  light: "dark",
+  dark: "system",
+};
+
+export function nextThemeMode(mode: ThemeMode): ThemeMode {
+  return NEXT_THEME_MODE[mode];
+}
+
 const STORAGE_KEY = "aui-theme";
 const listeners = new Set<() => void>();
 

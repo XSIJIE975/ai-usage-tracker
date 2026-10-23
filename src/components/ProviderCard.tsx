@@ -15,7 +15,7 @@ import {
   Trash2,
 } from "lucide-react";
 import type { MetricLine, ProviderInstance, ProviderSnapshot } from "../types/ipc";
-import { formatClock, formatInt, formatReset, formatResetAt } from "../lib/utils";
+import { cn, displayPercentDecimal, formatClock, formatInt, formatResetDisplay } from "../lib/utils";
 import { errorHintTitle } from "../lib/error-hint";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Progress } from "./ui/progress";
@@ -38,18 +38,7 @@ import { providerName } from "../providers";
 import { resetSplitOf, resetSplitTemplate } from "../providers/glm";
 import { useAppStore } from "../store/useAppStore";
 import { applyParams, renderLineValue, useLanguage, useT } from "../i18n";
-import { cn } from "../lib/utils";
-
-function useNow(intervalMs = 30_000) {
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), intervalMs);
-    return () => window.clearInterval(timer);
-  }, [intervalMs]);
-
-  return now;
-}
+import { useNow } from "../hooks/use-now";
 
 /** 已知供应商使用官方标识，未识别的退回首字母头像 */
 const BRAND_LOGOS: Record<
@@ -148,7 +137,7 @@ function MetricRow({
             {showAmount
               ? `${t("已用")} ${formatInt(used)} / ${formatInt(limit)}`
               : line.percentUsed !== undefined
-                ? `${t("已用")} ${line.percentUsed.toFixed(1)}%`
+                ? `${t("已用")} ${displayPercentDecimal(line.percentUsed)}%`
                 : `${line.suffix ?? ""}${(line.used ?? 0).toFixed(2)} / ${line.suffix ?? ""}${(line.limit ?? 0).toFixed(2)}`}
           </span>
         </div>
@@ -179,9 +168,12 @@ function MetricRow({
               aria-label={`${t("点击切换重置时间显示")}（${resetTitle ?? ""}）`}
               aria-pressed={resetTimeDisplay === "absolute"}
             >
-              {resetTimeDisplay === "absolute"
-                ? applyParams(t("{time} 重置"), { time: formatResetAt(line.resetsAt, language) })
-                : formatReset(line.resetsAt, now, t)}
+              {formatResetDisplay(line.resetsAt, {
+                now,
+                language,
+                translate: t,
+                display: resetTimeDisplay,
+              }) ?? ""}
             </button>
           ) : null}
         </div>

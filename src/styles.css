@@ -468,6 +468,23 @@ input {
   animation: panel-enter 240ms var(--ease-enter) both;
 }
 
+/* 主题快捷按钮的图标切换：只动这枚 16px 图标，页面/卡片不做整体主题过渡。
+   key={mode} 触发重挂载，动画把新旧图标的硬切柔化一下 */
+@keyframes theme-icon-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.theme-icon-enter {
+  animation: theme-icon-enter 140ms var(--ease-enter) both;
+}
+
 /* 用量数值变化的平滑过渡（进度条宽度 / 用量环弧长与颜色） */
 .panel-meter-bar {
   transition: width var(--transition-duration-slow) ease;
@@ -596,5 +613,8 @@ input {
   .flip-toggle,
   .flip-toggle-icon {
     transition: none;
+  }
+  .theme-icon-enter {
+    animation: none;
   }
 }

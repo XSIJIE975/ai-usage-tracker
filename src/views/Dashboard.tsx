@@ -55,6 +55,8 @@ import { selectOrderedInstances } from "../lib/instance";
 import type { AppSettings, ProviderInstance, ProviderKind } from "../types/ipc";
 import { updateSupported, useUpdateStore } from "../store/useUpdateStore";
 import { useTraySync } from "../hooks/use-tray-sync";
+import { useThemeModeSetting } from "../hooks/use-theme-mode-setting";
+import { ThemeQuickToggle } from "../components/ThemeQuickToggle";
 import { applyParams, useLanguage, useT } from "../i18n";
 
 /** 瀑布流行步长：行高 8px + 行距 16px，跨行数 = ceil((内容高+行距)/步长) */
@@ -168,6 +170,7 @@ export function Dashboard() {
   };
   const t = useT();
   const language = useLanguage();
+  const [themeMode, changeThemeMode] = useThemeModeSetting();
   const [noticeOpen, setNoticeOpen] = useState(false);
   const [remoteRefreshedAt, setRemoteRefreshedAt] = useState(0);
   const [draggingId, setDraggingId] = useState<string | null>(null);
@@ -475,9 +478,15 @@ export function Dashboard() {
               </>
             )}
           </div>
-          <Button size="sm" variant="outline" onClick={() => void refreshAll()} disabled={refreshing}>
-            <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} /> {t("刷新")}
-          </Button>
+          <IconButton
+            onClick={() => void refreshAll()}
+            disabled={refreshing}
+            title={refreshing ? t("刷新中") : t("刷新")}
+            aria-label={refreshing ? t("刷新中") : t("刷新")}
+          >
+            <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />
+          </IconButton>
+          <ThemeQuickToggle mode={themeMode} onChange={changeThemeMode} />
           <IconButton
             onClick={() => openSettings("top")}
             title={t("设置")}

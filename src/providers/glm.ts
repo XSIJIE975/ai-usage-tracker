@@ -261,11 +261,12 @@ function processQuota(result: HttpResult): SourceOutcome {
   try {
     const json = JSON.parse(result.bodyText) as GlmEnvelope<GlmQuotaData>;
     if (isNoCodingPlanEnvelope(json)) {
-      // 未订阅 Coding Plan 是账号的正常状态而非故障（ADR-0024 的可见性靠这条中性事实行，
-      // 不靠错误横幅）：与订阅者的「套餐档位」徽章行同位，余额/重置卡源不受影响
+      // 未订阅 Coding Plan 是账号的正常状态而非故障（ADR-0024 的可见性靠这条状态行，
+      // 不靠错误横幅）：与订阅者的「套餐档位」徽章行同位，余额/重置卡源不受影响。
+      // status 标记让速览在有余额时也显示它——余额不等于套餐仍有效
       return {
         ok: true,
-        lines: [{ type: "text", label: "Coding Plan", value: "未订阅" }],
+        lines: [{ type: "text", label: "Coding Plan", value: "未订阅", status: true }],
       };
     }
     if (json.success === false) {

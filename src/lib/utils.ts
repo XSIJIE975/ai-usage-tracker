@@ -243,3 +243,40 @@ export function formatReset(iso?: string | null, now = Date.now(), translate?: (
   }
   return applyParams(t("{minutes} 分钟后重置"), { minutes });
 }
+
+/** 已用百分比的整数展示口径：100 只留给真实的 100%。
+ *  四舍五入会把 99.5% 抬成 100%，在速览里看起来像已经耗尽（额度耗尽告警却还没触发）；
+ *  进度弧/条与颜色档位仍按原始值绘制，只有文字读数被钳住 */
+export function displayPercentInteger(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  if (value >= 100) return 100;
+  return Math.min(99, Math.max(0, Math.round(value)));
+}
+
+/** 主卡片一位小数口径的同一条边界：未满 100 最多 99.9，只有真实 100% 显示 100.0 */
+export function displayPercentDecimal(value: number): string {
+  if (!Number.isFinite(value)) return "0.0";
+  if (value >= 100) return "100.0";
+  return Math.min(99.9, Math.max(0, value)).toFixed(1);
+}
+
+/** 重置时间的统一渲染出口：相对倒计时 / 绝对时刻按全局偏好二选一。
+ *  主卡片的可点击重置格与速览的只读重置后缀共用，避免两处各写一套模板 */
+export function formatResetDisplay(
+  iso: string | null | undefined,
+  options: {
+    now?: number;
+    language?: "zh" | "en";
+    translate?: (s: string) => string;
+    display?: "relative" | "absolute";
+  } = {},
+): string | null {
+  if (!iso) return null;
+  const t = options.translate ?? ((s: string) => s);
+  if (options.display === "absolute") {
+    return applyParams(t("{time} 重置"), {
+      time: formatResetAt(iso, options.language ?? "zh"),
+    });
+  }
+  return formatReset(iso, options.now, t);
+}
