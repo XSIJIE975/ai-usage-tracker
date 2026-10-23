@@ -239,21 +239,21 @@ describe("卡片行", () => {
   const window: MimoUsageWindow = { used: 6500, limit: 20000, remaining: 13500, percent: 32.5 };
   const plan = (state: PlanState): PlanState => state;
 
-  it("未订阅：中性事实行在前，余额行在后", () => {
+  it("未订阅：状态行在前，余额行在后", () => {
     const lines = buildMimoLines(plan({ kind: "unsubscribed" }), null, balance);
     expect(lines).toEqual([
-      { type: "text", label: "Token Plan", value: "未订阅" },
+      { type: "text", label: "Token Plan", value: "未订阅", status: true },
       { type: "text", label: "账户余额", value: "¥1.00", balance: true },
     ]);
-    // 速览在没有进度行时取「第一条 text」当状态位——它必须是未订阅那行，不是余额
-    expect(lines.find((line) => line.type === "text")?.value).toBe("未订阅");
+    // 速览按 status 标记选状态行（即使有余额也显示），不再靠「第一条 text」启发式
+    expect(lines.find((line) => line.type === "text")?.status).toBe(true);
     expect(primaryProgressLine(lines)).toBeNull();
   });
 
-  it("已过期走中性行，不出进度行也不出倒计时", () => {
+  it("已过期走状态行，不出进度行也不出倒计时", () => {
     const lines = buildMimoLines(plan({ kind: "expired" }), window, balance);
     expect(lines.some((line) => line.type === "progress")).toBe(false);
-    expect(lines[0]).toEqual({ type: "text", label: "Token Plan", value: "Token Plan 已过期" });
+    expect(lines[0]).toEqual({ type: "text", label: "Token Plan", value: "已过期", status: true });
   });
 
   it("在期内：徽章 + 一条进度行（带重置时刻）+ 余额行", () => {
@@ -299,7 +299,7 @@ describe("卡片行", () => {
       null,
       balance,
     );
-    expect(lines[1]).toEqual({ type: "text", label: "Token Plan", value: "暂无额度数据" });
+    expect(lines[1]).toEqual({ type: "text", label: "Token Plan", value: "暂无额度数据", status: true });
   });
 
   it("余额源失败时只剩额度行，不挤出一句「余额未知」", () => {
@@ -404,7 +404,7 @@ describe("快照", () => {
     });
   });
 
-  it("未订阅账号（真机三份响应）：出中性行与余额行，不出进度行", async () => {
+  it("未订阅账号（真机三份响应）：出状态行与余额行，不出进度行", async () => {
     mockRequests({
       "/balance": readFixture("mimo-balance.json"),
       "/tokenPlan/detail": readFixture("mimo-plan-detail.json"),
@@ -414,7 +414,7 @@ describe("快照", () => {
     expect(snapshot.status).toBe("ok");
     expect(snapshot.message).toBeUndefined();
     expect(snapshot.lines).toEqual([
-      { type: "text", label: "Token Plan", value: "未订阅" },
+      { type: "text", label: "Token Plan", value: "未订阅", status: true },
       { type: "text", label: "账户余额", value: "¥1.00", balance: true },
     ]);
   });

@@ -468,6 +468,23 @@ input {
   animation: panel-enter 240ms var(--ease-enter) both;
 }
 
+/* 主题快捷按钮的图标切换：只动这枚 16px 图标，页面/卡片不做整体主题过渡。
+   key={mode} 触发重挂载，动画把新旧图标的硬切柔化一下 */
+@keyframes theme-icon-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.theme-icon-enter {
+  animation: theme-icon-enter 140ms var(--ease-enter) both;
+}
+
 /* 用量数值变化的平滑过渡（进度条宽度 / 用量环弧长与颜色） */
 .panel-meter-bar {
   transition: width var(--transition-duration-slow) ease;
@@ -492,7 +509,9 @@ input {
     box-shadow var(--transition-duration-normal) ease;
 }
 
-.flip-card-flipped {
+/* 必须与 .flip-card 同时命中：单独一枚 .flip-card-flipped（例如快照转异常后
+   .flip-card 已被摘掉）会把整张普通卡镜像翻转，且没有背面可承接内容 */
+.flip-card.flip-card-flipped {
   /* perspective 内联在 transform 里：翻转元素的父级是瀑布流格子/列表容器，不便加 perspective 属性 */
   transform: perspective(1200px) rotateY(180deg);
 }
@@ -577,11 +596,11 @@ input {
 }
 
 .flip-toggle-back .flip-toggle-icon,
-.flip-card-flipped .flip-face-front .flip-toggle-icon {
+.flip-card.flip-card-flipped .flip-face-front .flip-toggle-icon {
   transform: rotateY(180deg);
 }
 
-.flip-card-flipped .flip-toggle-back .flip-toggle-icon {
+.flip-card.flip-card-flipped .flip-toggle-back .flip-toggle-icon {
   transform: rotateY(0deg);
 }
 
@@ -594,5 +613,8 @@ input {
   .flip-toggle,
   .flip-toggle-icon {
     transition: none;
+  }
+  .theme-icon-enter {
+    animation: none;
   }
 }

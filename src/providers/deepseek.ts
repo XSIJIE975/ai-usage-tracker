@@ -97,12 +97,16 @@ async function fetchBalance(instance: ProviderInstance): Promise<ProviderSnapsho
       };
     }
     const formatter = new Intl.NumberFormat("zh-CN", { style: "currency", currency });
+    const unavailable = data.is_available === false;
     const lines: MetricLine[] = [
       {
         type: "badge",
         label: "可用状态",
-        value: data.is_available === false ? "不可用" : "可用",
-        color: data.is_available === false ? "#dc2626" : "#16a34a",
+        value: unavailable ? "不可用" : "可用",
+        color: unavailable ? "#dc2626" : "#16a34a",
+        // 只有异常状态进速览：余额充足与否不能替代「账号当前不可用」这条事实；
+        // 正常的「可用」不占速览版面
+        ...(unavailable ? { status: true } : {}),
       },
       {
         type: "text",

@@ -158,21 +158,25 @@ export function parseExpiry(raw: string | number | undefined): Date | null {
 }
 
 function formatCount(value: number): string {
-  return Number.isInteger(value) ? value.toLocaleString("zh-CN") : value.toFixed(2);
+  // 积分可能有小数：整数千分位、小数最多两位。统一走 toLocaleString，
+  // 避免旧实现整数有逗号、小数没有（截图里 6,539 与 6106.51 两种写法）
+  return value.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
 }
 
-/** 卡片指标行：主行 = 全部有效套餐聚合的积分余量（progress，喂托盘与告警；
+/** 卡片指标行：主行 = 全部有效套餐聚合的积分额度（progress，喂托盘与告警；
  *  已耗尽/已用完的套餐同样计入分母——累计已用口径，与 workbuddy2api ResourceSummary
- *  一致，见 ADR-0029），明细行 = 按套餐名合并（同名套餐是同一包的不同发放周期，
+ *  一致，见 ADR-0029）；余量独立成「剩余积分」行（速览余额位按 balance 标记选它，
+ *  不再把数值寄在进度行上）。明细行 = 按套餐名合并（同名套餐是同一包的不同发放周期，
  *  逐行展示会刷爆卡片——2026-09-21 实测单账号 15 条 Account 同名），到期时间取组内
- *  最早（最紧急先显示）；超过 3 组合并为一行 */
+ *  最早（最紧急先显示）；超过 3 组合并为一行。最早到期的一组打 detail 标记，
+ *  速览只展示这一行——积分没有统一重置时刻，套餐到期是唯一的时间敏感信息 */
 export function parseResourceLines(data: WorkbuddyResourceData | undefined): MetricLine[] {
   const accounts = data?.Accounts ?? data?.Response?.Data?.Accounts ?? [];
   const packages = accounts
     .map((pkg) => ({ pkg, usage: packageUsage(pkg) }))
     .filter(({ usage }) => usage.remain > 0 || usage.size > 0);
   if (packages.length === 0) {
-    return [{ type: "text", label: "积分余量", value: "暂无有效套餐" }];
+    return [{ type: "text", label: "积分额度", value: "暂无有效套餐", status: true }];
   }
 
   let totalRemain = 0;
@@ -185,25 +189,20 @@ export function parseResourceLines(data: WorkbuddyResourceData | undefined): Met
   if (totalSize > 0) {
     lines.push({
       type: "progress",
-      label: "积分余量",
+      label: "积分额度",
       used: totalSize - totalRemain,
       limit: totalSize,
       percentUsed: ((totalSize - totalRemain) / totalSize) * 100,
-      // 余额位数值（速览按 balance 标记选行）：纯数字，卡片进度分支不渲染 value
-      value: formatCount(totalRemain),
-      balance: true,
-    });
-  } else {
-    // 只有余量没有总量：出不了百分比，退化为文本行（主指标回退余额数值的口径不适用，
-    // workbuddy 没有金额量纲，该实例不参与托盘环与阈值告警）
-    lines.push({
-      type: "text",
-      label: "积分余量",
-      value: "余 {remain}",
-      valueParams: { remain: formatCount(totalRemain) },
-      balance: true,
     });
   }
+  // 没有总量（totalSize=0）时出不了百分比，退化为只有余额行；该实例因此不参与
+  // 托盘环与阈值告警（没有百分比量纲），主卡与速览仍能显示余量
+  lines.push({
+    type: "text",
+    label: "剩余积分",
+    value: formatCount(totalRemain),
+    balance: true,
+  });
 
   interface PackageGroup {
     name: string;
@@ -226,6 +225,7 @@ export function parseResourceLines(data: WorkbuddyResourceData | undefined): Met
     const eb = b.expiry?.getTime() ?? Number.POSITIVE_INFINITY;
     return ea - eb;
   });
+  const nearest = sortedGroups.find((group) => group.expiry) ?? null;
   const MAX_PACKAGE_LINES = 3;
   for (const group of sortedGroups.slice(0, MAX_PACKAGE_LINES)) {
     const remain = { remain: formatCount(group.remain) };
@@ -236,6 +236,7 @@ export function parseResourceLines(data: WorkbuddyResourceData | undefined): Met
             label: group.name,
             value: "余 {remain} · {expiresAt}到期",
             valueParams: { ...remain, expiresAt: group.expiry.toISOString() },
+            ...(group === nearest ? { detail: true } : {}),
           }
         : { type: "text", label: group.name, value: "余 {remain}", valueParams: remain },
     );

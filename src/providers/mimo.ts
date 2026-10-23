@@ -343,9 +343,11 @@ export function buildMimoLines(
   }
 
   if (plan.kind === "unsubscribed") {
-    lines.push({ type: "text", label: "Token Plan", value: "未订阅" });
+    lines.push({ type: "text", label: "Token Plan", value: "未订阅", status: true });
   } else if (plan.kind === "expired") {
-    lines.push({ type: "text", label: "Token Plan", value: "Token Plan 已过期" });
+    // label 已经说了 Token Plan，value 只写状态——旧值「Token Plan 已过期」会让
+    // 主卡片渲染成「Token Plan Token Plan 已过期」
+    lines.push({ type: "text", label: "Token Plan", value: "已过期", status: true });
   } else if (window) {
     const line: MetricLine = {
       type: "progress",
@@ -359,7 +361,7 @@ export function buildMimoLines(
     lines.push(line);
   } else if (plan.kind === "active" && usageAvailable) {
     // 订阅在期内但这一轮没有可画的窗口（未用过 / 接口没给明细）：陈述状态而非故障
-    lines.push({ type: "text", label: "Token Plan", value: "暂无额度数据" });
+    lines.push({ type: "text", label: "Token Plan", value: "暂无额度数据", status: true });
   }
 
   if (balance) {

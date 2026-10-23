@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Bell, Gauge, LayoutGrid, List, ListX, Lock, RefreshCw, X } from "lucide-react";
 import { useFitWindowHeight } from "../hooks/use-fit-window-height";
 import { usePanelAutoRefresh, usePanelWindow } from "../hooks/use-panel-window";
+import { useNow } from "../hooks/use-now";
 import { BrandIcon } from "../components/BrandIcon";
 import { Button } from "../components/ui/button";
 import { IconButton } from "../components/ui/icon-button";
@@ -37,6 +38,10 @@ export function GlanceWindow() {
   const [noticeOpen, setNoticeOpen] = useState(false);
   const t = useT();
   const language = useLanguage();
+  // 重置倒计时跟随全局偏好（主卡片点击切换同一设置）；now 每 30 秒推进一次，
+  // 面板打开期间倒计时会自己走，不依赖快照刷新
+  const resetDisplay = useAppStore((state) => state.settings.resetTimeDisplay);
+  const now = useNow();
 
   const { ready, panelVisible, hideWindow } = usePanelWindow({
     shownEvent: "glance-shown",
@@ -164,9 +169,21 @@ export function GlanceWindow() {
               }
             />
           ) : settings.glanceLayout === "cards" ? (
-            <GlanceCards items={glanceItems} translate={t} />
+            <GlanceCards
+              items={glanceItems}
+              translate={t}
+              language={language}
+              resetDisplay={resetDisplay}
+              now={now}
+            />
           ) : (
-            <GlanceRows items={glanceItems} translate={t} />
+            <GlanceRows
+              items={glanceItems}
+              translate={t}
+              language={language}
+              resetDisplay={resetDisplay}
+              now={now}
+            />
           )}
         </div>
       </main>

@@ -381,26 +381,32 @@ const POOL_LABELS: Partial<Record<QoderQuotaKey, string>> = {
 export function parseUsageLines(view: QoderUsageView): MetricLine[] {
   if (view.windows.length === 0) {
     if (view.aggregate.total <= 0) {
-      // 未分配积分（体验版）走中性事实行，与 WorkBuddy 无套餐同法（workbuddy.ts:284）：
+      // 未分配积分（体验版）走状态行，与 WorkBuddy 无套餐同法（workbuddy.ts:284）：
       // 不出进度行，红条、已用 100%、重置倒计时、耗尽告警与托盘满环就都无从产生
-      return [{ type: "text", label: "积分余量", value: "未分配积分" }];
+      return [{ type: "text", label: "积分额度", value: "未分配积分", status: true }];
     }
     // 响应没给分容器（只回 total_quota）：不拆窗也不编造窗口，退回收汇总单行
     const merged: MetricLine = {
       type: "progress",
-      label: "积分余量",
+      label: "积分额度",
       used: view.aggregate.used,
       limit: view.aggregate.total,
       percentUsed: clampPercent(view.aggregate.percent),
-      value: formatInt(view.aggregate.remaining),
-      balance: true,
     };
     if (view.resetsAt) merged.resetsAt = view.resetsAt.toISOString();
-    return [merged];
+    return [
+      merged,
+      {
+        type: "text",
+        label: "剩余积分",
+        value: formatInt(view.aggregate.remaining),
+        balance: true,
+      },
+    ];
   }
 
   const lines: MetricLine[] = [];
-  for (const [index, window] of view.windows.entries()) {
+  for (const window of view.windows) {
     const line: MetricLine = {
       type: "progress",
       label: WINDOW_LABELS[window.key],
@@ -408,10 +414,6 @@ export function parseUsageLines(view: QoderUsageView): MetricLine[] {
       limit: window.total,
       percentUsed: clampPercent(window.percent),
     };
-    if (index === 0) {
-      line.value = formatInt(view.aggregate.remaining);
-      line.balance = true;
-    }
     if (window.resetsAt) line.resetsAt = window.resetsAt.toISOString();
     lines.push(line);
 
@@ -425,9 +427,25 @@ export function parseUsageLines(view: QoderUsageView): MetricLine[] {
             label: pool,
             value: "余 {remain} · {expiresAt}到期",
             valueParams: { ...remain, expiresAt: window.earliestExpiry.toISOString() },
+            detail: true,
           }
-        : { type: "text", label: pool, value: "余 {remain}", valueParams: remain },
+        : { type: "text", label: pool, value: "余 {remain}", valueParams: remain, detail: true },
     );
+  }
+  // 余额独立成行（速览余额位按 balance 标记选行），不再挂在第一条进度行上：
+  // - 多池：跨池合计，回答「总共还剩多少」；
+  // - 单池是订阅积分（没有池明细行）：合计就是它自己的余量，照出；
+  // - 单池是资源包/专属包且还有余量：上面的池明细已经报了同一个数，省掉合计避免重复
+  const only = view.windows.length === 1 ? view.windows[0] : null;
+  const singlePoolHasDetail =
+    only !== null && POOL_LABELS[only.key] !== undefined && only.remaining > 0;
+  if (!singlePoolHasDetail) {
+    lines.push({
+      type: "text",
+      label: "剩余积分",
+      value: formatInt(view.aggregate.remaining),
+      balance: true,
+    });
   }
   return lines;
 }

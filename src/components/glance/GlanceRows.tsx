@@ -1,22 +1,38 @@
-import { LoaderCircle, TriangleAlert } from "lucide-react";
-import { cn, formatReset } from "../../lib/utils";
+import { LoaderCircle, TriangleAlert, Wallet } from "lucide-react";
+import { cn, displayPercentInteger, formatResetDisplay } from "../../lib/utils";
 import { metricColor, type GlanceInstance } from "./data";
 import type { Translate } from "./data";
 import { ProviderLogo } from "../brand/provider-logo";
 import { SiteBadge } from "../SiteBadge";
+import { GlanceLines, type ResetDisplay } from "./GlanceLines";
+import type { Language } from "../../i18n";
 
-/** 紧凑行列表形态：每实例一块，名称+百分比 / 细进度条+重置倒计时 / 明细字段行（全部固定展示） */
+/** 紧凑行列表形态：名称 + 最紧窗大号读数 / 该窗标签与重置 / 细进度条 / 其余窗口与说明行 */
 export function GlanceRows({
   items,
   translate,
+  language,
+  resetDisplay,
+  now,
 }: {
   items: GlanceInstance[];
   translate: Translate;
+  language: Language;
+  resetDisplay: ResetDisplay;
+  now: number;
 }) {
   return (
     <div className="space-y-2">
       {items.map((item, index) => (
-        <GlanceRow key={item.id} item={item} index={index} translate={translate} />
+        <GlanceRow
+          key={item.id}
+          item={item}
+          index={index}
+          translate={translate}
+          language={language}
+          resetDisplay={resetDisplay}
+          now={now}
+        />
       ))}
     </div>
   );
@@ -26,25 +42,36 @@ function GlanceRow({
   item,
   index,
   translate,
+  language,
+  resetDisplay,
+  now,
 }: {
   item: GlanceInstance;
   index: number;
   translate: Translate;
+  language: Language;
+  resetDisplay: ResetDisplay;
+  now: number;
 }) {
-  const percent = item.primaryPercent;
+  const percent = item.tightestPercent;
   const color = metricColor(percent, item.alertActive);
-  const secondaryWindows = item.windows.filter((window) => !window.primary);
-  const metaParts: string[] = [];
-  if (secondaryWindows.length > 0) {
-    metaParts.push(
-      secondaryWindows.map((window) => `${window.label} ${Math.round(window.percent)}%`).join(" · "),
-    );
-  } else if (item.primaryLabel) {
-    metaParts.push(item.primaryLabel);
-  }
-  const resetText = item.primaryResetsAt
-    ? formatReset(item.primaryResetsAt, Date.now(), translate)
-    : null;
+  const balance = item.lines.find((line) => line.kind === "balance");
+  const hasStatus = item.lines.some((line) => line.kind === "status");
+  // 大号读数已经是这扇最紧窗的百分比，它的标签/重置紧贴读数，不在下面重复一行；
+  // 其余窗口与余额/明细/状态行照常逐行展示
+  const otherLines = item.lines.filter((line) => !(line.kind === "window" && line.tightest));
+  const resetText = formatResetDisplay(item.tightestResetsAt, {
+    now,
+    language,
+    translate,
+    display: resetDisplay,
+  });
+  const alternateReset = formatResetDisplay(item.tightestResetsAt, {
+    now,
+    language,
+    translate,
+    display: resetDisplay === "absolute" ? "relative" : "absolute",
+  });
 
   return (
     <div
@@ -62,19 +89,40 @@ function GlanceRow({
         {item.alertActive && (
           <TriangleAlert className="h-3.5 w-3.5 shrink-0 text-warning" aria-label={translate("有额度告警")} />
         )}
-        <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-fg">{item.label}</span>
+        <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-fg" title={item.label}>
+          {item.label}
+        </span>
         {item.refreshing ? (
           <LoaderCircle className="h-3.5 w-3.5 shrink-0 animate-spin text-fg-muted" />
         ) : percent !== null ? (
-          <span className="tnum shrink-0 text-[13px] font-semibold" style={{ color }}>
-            {Math.round(percent)}%
+          <span className="flex shrink-0 items-baseline gap-1">
+            <span className="text-[10px] text-fg-muted">{translate("已用")}</span>
+            <span className="tnum text-[13px] font-semibold" style={{ color }}>
+              {displayPercentInteger(percent)}%
+            </span>
           </span>
-        ) : item.balanceText ? (
-          <span className="tnum shrink-0 text-[13px] font-semibold text-fg">{item.balanceText}</span>
-        ) : (
+        ) : balance ? (
+          <Wallet className="h-3.5 w-3.5 shrink-0 text-fg-muted" aria-label={balance.label} />
+        ) : hasStatus ? null : (
           <StatusText item={item} translate={translate} />
         )}
       </div>
+
+      {percent !== null && item.tightestLabel ? (
+        <div className="mt-1 flex items-baseline gap-2 text-[11px] leading-4 text-fg-muted">
+          <span className="min-w-0 flex-1 truncate" title={item.tightestLabel}>
+            {item.tightestLabel}
+          </span>
+          {resetText ? (
+            <span
+              className="tnum shrink-0 text-right text-[10px] text-fg-muted"
+              title={alternateReset ?? undefined}
+            >
+              {resetText}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
 
       {percent !== null && (
         <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-2">
@@ -85,16 +133,15 @@ function GlanceRow({
         </div>
       )}
 
-      {(metaParts.length > 0 || resetText) && (
-        <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px] leading-4 text-fg-muted">
-          <span className="min-w-0 truncate">{metaParts.join(" · ")}</span>
-          {resetText && <span className="tnum shrink-0">{resetText}</span>}
-        </div>
-      )}
-
-      {percent !== null && item.balanceText && (
-        <div className="tnum mt-0.5 text-[11px] text-fg-secondary">
-          {translate("账户余额")} {item.balanceText}
+      {otherLines.length > 0 && (
+        <div className="mt-1">
+          <GlanceLines
+            lines={otherLines}
+            translate={translate}
+            language={language}
+            resetDisplay={resetDisplay}
+            now={now}
+          />
         </div>
       )}
     </div>
@@ -108,9 +155,5 @@ function StatusText({ item, translate }: { item: GlanceInstance; translate: Tran
   if (item.status === "needs_config") {
     return <span className="shrink-0 text-[12px] text-fg-muted">{translate("待配置")}</span>;
   }
-  return (
-    <span className="shrink-0 text-[12px] text-fg-muted">
-      {item.neutralText ?? translate("暂无数据")}
-    </span>
-  );
+  return <span className="shrink-0 text-[12px] text-fg-muted">{translate("暂无数据")}</span>;
 }

@@ -15,7 +15,7 @@ import {
   Trash2,
 } from "lucide-react";
 import type { MetricLine, ProviderInstance, ProviderSnapshot } from "../types/ipc";
-import { formatClock, formatInt, formatReset, formatResetAt } from "../lib/utils";
+import { cn, displayPercentDecimal, formatClock, formatInt, formatResetDisplay } from "../lib/utils";
 import { errorHintTitle } from "../lib/error-hint";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Progress } from "./ui/progress";
@@ -38,18 +38,7 @@ import { providerName } from "../providers";
 import { resetSplitOf, resetSplitTemplate } from "../providers/glm";
 import { useAppStore } from "../store/useAppStore";
 import { applyParams, renderLineValue, useLanguage, useT } from "../i18n";
-import { cn } from "../lib/utils";
-
-function useNow(intervalMs = 30_000) {
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), intervalMs);
-    return () => window.clearInterval(timer);
-  }, [intervalMs]);
-
-  return now;
-}
+import { useNow } from "../hooks/use-now";
 
 /** 已知供应商使用官方标识，未识别的退回首字母头像 */
 const BRAND_LOGOS: Record<
@@ -148,7 +137,7 @@ function MetricRow({
             {showAmount
               ? `${t("已用")} ${formatInt(used)} / ${formatInt(limit)}`
               : line.percentUsed !== undefined
-                ? `${t("已用")} ${line.percentUsed.toFixed(1)}%`
+                ? `${t("已用")} ${displayPercentDecimal(line.percentUsed)}%`
                 : `${line.suffix ?? ""}${(line.used ?? 0).toFixed(2)} / ${line.suffix ?? ""}${(line.limit ?? 0).toFixed(2)}`}
           </span>
         </div>
@@ -179,9 +168,12 @@ function MetricRow({
               aria-label={`${t("点击切换重置时间显示")}（${resetTitle ?? ""}）`}
               aria-pressed={resetTimeDisplay === "absolute"}
             >
-              {resetTimeDisplay === "absolute"
-                ? applyParams(t("{time} 重置"), { time: formatResetAt(line.resetsAt, language) })
-                : formatReset(line.resetsAt, now, t)}
+              {formatResetDisplay(line.resetsAt, {
+                now,
+                language,
+                translate: t,
+                display: resetTimeDisplay,
+              }) ?? ""}
             </button>
           ) : null}
         </div>
@@ -630,7 +622,6 @@ export function ProviderCard({
   // 翻面朝向：受控（主窗口网格，拖拽浮起副本与占位卡共享）或内部自持（快速面板）。
   // 每卡片独立，不进全局设置，卡片之间、主/快窗口之间互不联动
   const [localFlipped, setLocalFlipped] = useState(false);
-  const flipped = flippedProp ?? localFlipped;
   const toggleFlip = () => (onToggleFlip ? onToggleFlip() : setLocalFlipped((value) => !value));
   const kindName = t(providerName(instance.providerId));
   const title = displayName(instance, kindName);
@@ -644,6 +635,12 @@ export function ProviderCard({
       line.used !== undefined &&
       line.limit !== undefined,
   );
+  // 朝向只在可翻卡时生效。快照转为错误/待配置（如 Key 失效）后进度行消失，
+  // canFlip 变 false、翻面按钮不再渲染；若仍保留 flip-card-flipped，整卡会被
+  // rotateY(180deg) 镜像且用户没有任何入口翻回来（回归：Key 失效后卡片文字倒置）。
+  // 这里是渲染期收敛而非清状态：原始朝向仍保留，数据恢复后会回到此前的数值面，
+  // 与 DESIGN「刷新数据保持、窗口重载才回百分比面」的语义一致。
+  const flipped = canFlip && (flippedProp ?? localFlipped);
 
   // 重置卡入口：读快照 availableResetIds，无卡（或该源本轮失败）即为 null，按钮不出现。
   // 明细的唯一宿主是弹窗，卡片正面不占行位（ADR-0014 修订）

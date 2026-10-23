@@ -247,32 +247,37 @@ describe("parseUsageLines", () => {
   it("falls back to one merged line when the response has no per-container quota", () => {
     // 真机两站都会给分容器；这条走的是"只回 total_quota"的老形态，不拆窗也不编造窗口
     const view = parseUsageView(readFixture("qoder-usage.json"), NOW)!;
-    const [line] = parseUsageLines(view);
+    const [line, balance] = parseUsageLines(view);
     expect(line.type).toBe("progress");
-    expect(line.label).toBe("积分余量");
+    expect(line.label).toBe("积分额度");
     expect(line.used).toBe(412.5);
     expect(line.limit).toBe(1500);
     expect(line.percentUsed).toBeCloseTo(27.5);
-    expect(line.balance).toBe(true);
-    expect(line.value).toBe("1,088");
+    expect(line.balance).toBeUndefined();
+    expect(line.value).toBeUndefined();
     expect(line.resetsAt).toBe("2026-10-01T00:00:00.000Z");
+    expect(balance).toEqual({
+      type: "text",
+      label: "剩余积分",
+      value: "1,088",
+      balance: true,
+    });
   });
 
   it("splits the paid China-site sample into subscription and resource package lines", () => {
     const view = parseUsageView(readFixture("qoder-usage-china.json"), CHINA_NOW)!;
     const lines = parseUsageLines(view);
-    expect(lines).toHaveLength(3);
+    expect(lines).toHaveLength(4);
     expect(lines[0]).toMatchObject({
       type: "progress",
       label: "订阅积分",
       used: 2000,
       limit: 2000,
-      // 余额位是实例级总余量（total_quota 汇总位），不是这一行自己的 0
-      value: "666",
-      balance: true,
       resetsAt: "2026-09-26T00:28:27.566Z",
     });
     expect(lines[0].percentUsed).toBe(100);
+    expect(lines[0].value).toBeUndefined();
+    expect(lines[0].balance).toBeUndefined();
     expect(lines[1]).toMatchObject({ type: "progress", label: "资源包积分", used: 534, limit: 1200 });
     expect(lines[1].percentUsed).toBeCloseTo(44.5);
     expect(lines[2]).toMatchObject({
@@ -280,6 +285,13 @@ describe("parseUsageLines", () => {
       label: "资源包",
       value: "余 {remain} · {expiresAt}到期",
       valueParams: { remain: "666", expiresAt: new Date(1792307582568).toISOString() },
+      detail: true,
+    });
+    expect(lines[3]).toEqual({
+      type: "text",
+      label: "剩余积分",
+      value: "666",
+      balance: true,
     });
   });
 
@@ -309,7 +321,7 @@ describe("parseUsageLines", () => {
     expect(primaryProgressLine(lines, NOW)?.label).toBe("资源包积分");
   });
 
-  it("marks only the first progress line as the balance carrier", () => {
+  it("余额独立成行：多池出合计，进度行不再挂 balance", () => {
     const view = parseUsageView(
       asUsageData({
         plan_quota: { quota_summary: { used_value: 500, limit_value: 500, remaining_value: 0 } },
@@ -324,13 +336,26 @@ describe("parseUsageLines", () => {
     const lines = parseUsageLines(view);
     const progressLines = lines.filter((line) => line.type === "progress");
     expect(progressLines.map((line) => line.label)).toEqual(["订阅积分", "资源包积分", "专属资源包"]);
-    expect(progressLines.map((line) => line.balance)).toEqual([true, undefined, undefined]);
-    expect(progressLines[0].value).toBe("130");
-    // 两个池子都还剩点数，各带一条到期明细行（这批数据没下发 quota_detail，所以只报余量）
+    expect(progressLines.map((line) => line.balance)).toEqual([undefined, undefined, undefined]);
+    expect(progressLines.map((line) => line.value)).toEqual([undefined, undefined, undefined]);
+    // 两个池子都还剩点数，各带一条到期明细行（这批数据没下发 quota_detail，所以只报余量）；
+    // 多池再出一条跨池合计
     expect(lines.filter((line) => line.type === "text").map((line) => line.label)).toEqual([
       "资源包",
       "专属资源包",
+      "剩余积分",
     ]);
+    expect(lines.filter((line) => line.type === "text").map((line) => line.detail)).toEqual([
+      true,
+      true,
+      undefined,
+    ]);
+    expect(lines[lines.length - 1]).toEqual({
+      type: "text",
+      label: "剩余积分",
+      value: "130",
+      balance: true,
+    });
   });
 
   it("omits the package detail line when nothing is left in the pool", () => {
@@ -342,7 +367,14 @@ describe("parseUsageLines", () => {
       }),
       NOW,
     )!;
-    expect(parseUsageLines(view).map((line) => line.type)).toEqual(["progress", "progress"]);
+    // 两个进度行 + 跨池合计（资源包已耗尽，没有明细行可承载余量）
+    const lines = parseUsageLines(view);
+    expect(lines.map((line) => line.type)).toEqual(["progress", "progress", "text"]);
+    expect(lines[lines.length - 1]).toMatchObject({
+      label: "剩余积分",
+      value: "90",
+      balance: true,
+    });
   });
 
   it("degrades the package detail line to a bare remainder when no expiry is known", () => {
@@ -373,10 +405,12 @@ describe("parseUsageLines", () => {
     expect(line.resetsAt).toBeUndefined();
   });
 
-  it("renders zero total as a neutral fact line instead of a progress bar", () => {
+  it("renders zero total as a status line instead of a progress bar", () => {
     // 没有进度行就没有 100%、重置倒计时与耗尽告警（与 WorkBuddy 无套餐同法）
     const view = parseUsageView({ totalQuota: { quotaSummary: { usedValue: 0, limitValue: 0 } } }, NOW)!;
-    expect(parseUsageLines(view)).toEqual([{ type: "text", label: "积分余量", value: "未分配积分" }]);
+    expect(parseUsageLines(view)).toEqual([
+      { type: "text", label: "积分额度", value: "未分配积分", status: true },
+    ]);
   });
 
   it("renders the real trial-account response end to end", () => {
@@ -388,7 +422,9 @@ describe("parseUsageLines", () => {
     );
     expect(view).not.toBeNull();
     expect(view!.windows).toEqual([]);
-    expect(parseUsageLines(view!)).toEqual([{ type: "text", label: "积分余量", value: "未分配积分" }]);
+    expect(parseUsageLines(view!)).toEqual([
+      { type: "text", label: "积分额度", value: "未分配积分", status: true },
+    ]);
   });
 });
 
@@ -425,8 +461,9 @@ describe("processUsageResult", () => {
   it("passes a valid payload through to usage lines", () => {
     const outcome = processUsageResult(httpResult(readFixture("qoder-usage.json")));
     expect(outcome.ok).toBe(true);
-    expect(outcome.lines).toHaveLength(1);
+    expect(outcome.lines).toHaveLength(2);
     expect(outcome.lines[0].type).toBe("progress");
+    expect(outcome.lines[1]).toMatchObject({ label: "剩余积分", balance: true });
   });
 });
 
@@ -494,7 +531,8 @@ describe("fetchQoderSnapshot", () => {
 
     expect(snapshot.status).toBe("ok");
     expect(snapshot.providerId).toBe("qoder");
-    expect(snapshot.lines).toHaveLength(1);
+    expect(snapshot.lines).toHaveLength(2);
+    expect(snapshot.lines[1]).toMatchObject({ label: "剩余积分", balance: true });
 
     expect(mockInvoke.mock.calls[1]?.[0]).toBe("provider_request");
     const options = (mockInvoke.mock.calls[1]?.[1] ?? {}) as Record<string, unknown>;

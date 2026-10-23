@@ -231,28 +231,40 @@ describe("parseResourceLines", () => {
     const lines = parseResourceLines(
       resourceData([totalPackage(), cyclePackage()]),
     );
-    expect(lines).toHaveLength(3);
+    expect(lines).toHaveLength(4);
     const main = lines[0];
     expect(main.type).toBe("progress");
-    expect(main.label).toBe("积分余量");
+    expect(main.label).toBe("积分额度");
     // 余 1500+800.5=2300.5，总 2000+1000=3000，已用 699.5 → 23.316..%
     expect(main.used).toBeCloseTo(699.5, 5);
     expect(main.limit).toBe(3000);
     expect(main.percentUsed).toBeCloseTo(((3000 - 2300.5) / 3000) * 100, 5);
-    // 余额位数值：纯数字总余量 + balance 标记（速览按标记选行）
-    expect(main.value).toBe("2300.50");
-    expect(main.balance).toBe(true);
+    // 余量独立成「剩余积分」行，进度行不再寄 value/balance
+    expect(main.value).toBeUndefined();
+    expect(main.balance).toBeUndefined();
+    expect(lines[1]).toEqual({
+      type: "text",
+      label: "剩余积分",
+      value: "2,300.5",
+      balance: true,
+    });
   });
 
   it("明细行按到期时间升序排列（最紧急在前），行内带余量与到期日", () => {
     const lines = parseResourceLines(
       resourceData([totalPackage(), cyclePackage()]),
     );
-    // 周期包 9-30 到期在前，月度套餐 10-1 在后；value 是模板，渲染端代入日期
-    expect(lines[1]).toMatchObject({ type: "text", label: "周期包", value: "余 {remain} · {expiresAt}到期" });
-    expect(renderLineValue(lines[1]!, (s) => s, "zh")).toBe("余 800.50 · 9月30日到期");
-    expect(lines[2]).toMatchObject({ type: "text", label: "月度套餐" });
-    expect(renderLineValue(lines[2]!, (s) => s, "zh")).toBe("余 1,500 · 10月1日到期");
+    // 周期包 9-30 到期在前，月度套餐 10-1 在后；value 是模板，渲染端代入日期。
+    // 最早到期的一组打 detail 标记，速览只展示这一行
+    expect(lines[2]).toMatchObject({
+      type: "text",
+      label: "周期包",
+      value: "余 {remain} · {expiresAt}到期",
+      detail: true,
+    });
+    expect(renderLineValue(lines[2]!, (s) => s, "zh")).toBe("余 800.5 · 9月30日到期");
+    expect(lines[3]).toMatchObject({ type: "text", label: "月度套餐" });
+    expect(renderLineValue(lines[3]!, (s) => s, "zh")).toBe("余 1,500 · 10月1日到期");
   });
 
   it("超过 3 份套餐时前 3 行逐条展示，其余合并为一行", () => {
@@ -264,11 +276,11 @@ describe("parseResourceLines", () => {
       cyclePackage({ PackageName: "E", CycleEndTime: "2026-09-29 00:00:00", CycleCapacityRemainPrecise: 200 }),
     ];
     const lines = parseResourceLines(resourceData(packages));
-    // 主行 + 3 行明细 + 1 行合并
-    expect(lines).toHaveLength(5);
-    expect(lines[1].label).toBe("A");
-    expect(lines[3].label).toBe("C");
-    expect(lines[4]).toMatchObject({
+    // 主行 + 剩余积分 + 3 行明细 + 1 行合并
+    expect(lines).toHaveLength(6);
+    expect(lines[2].label).toBe("A");
+    expect(lines[4].label).toBe("C");
+    expect(lines[5]).toMatchObject({
       label: "其余 {count} 个套餐",
       params: { count: 2 },
       value: "余 {remain}",
@@ -276,22 +288,27 @@ describe("parseResourceLines", () => {
     });
   });
 
-  it("无有效套餐时出中性事实行，不出空快照", () => {
-    const lines = parseResourceLines(resourceData([]));
-    expect(lines).toEqual([{ type: "text", label: "积分余量", value: "暂无有效套餐" }]);
-    expect(parseResourceLines(undefined)).toEqual([{ type: "text", label: "积分余量", value: "暂无有效套餐" }]);
+  it("无有效套餐时出状态行，不出空快照", () => {
+    const expected = [{ type: "text", label: "积分额度", value: "暂无有效套餐", status: true }];
+    expect(parseResourceLines(resourceData([]))).toEqual(expected);
+    expect(parseResourceLines(undefined)).toEqual(expected);
   });
 
-  it("只有余量没有总量时退化为文本行（出不了百分比不进托盘）", () => {
+  it("只有余量没有总量时退化为只有余额行（出不了百分比不进托盘）", () => {
     const lines = parseResourceLines(
       resourceData([{ PackageName: "残缺包", CapacityRemainPrecise: 42 } as WorkbuddyPackage]),
     );
     expect(lines[0]).toEqual({
       type: "text",
-      label: "积分余量",
+      label: "剩余积分",
+      value: "42",
+      balance: true,
+    });
+    expect(lines[1]).toMatchObject({
+      type: "text",
+      label: "残缺包",
       value: "余 {remain}",
       valueParams: { remain: "42" },
-      balance: true,
     });
   });
 
@@ -314,8 +331,9 @@ describe("parseResourceLines", () => {
     );
     // 余 2000+0=2000，总 2000+100=2100，已用 100
     expect(lines[0]).toMatchObject({ type: "progress", used: 100, limit: 2100 });
-    expect(lines[1]).toMatchObject({ label: "超量包", value: "余 {remain} · {expiresAt}到期", valueParams: { remain: "2,000" } });
-    expect(lines[2]).toMatchObject({ label: "负值包", value: "余 {remain} · {expiresAt}到期", valueParams: { remain: "0" } });
+    expect(lines[1]).toMatchObject({ type: "text", label: "剩余积分", value: "2,000", balance: true });
+    expect(lines[2]).toMatchObject({ label: "超量包", value: "余 {remain} · {expiresAt}到期", valueParams: { remain: "2,000" }, detail: true });
+    expect(lines[3]).toMatchObject({ label: "负值包", value: "余 {remain} · {expiresAt}到期", valueParams: { remain: "0" } });
   });
 
   it("周期制整组采用：缺 Cycle 总量时整组回退总量制，不跨制拼接字段", () => {
@@ -333,10 +351,12 @@ describe("parseResourceLines", () => {
       ]),
     );
     expect(lines[0]).toMatchObject({ type: "progress", used: 100, limit: 200 });
-    expect(lines[1]).toMatchObject({
+    expect(lines[1]).toMatchObject({ type: "text", label: "剩余积分", value: "100", balance: true });
+    expect(lines[2]).toMatchObject({
       label: "孤立周期余量",
       value: "余 {remain} · {expiresAt}到期",
       valueParams: { remain: "100" },
+      detail: true,
     });
   });
 
@@ -370,20 +390,22 @@ describe("parseResourceLines", () => {
     ];
     const lines = parseResourceLines(flatData(accounts));
     // 主行：余 110.26 / 700，已用 589.74
-    expect(lines[0]).toMatchObject({ type: "progress", label: "积分余量" });
+    expect(lines[0]).toMatchObject({ type: "progress", label: "积分额度" });
     expect(lines[0]!.used).toBeCloseTo(589.74, 5);
     expect(lines[0]!.limit).toBe(700);
-    // 两个分组，按最早到期升序：体验版 9月30日（已用尽）在前，裂变包 10月9日在后
-    expect(lines[1]).toMatchObject({ type: "text", label: "CodeBuddy个人体验版", value: "余 {remain} · {expiresAt}到期", valueParams: { remain: "0" } });
-    expect(lines[2]).toMatchObject({ type: "text", label: "CodeBuddy个人版国内运营裂变包", value: "余 {remain} · {expiresAt}到期", valueParams: { remain: "110.26" } });
-    expect(renderLineValue(lines[2]!, (s) => s, "zh")).toBe("余 110.26 · 10月9日到期");
+    expect(lines[1]).toMatchObject({ type: "text", label: "剩余积分", value: "110.26", balance: true });
+    // 两个分组，按最早到期升序：体验版 9月30日（已用尽）在前，裂变包 10月9日在后；
+    // 最早到期的一组打 detail 标记
+    expect(lines[2]).toMatchObject({ type: "text", label: "CodeBuddy个人体验版", value: "余 {remain} · {expiresAt}到期", valueParams: { remain: "0" }, detail: true });
+    expect(lines[3]).toMatchObject({ type: "text", label: "CodeBuddy个人版国内运营裂变包", value: "余 {remain} · {expiresAt}到期", valueParams: { remain: "110.26" } });
+    expect(renderLineValue(lines[3]!, (s) => s, "zh")).toBe("余 110.26 · 10月9日到期");
   });
 
   it("社区文档的 Response 包裹形态同样可解析（兼容另一端点）", () => {
     const lines = parseResourceLines(
       resourceData([totalPackage(), cyclePackage()]),
     );
-    expect(lines).toHaveLength(3);
+    expect(lines).toHaveLength(4);
     expect(lines[0]!.limit).toBe(3000);
   });
 });
@@ -573,7 +595,7 @@ describe("workbuddyProvider.fetch", () => {
     expect(resourceCall.auth).toBe("session_cookie");
     expect(resourceCall.credentialSlot).toBeUndefined();
     // 卡片行：主行 + 明细 + 连登
-    expect(snapshot.lines.map((line) => line.label)).toEqual(["积分余量", "月度套餐", "连登"]);
+    expect(snapshot.lines.map((line) => line.label)).toEqual(["积分额度", "剩余积分", "月度套餐", "连登"]);
   });
 
   it("刷新链顺序：签到 → 活跃上报 → 连登回读（本轮读到的天数才是上报之后的值）", async () => {
@@ -638,7 +660,7 @@ describe("workbuddyProvider.fetch", () => {
     const snapshot = await workbuddyProvider.fetch(instance);
     expect(snapshot.status).toBe("ok");
     expect(snapshot.checkin).toBeUndefined();
-    expect(snapshot.lines.length).toBe(3);
+    expect(snapshot.lines.length).toBe(4);
   });
 
   it("连登源失败静默：无行、无 message，快照仍 ok", async () => {
@@ -651,7 +673,7 @@ describe("workbuddyProvider.fetch", () => {
     const snapshot = await workbuddyProvider.fetch(instance);
     expect(snapshot.status).toBe("ok");
     expect(snapshot.message).toBeUndefined();
-    expect(snapshot.lines.map((line) => line.label)).toEqual(["积分余量", "月度套餐"]);
+    expect(snapshot.lines.map((line) => line.label)).toEqual(["积分额度", "剩余积分", "月度套餐"]);
   });
 
   it("余额 401 → 错误快照，message 指引重填三项凭据", async () => {
@@ -699,7 +721,7 @@ describe("workbuddyProvider.fetch 喵喵旅行", () => {
     const snapshot = await workbuddyProvider.fetch(instance);
     expect(snapshot.status).toBe("ok");
     expect(snapshot.travel).toEqual({ tripKey: "1789370635", credited: 9 });
-    expect(snapshot.lines.map((line) => line.label)).toEqual(["积分余量", "月度套餐", "喵喵旅行", "连登"]);
+    expect(snapshot.lines.map((line) => line.label)).toEqual(["积分额度", "剩余积分", "月度套餐", "喵喵旅行", "连登"]);
     // claim 带 record_id、depart 固定 location_id 1（两家参考实现交叉验证）
     const callOf = (url: string) =>
       mockInvoke.mock.calls.find((call) => (call[1] as { url?: string }).url === url)?.[1] as {
@@ -751,7 +773,7 @@ describe("workbuddyProvider.fetch 喵喵旅行", () => {
     });
     const snapshot = await workbuddyProvider.fetch(instance);
     expect(snapshot.travel).toEqual({ tripKey: "1789370635", credited: 9 });
-    expect(snapshot.lines.map((line) => line.label)).toEqual(["积分余量", "月度套餐", "连登"]);
+    expect(snapshot.lines.map((line) => line.label)).toEqual(["积分额度", "剩余积分", "月度套餐", "连登"]);
     expect(mockInvoke.mock.calls.some((call) => (call[1] as { url?: string }).url?.endsWith("/travel/depart"))).toBe(
       false,
     );
@@ -1109,7 +1131,7 @@ describe("token 通道（扫码登录，ADR-0034）", () => {
       Status: [0, 3],
       OnlyValidPeriod: true,
     });
-    expect(snapshot.lines.map((line) => line.label)).toEqual(["积分余量", "月度套餐"]);
+    expect(snapshot.lines.map((line) => line.label)).toEqual(["积分额度", "剩余积分", "月度套餐"]);
   });
 
   it("token 通道旅行状态机：到站领奖→出发→回查，与 Cookie 通道共用同一状态机", async () => {
@@ -1137,7 +1159,7 @@ describe("token 通道（扫码登录，ADR-0034）", () => {
     const snapshot = await workbuddyProvider.fetch(instance);
     expect(snapshot.status).toBe("ok");
     expect(snapshot.travel).toEqual({ tripKey: "1758900000", credited: 5 });
-    expect(snapshot.lines.map((line) => line.label)).toEqual(["积分余量", "月度套餐", "喵喵旅行", "连登"]);
+    expect(snapshot.lines.map((line) => line.label)).toEqual(["积分额度", "剩余积分", "月度套餐", "喵喵旅行", "连登"]);
     const growthCalls = mockInvoke.mock.calls.filter((call) =>
       String((call[1] as { url?: string })?.url ?? "").includes("/activity/growth/"),
     ) as Array<[string, { url?: string; auth?: string; headers?: Record<string, string> }]>;

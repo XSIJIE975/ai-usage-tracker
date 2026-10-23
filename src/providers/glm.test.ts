@@ -271,7 +271,7 @@ describe("glmProvider.fetch", () => {
     expect(snapshot.status).toBe("ok");
     expect(snapshot.message).toBeUndefined();
     expect(snapshot.lines).toHaveLength(2);
-    expect(snapshot.lines[0]).toEqual({ type: "text", label: "Coding Plan", value: "未订阅" });
+    expect(snapshot.lines[0]).toEqual({ type: "text", label: "Coding Plan", value: "未订阅", status: true });
     expect(snapshot.lines[1].label).toBe("账户余额");
   });
 
@@ -285,7 +285,7 @@ describe("glmProvider.fetch", () => {
     const snapshot = await glmProvider.fetch(glmInstance);
     expect(snapshot.status).toBe("ok");
     expect(snapshot.message).toBeUndefined();
-    expect(snapshot.lines[0]).toEqual({ type: "text", label: "Coding Plan", value: "未订阅" });
+    expect(snapshot.lines[0]).toEqual({ type: "text", label: "Coding Plan", value: "未订阅", status: true });
   });
 
   it("still reports unrelated business errors from the quota source", async () => {
