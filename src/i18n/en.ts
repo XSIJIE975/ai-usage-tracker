@@ -10,8 +10,6 @@ export const en: Record<string, string> = {
   "统计": "Usage",
   "设置": "Settings",
   "刷新": "Refresh",
-  "新版本": "New version",
-  "前往设置安装新版本": "Go to Settings to install",
   "还没有用量数据": "No usage data yet",
   "立即刷新": "Refresh now",
   "更新于": "Updated",
@@ -900,6 +898,16 @@ export const en: Record<string, string> = {
   "账户余额 {balance}，低于阈值 {threshold}，请及时充值。":
     "Account balance {balance} is below the {threshold} threshold — top it up.",
   "通知中心（{count} 条未读）": "Notification center ({count} unread)",
-  "新版本 v{version} 可用，前往设置安装":
-    "Version v{version} is available — go to Settings to install",
+  "新版本 v{version} 可用，点击查看更新日志":
+    "Version v{version} is available — click to view the changelog",
+  "更新日志": "Changelog",
+  "查看更新日志": "View changelog",
+  "本次更新内容": "What's new",
+  "从 {from} 更新到 {to}": "Updated from {from} to {to}",
+  "在 GitHub 查看 v{version} 的发布": "View the v{version} release on GitHub",
+  "知道了": "Got it",
+  "暂无更新日志": "No changelog yet",
+  "发布版本后会出现在这里。": "Entries appear here after a release is published.",
+  "更新日志加载失败": "Failed to load the changelog",
+  "重启应用后可重试。": "Restart the app to retry.",
 };

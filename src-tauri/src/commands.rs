@@ -369,6 +369,42 @@ pub fn save_settings(state: State<'_, AppState>, settings: Value) -> Result<(), 
     db.save_settings(&settings)
 }
 
+// ─── 更新日志（ADR-0044）───
+
+/// 内嵌的全量更新日志：发版流水线（version:packages 链尾的 build-changelog.mjs）
+/// 从 CHANGELOG.md 生成，随安装包编译期固定。旧安装包只含打包时为止的版本
+const CHANGELOG_JSON: &str = include_str!("../changelog.json");
+
+static CHANGELOG_ENTRIES: OnceLock<Vec<ChangelogEntry>> = OnceLock::new();
+
+#[derive(Serialize, Deserialize)]
+pub struct ChangelogEntry {
+    pub version: String,
+    pub date: String,
+    /// 该版本一段的 Markdown 原文，前端用 ReleaseNotes 组件渲染
+    pub notes: String,
+}
+
+/// 全量更新日志（新版本在前）。数据内嵌离线可读，首次调用后缓存
+#[tauri::command]
+pub fn changelog() -> &'static Vec<ChangelogEntry> {
+    CHANGELOG_ENTRIES.get_or_init(|| serde_json::from_str(CHANGELOG_JSON).unwrap_or_default())
+}
+
+/// 读更新日志已读版本；None = 首次安装（不弹「本次更新内容」）
+#[tauri::command]
+pub fn changelog_seen_get(state: State<'_, AppState>) -> Result<Option<String>, String> {
+    let db = state.db.lock().expect("db lock poisoned");
+    db.get_seen_changelog_version()
+}
+
+/// 回写更新日志已读版本：启动对账完成后调用，UPSERT 幂等
+#[tauri::command]
+pub fn changelog_seen_set(state: State<'_, AppState>, version: String) -> Result<(), String> {
+    let db = state.db.lock().expect("db lock poisoned");
+    db.save_seen_changelog_version(&version)
+}
+
 #[tauri::command]
 pub fn save_snapshot(
     state: State<'_, AppState>,

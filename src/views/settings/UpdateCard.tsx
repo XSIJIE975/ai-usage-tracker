@@ -1,26 +1,22 @@
 import { useEffect } from "react";
-import { ArrowUpCircle, Download, RefreshCw } from "lucide-react";
+import { ArrowUpCircle, History, RefreshCw } from "lucide-react";
 import { ReleaseNotes } from "../../components/ReleaseNotes";
+import { UpdateInstallButton } from "../../components/UpdateInstallButton";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
-import { Progress } from "../../components/ui/progress";
-import { cn, formatBytes } from "../../lib/utils";
+import { cn } from "../../lib/utils";
 import { updateSupported, useUpdateStore } from "../../store/useUpdateStore";
-import { applyParams, useT } from "../../i18n";
+import { useChangelogDialogStore } from "../../store/useChangelogDialogStore";
+import { useT } from "../../i18n";
 
 export function UpdateCard() {
-  const {
-    status,
-    version,
-    notes,
-    currentVersion,
-    downloadedBytes,
-    contentLength,
-    error,
-    check,
-    downloadAndInstall,
-    loadCurrentVersion,
-  } = useUpdateStore();
+  const status = useUpdateStore((state) => state.status);
+  const version = useUpdateStore((state) => state.version);
+  const notes = useUpdateStore((state) => state.notes);
+  const currentVersion = useUpdateStore((state) => state.currentVersion);
+  const error = useUpdateStore((state) => state.error);
+  const check = useUpdateStore((state) => state.check);
+  const loadCurrentVersion = useUpdateStore((state) => state.loadCurrentVersion);
 
   const supported = updateSupported();
   const t = useT();
@@ -30,11 +26,9 @@ export function UpdateCard() {
   }, [supported, loadCurrentVersion]);
 
   const busy = status === "checking" || status === "downloading";
-  const percent = contentLength ? Math.min(100, (downloadedBytes / contentLength) * 100) : 0;
 
   return (
-    // id 是设置抽屉的滚动锚点：顶栏「新版本」徽标开抽屉后按它定位（SettingsSheet.tsx）
-    <Card id="settings-update-card">
+    <Card>
       <CardHeader className="flex-row items-start justify-between space-y-0">
         <div className="space-y-1.5">
             <CardTitle>{t("检查更新")}</CardTitle>
@@ -42,16 +36,25 @@ export function UpdateCard() {
             {currentVersion ? `${t("当前版本")} v${currentVersion}` : t("更新会修复问题并带来新功能。")}
           </CardDescription>
         </div>
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={!supported || busy}
-          onClick={() => void check()}
-          aria-label={status === "checking" ? t("检查中") : t("检查更新")}
-        >
-          <RefreshCw className={cn("h-3.5 w-3.5", status === "checking" && "animate-spin")} />
-          {status === "checking" ? t("检查中…") : t("检查更新")}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => useChangelogDialogStore.getState().openManual()}
+          >
+            <History className="h-3.5 w-3.5" /> {t("查看更新日志")}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!supported || busy}
+            onClick={() => void check()}
+            aria-label={status === "checking" ? t("检查中") : t("检查更新")}
+          >
+            <RefreshCw className={cn("h-3.5 w-3.5", status === "checking" && "animate-spin")} />
+            {status === "checking" ? t("检查中…") : t("检查更新")}
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="space-y-3">
         {!supported && (
@@ -75,31 +78,13 @@ export function UpdateCard() {
                 <ArrowUpCircle className="mr-1.5 h-4 w-4 text-brand" />
                 {t("发现新版本")} v{version}
               </p>
-              <Button size="sm" onClick={() => void downloadAndInstall()}>
-                <Download className="h-3.5 w-3.5" /> {t("下载并安装")}
-              </Button>
+              <UpdateInstallButton />
             </div>
             {notes && <ReleaseNotes markdown={notes} />}
           </div>
         )}
 
-        {status === "downloading" && (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-[13px] text-fg-muted">
-              <span>{t("正在下载")} v{version}…</span>
-              <span>
-                {contentLength
-                  ? `${formatBytes(downloadedBytes)} / ${formatBytes(contentLength)}`
-                  : applyParams(t("已下载 {downloaded}"), { downloaded: formatBytes(downloadedBytes) })}
-              </span>
-            </div>
-            <Progress value={percent} />
-          </div>
-        )}
-
-        {status === "ready" && (
-          <p className="text-[13px] text-success">{t("下载完成，即将安装…")}</p>
-        )}
+        {(status === "downloading" || status === "ready") && <UpdateInstallButton />}
 
         {status === "error" && (
           <div className="space-y-2 rounded-md border border-danger/30 bg-danger-soft p-3">

@@ -6,12 +6,13 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:changelog": "node scripts/build-changelog.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "test": "vitest run",
     "changeset": "changeset",
-    "version:packages": "changeset version && node scripts/sync-version.mjs"
+    "version:packages": "changeset version && node scripts/sync-version.mjs && node scripts/build-changelog.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

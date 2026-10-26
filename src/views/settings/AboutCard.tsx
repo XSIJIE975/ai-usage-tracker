@@ -6,9 +6,9 @@ import { Card, CardContent } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
 import { useT } from "../../i18n";
+import { REPO_URL } from "../../lib/app-meta";
 import appIcon from "../../assets/app-icon.png";
 
-const REPO_URL = "https://github.com/XSIJIE975/ai-usage-tracker";
 const RELEASES_URL = `${REPO_URL}/releases`;
 
 /** 关于：应用标识、当前版本、开发者信息与 GitHub 入口 */

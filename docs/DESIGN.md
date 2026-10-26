@@ -26,6 +26,8 @@
   淡入 + 缩放，页面/卡片不做整体主题过渡。
 - 顶栏操作区统一为图标按钮：只有「＋」保留实心品牌样式作为主操作；铃铛、刷新、主题、齿轮均为
   32px `IconButton`。刷新按钮不配文字，title/读屏给出「刷新 / 刷新中」，刷新中禁用并让图标旋转。
+  有新版本时在「＋」与铃铛之间多一枚 brand 色更新图标（`ArrowUpCircle`，下载中换成旋转的加载图标），
+  点击打开「更新日志」弹窗（ADR-0044）。
 - 实现：`<html data-theme="dark">` 覆盖 Token；未设置时媒体查询兜底。
 - 新增强调色只需改 `src/styles.css` 中 `:root` / `[data-theme="dark"]` / 媒体查询三处。
 
@@ -268,17 +270,18 @@
   （WorkBuddy 三项同源，故按钮不挂在单格下）。
 - 删除实例走卡片 ⋯ 菜单 + `DeleteInstanceDialog`（AlertDialog）二次确认。
 - 开关类设置即时保存并显示短暂「已保存」反馈（`useSaveFlash` / `SavedHint`）；弹窗内保存为显式按钮。
-- 「关于与更新」卡片（`views/settings/UpdateCard.tsx`）：显示当前版本、检查更新、变更说明与下载进度（`ui/progress`），错误可重试；状态机在 `store/useUpdateStore.ts`，仅已安装运行时可用（开发构建禁用并提示）。
-- 发现新版本时主窗口顶栏出现「新版本 vX」徽标按钮（outline + brand 描边），点击打开设置抽屉并把滚动区
-  定位到「检查更新」卡片（`UpdateCard` 的 `id="settings-update-card"` 是这条链路的锚点）。
+- 「关于与更新」卡片（`views/settings/UpdateCard.tsx`）：显示当前版本、检查更新、变更说明与下载进度（`ui/progress`），错误可重试；另有「查看更新日志」按钮打开更新日志弹窗；安装操作区与弹窗共用 `UpdateInstallButton`；状态机在 `store/useUpdateStore.ts`，仅已安装运行时可用（开发构建禁用并提示）。
+- 发现新版本时主窗口顶栏出现 brand 色更新图标按钮（其余顶栏图标为中性灰；下载中换成旋转的加载图标），
+  title/读屏说明版本号。点击打开「更新日志」弹窗（`components/ChangelogDialog`）直接查看新版本内容并
+  安装，不经过设置抽屉；升级完成后首次启动，同一弹窗以「本次更新内容」模式按区间自动弹出（ADR-0044）。
 
 ## 6.9 弹层：Dialog / Sheet / AlertDialog / Popover
 
-**选型按容量，不按读写**（ADR-0040）：一屏放得下、有显式提交动作的表单走居中 `dialog`；需要滚动的长内容走右侧 `sheet`。写入时机是第二轴——`dialog` 有取消/保存，`sheet` 里的设置靠即时写入，没有提交概念。
+**选型按容量，不按读写**（ADR-0040）：一屏放得下、有显式提交动作的表单走居中 `dialog`；需要滚动的长内容走右侧 `sheet`。写入时机是第二轴——`dialog` 有取消/保存，`sheet` 里的设置靠即时写入，没有提交概念。查看型长内容是唯一例外（更新日志弹窗，ADR-0044）：走 `dialog` 且内容区内部滚动——纯查看无提交动作，点 X 即走，不值得占满整幅 `sheet`。
 
 | 组件 | 用途 | 形态 |
 | --- | --- | --- |
-| `ui/dialog` | 短表单（实例配置、重置卡明细、错误详情） | 居中，`max-w-lg`，内容超高时内部滚动（`max-h-[85vh]`） |
+| `ui/dialog` | 短表单（实例配置、重置卡明细、错误详情）、查看型长内容（更新日志） | 居中，`max-w-lg`（更新日志 `max-w-xl`），内容超高时内部滚动（`max-h-[85vh]`） |
 | `ui/sheet` | 长内容（实例统计、成长中心、设置抽屉） | 右侧滑入，全高，默认宽 `min(960px,100vw)`，按内容收窄：设置 `min(40rem,100vw)`、成长中心 `sm:max-w-md` |
 | `ui/alert-dialog` | 破坏性操作二次确认（删除实例） | 居中，`max-w-md`，确认按钮 `destructive` |
 | `ui/popover` | 轻量非模态弹出（+ `ui/command` 组成可搜索选择器） | 锚定触发器，`w-72` 左右 |

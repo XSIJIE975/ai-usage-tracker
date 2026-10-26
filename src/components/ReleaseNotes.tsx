@@ -2,6 +2,7 @@ import { Component, type ReactNode } from "react";
 import Markdown, { defaultUrlTransform, type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { cn } from "../lib/utils";
 
 /** URL 白名单：先过库的默认判定（挡掉 `javascript:` 等），再把放行面收窄到 http/https。
  *  库默认还放行 `irc` / `ircs` / `mailto` / `xmpp` 与相对路径，后者在桌面应用里没有
@@ -157,6 +158,8 @@ const components: Components = {
 
 interface NotesErrorBoundaryProps {
   fallback: string;
+  /** 回退纯文本与正常渲染共用同一容器样式，保证两种形态高度行为一致 */
+  className?: string;
   children: ReactNode;
 }
 
@@ -185,9 +188,7 @@ export class NotesErrorBoundary extends Component<
   render() {
     if (this.state.failed) {
       return (
-        <p className="max-h-72 overflow-y-auto whitespace-pre-wrap text-[13px] leading-relaxed text-fg-secondary">
-          {this.props.fallback}
-        </p>
+        <p className={cn(this.props.className, "whitespace-pre-wrap")}>{this.props.fallback}</p>
       );
     }
     return this.props.children;
@@ -197,16 +198,21 @@ export class NotesErrorBoundary extends Component<
 export interface ReleaseNotesProps {
   /** `latest.json` 的 notes：发布侧写入的原始 Markdown（ADR-0028） */
   markdown: string;
+  /** 说明区是否自滚（默认 true：max-h-72 内滚，用于设置卡片这类单条场景）。
+   *  嵌在统一滚动的外层容器里逐条展示时（更新日志弹窗，ADR-0044）传 false，
+   *  条目不设高度上限，滚动只由外层负责——否则一层外滚加 N 层内滚没法看。 */
+  scrollable?: boolean;
 }
 
 /** 设置 → 检查更新的说明区。容器高度、滚动与纯文本回退都收在这里，调用方只传字符串。 */
-export function ReleaseNotes({ markdown }: ReleaseNotesProps) {
+export function ReleaseNotes({ markdown, scrollable = true }: ReleaseNotesProps) {
+  // tabIndex 与 focus ring 只服务自滚容器的键盘滚动，不自滚时是噪音
+  const containerClass = scrollable
+    ? "max-h-72 overflow-y-auto wrap-break-word text-[13px] leading-relaxed text-fg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-1 focus-visible:ring-offset-surface-2"
+    : "wrap-break-word text-[13px] leading-relaxed text-fg-secondary";
   return (
-    <NotesErrorBoundary fallback={markdown}>
-      <div
-        tabIndex={0}
-        className="max-h-72 overflow-y-auto wrap-break-word text-[13px] leading-relaxed text-fg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-1 focus-visible:ring-offset-surface-2"
-      >
+    <NotesErrorBoundary fallback={markdown} className={containerClass}>
+      <div tabIndex={scrollable ? 0 : undefined} className={containerClass}>
         <Markdown
           remarkPlugins={[remarkGfm]}
           skipHtml

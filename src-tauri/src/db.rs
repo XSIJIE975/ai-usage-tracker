@@ -366,6 +366,37 @@ impl Db {
         Ok(())
     }
 
+    /// 读「更新日志已读版本」（更新日志弹窗的判重锚点，ADR-0044）；None = 从未记录
+    /// （首次安装，不弹更新内容）。value 存 JSON 编码的字符串与 app_settings 行同口径
+    pub fn get_seen_changelog_version(&self) -> Result<Option<String>, String> {
+        let row = self.conn.query_row(
+            "SELECT value FROM settings WHERE key = 'changelog_seen_version'",
+            [],
+            |row| row.get::<_, String>(0),
+        );
+        match row {
+            Ok(value) => Ok(serde_json::from_str(&value).unwrap_or(None)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    /// 回写「更新日志已读版本」（UPSERT 幂等）：启动对账完成后调用，把「已看过」
+    /// 从内存事实变成库里的事实——重启、webview 重载后同样成立
+    pub fn save_seen_changelog_version(&self, version: &str) -> Result<(), String> {
+        let value = serde_json::to_string(version).map_err(|error| error.to_string())?;
+        self.conn
+            .execute(
+                r#"
+                INSERT INTO settings(key, value) VALUES('changelog_seen_version', ?1)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                "#,
+                [&value],
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
     // ─── 供应商实例 ───
 
     pub fn list_instances(&self) -> Result<Vec<StoredInstance>, String> {
@@ -1225,6 +1256,26 @@ mod tests {
             Some(r#"{"date":"2026-10-08"}"#),
             "抽屉留档明细走同一格读写"
         );
+    }
+
+    #[test]
+    fn seen_changelog_version_roundtrip_and_corrupt_tolerance() {
+        let db = temp_db();
+        // 从未记录 = None：首次安装的判定依据（不弹「本次更新内容」）
+        assert_eq!(db.get_seen_changelog_version().unwrap(), None);
+        db.save_seen_changelog_version("0.14.0").unwrap();
+        assert_eq!(db.get_seen_changelog_version().unwrap().as_deref(), Some("0.14.0"));
+        // UPSERT 幂等：升级后回写新版本覆盖旧值
+        db.save_seen_changelog_version("0.15.0").unwrap();
+        assert_eq!(db.get_seen_changelog_version().unwrap().as_deref(), Some("0.15.0"));
+        // 值损坏（非 JSON 文本）不炸：当 None 处理，下次启动对账重新播种
+        db.conn
+            .execute(
+                "UPDATE settings SET value = 'not-json' WHERE key = 'changelog_seen_version'",
+                [],
+            )
+            .unwrap();
+        assert_eq!(db.get_seen_changelog_version().unwrap(), None);
     }
 
     #[test]
