@@ -2525,6 +2525,8 @@ pub fn toggle_quick_window(app: AppHandle) -> Result<(), String> {
         if window.is_visible().map_err(|error| error.to_string())? {
             window.hide().map_err(|error| error.to_string())?;
         } else {
+            // 唤出前修复显示状态（ADR-0045），与 lib.rs toggle_quick 同口径
+            crate::panel_window::ensure_on_screen(&window);
             window.show().map_err(|error| error.to_string())?;
             window
                 .emit("quick-shown", ())
