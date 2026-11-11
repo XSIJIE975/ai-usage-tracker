@@ -391,7 +391,8 @@ pub fn changelog() -> &'static Vec<ChangelogEntry> {
     CHANGELOG_ENTRIES.get_or_init(|| serde_json::from_str(CHANGELOG_JSON).unwrap_or_default())
 }
 
-/// 读更新日志已读版本；None = 首次安装（不弹「本次更新内容」）
+/// 读更新日志已读版本；None = 从未记录（首次安装，或弹窗功能之前的升级用户——
+/// 配合 changelog_prior_install_exists 区分，ADR-0044）
 #[tauri::command]
 pub fn changelog_seen_get(state: State<'_, AppState>) -> Result<Option<String>, String> {
     let db = state.db.lock().expect("db lock poisoned");
@@ -403,6 +404,14 @@ pub fn changelog_seen_get(state: State<'_, AppState>) -> Result<Option<String>, 
 pub fn changelog_seen_set(state: State<'_, AppState>, version: String) -> Result<(), String> {
     let db = state.db.lock().expect("db lock poisoned");
     db.save_seen_changelog_version(&version)
+}
+
+/// 打开前库文件是否已存在：弹窗功能之前安装的升级用户读不到已读版本记录（None），
+/// 但库文件必然是旧的——用它区分升级安装与全新安装（ADR-0044）
+#[tauri::command]
+pub fn changelog_prior_install_exists(state: State<'_, AppState>) -> bool {
+    let db = state.db.lock().expect("db lock poisoned");
+    db.existed_on_open()
 }
 
 #[tauri::command]

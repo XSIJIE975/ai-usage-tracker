@@ -5,12 +5,13 @@ export type ChangelogDialogMode = "manual" | "whats-new";
 interface ChangelogDialogState {
   open: boolean;
   mode: ChangelogDialogMode;
-  /** whats-new 模式的区间下界（升级前版本，不含）；manual 模式忽略 */
+  /** whats-new 模式的区间下界（升级前版本，不含）；null = 来源版本未知（弹窗功能
+   *  之前的升级用户，只展示 toVersion 一条，ADR-0044）；manual 模式忽略 */
   fromVersion: string | null;
   /** whats-new 模式的区间上界（刚升级到的版本，含） */
   toVersion: string | null;
   openManual: () => void;
-  openWhatsNew: (from: string, to: string) => void;
+  openWhatsNew: (from: string | null, to: string) => void;
   close: () => void;
 }
 

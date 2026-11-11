@@ -193,6 +193,7 @@ pub fn run() {
             commands::changelog,
             commands::changelog_seen_get,
             commands::changelog_seen_set,
+            commands::changelog_prior_install_exists,
             commands::list_instances,
             commands::create_instance,
             commands::update_instance,

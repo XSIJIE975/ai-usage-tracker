@@ -5,7 +5,8 @@
  * manual：顶栏更新 icon 与设置抽屉「查看更新日志」入口打开，展示内嵌全量历史；
  *   有待安装的新版本时，顶部多一块「新版本」区块（updater 变更说明 + 安装操作）。
  * whats-new：升级后首次启动由对账逻辑打开，按 (升级前, 当前] 区间聚合，跨版本
- *   升级能看到中间所有版本；数据来自新安装包内嵌的 changelog.json。
+ *   升级能看到中间所有版本；升级前=null（弹窗功能之前的升级用户）只展示当前一条，
+ *   副题相应不带来源版本。数据来自新安装包内嵌的 changelog.json。
  */
 import { useEffect, useState } from "react";
 import { ArrowUpCircle, ExternalLink, History } from "lucide-react";
@@ -64,7 +65,7 @@ export function ChangelogDialog() {
   }, [open]);
 
   const visibleEntries =
-    mode === "whats-new" && fromVersion && toVersion && entries
+    mode === "whats-new" && toVersion && entries
       ? resolveChangelogPrompt(fromVersion, toVersion, entries)
       : entries;
 
@@ -77,9 +78,11 @@ export function ChangelogDialog() {
         <DialogHeader>
           <DialogTitle>{mode === "whats-new" ? t("本次更新内容") : t("更新日志")}</DialogTitle>
           {/* 副题是视觉说明，不接 Radix Description 关联（两种模式描述形态不同，统一不关联） */}
-          {mode === "whats-new" && fromVersion && toVersion && (
+          {mode === "whats-new" && toVersion && (
             <p className="text-[13px] leading-relaxed text-fg-muted">
-              {applyParams(t("从 {from} 更新到 {to}"), { from: `v${fromVersion}`, to: `v${toVersion}` })}
+              {fromVersion
+                ? applyParams(t("从 {from} 更新到 {to}"), { from: `v${fromVersion}`, to: `v${toVersion}` })
+                : applyParams(t("已更新到 {to}"), { to: `v${toVersion}` })}
             </p>
           )}
         </DialogHeader>

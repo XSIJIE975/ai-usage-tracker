@@ -904,6 +904,7 @@ export const en: Record<string, string> = {
   "查看更新日志": "View changelog",
   "本次更新内容": "What's new",
   "从 {from} 更新到 {to}": "Updated from {from} to {to}",
+  "已更新到 {to}": "Updated to {to}",
   "在 GitHub 查看 v{version} 的发布": "View the v{version} release on GitHub",
   "知道了": "Got it",
   "暂无更新日志": "No changelog yet",

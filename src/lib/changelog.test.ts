@@ -21,8 +21,13 @@ describe("resolveChangelogPrompt", () => {
     expect(result.map((entry) => entry.version)).toEqual(["0.5.0"]);
   });
 
-  it("首次安装（seen=null）不弹", () => {
-    expect(resolveChangelogPrompt(null, "0.5.0", entries)).toEqual([]);
+  it("来源未知（seen=null，弹窗功能之前的升级用户）只取当前版本一条", () => {
+    const result = resolveChangelogPrompt(null, "0.4.0", entries);
+    expect(result.map((entry) => entry.version)).toEqual(["0.4.0"]);
+  });
+
+  it("来源未知且当前版本不在日志里（旧包数据边界）返回空", () => {
+    expect(resolveChangelogPrompt(null, "0.6.0", entries)).toEqual([]);
   });
 
   it("同版本（未升级）不弹", () => {

@@ -87,10 +87,15 @@ pub struct StoredInstance {
 
 pub struct Db {
     conn: Connection,
+    /// 打开前库文件是否已存在：false = 本次是全新安装（连库都是新建的）。弹窗功能
+    /// 之前（≤0.14.0）的库里没有 changelog_seen_version 行，升级用户与全新安装同样
+    /// 读到 None，靠这个标志区分两者（ADR-0044）
+    existed_on_open: bool,
 }
 
 impl Db {
     pub fn open(path: &Path) -> Result<Self, String> {
+        let existed_on_open = path.exists();
         let conn = Connection::open(path).map_err(|error| error.to_string())?;
         conn.pragma_update(None, "journal_mode", "WAL")
             .map_err(|error| error.to_string())?;
@@ -156,7 +161,10 @@ impl Db {
             "#,
         )
         .map_err(|error| error.to_string())?;
-        let db = Self { conn };
+        let db = Self {
+            conn,
+            existed_on_open,
+        };
         db.rename_legacy_provider_columns()?;
         db.ensure_instance_balance_threshold_column()?;
         db.ensure_instance_site_column()?;
@@ -367,7 +375,8 @@ impl Db {
     }
 
     /// 读「更新日志已读版本」（更新日志弹窗的判重锚点，ADR-0044）；None = 从未记录
-    /// （首次安装，不弹更新内容）。value 存 JSON 编码的字符串与 app_settings 行同口径
+    /// ——首次安装，或弹窗功能之前的升级用户（由 existed_on_open 区分两者）。
+    /// value 存 JSON 编码的字符串与 app_settings 行同口径
     pub fn get_seen_changelog_version(&self) -> Result<Option<String>, String> {
         let row = self.conn.query_row(
             "SELECT value FROM settings WHERE key = 'changelog_seen_version'",
@@ -395,6 +404,12 @@ impl Db {
             )
             .map_err(|error| error.to_string())?;
         Ok(())
+    }
+
+    /// 打开前库文件是否已存在（区分升级安装与全新安装，ADR-0044）：弹窗功能之前的
+    /// 升级用户读不到已读版本记录，但库文件必然是旧的
+    pub fn existed_on_open(&self) -> bool {
+        self.existed_on_open
     }
 
     // ─── 供应商实例 ───
@@ -1276,6 +1291,24 @@ mod tests {
             )
             .unwrap();
         assert_eq!(db.get_seen_changelog_version().unwrap(), None);
+    }
+
+    #[test]
+    fn existed_on_open_distinguishes_fresh_and_prior_install() {
+        let dir = std::env::temp_dir().join(format!(
+            "ai-usage-db-existed-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("existed.db");
+        // 全新安装：打开前库文件不存在
+        assert!(!Db::open(&db_path).unwrap().existed_on_open());
+        // 升级安装：上一次运行留下的库文件还在，再次打开即为 true
+        assert!(Db::open(&db_path).unwrap().existed_on_open());
     }
 
     #[test]

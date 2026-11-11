@@ -119,4 +119,26 @@ describe("ChangelogDialog", () => {
     expect(screen.queryByText("v0.3.0")).toBeNull();
     screen.getByText("知道了");
   });
+
+  it("whats-new 模式：来源版本未知（弹窗功能之前的升级用户）只展示当前版并带「已更新到…」副题", async () => {
+    mockedInvoke.mockResolvedValue(entries);
+    useChangelogDialogStore.setState({
+      open: true,
+      mode: "whats-new",
+      fromVersion: null,
+      toVersion: "0.5.0",
+    });
+
+    render(<ChangelogDialog />);
+
+    await waitFor(() => {
+      screen.getByText("本次更新内容");
+    });
+    screen.getByText("已更新到 v0.5.0");
+    screen.getByText("v0.5.0");
+    // 来历不明不铺全量：其余版本不出现
+    expect(screen.queryByText("v0.4.0")).toBeNull();
+    expect(screen.queryByText("v0.3.0")).toBeNull();
+    screen.getByText("知道了");
+  });
 });

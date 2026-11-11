@@ -265,6 +265,8 @@ export function Dashboard() {
 
   // 更新日志对账（ADR-0044）：升级后首次启动弹「本次更新内容」，跨版本升级按区间
   // 聚合（0.1.0 → 0.5.0 展示 0.2.0~0.5.0 全部）；首次安装播种记录、同版本/降级不弹。
+  // seen=null 且库文件在本次启动前已存在 = 弹窗功能之前的升级用户（库里没有已读
+  // 记录），按来源未知补弹当前版一条；全新安装（库是新建的）不打扰。
   // 延迟一秒避开首屏渲染；失败静默留痕，绝不打扰启动
   useEffect(() => {
     if (!isTauri()) return;
@@ -282,6 +284,11 @@ export function Dashboard() {
             const prompted = resolveChangelogPrompt(seen, current, entries);
             if (prompted.length > 0 && !disposed) {
               useChangelogDialogStore.getState().openWhatsNew(seen, current);
+            }
+          } else if (await invoke<boolean>("changelog_prior_install_exists")) {
+            const prompted = resolveChangelogPrompt(null, current, entries);
+            if (prompted.length > 0 && !disposed) {
+              useChangelogDialogStore.getState().openWhatsNew(null, current);
             }
           }
           await invoke("changelog_seen_set", { version: current });
