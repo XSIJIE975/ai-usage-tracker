@@ -1,4 +1,3 @@
-import { useEffect } from "react";
 import { AlertTriangle } from "lucide-react";
 import {
   Sheet,
@@ -12,25 +11,15 @@ import { useAppStore } from "../../store/useAppStore";
 import { GeneralSettings } from "./GeneralSettings";
 import { MigrationCard } from "./MigrationCard";
 
-/** 抽屉打开时滚动区落在哪里：顶栏齿轮是「top」，「新版本」徽标是「update」 */
-export type SettingsFocus = "top" | "update";
-
 export function SettingsSheet({
   open,
-  focus,
   onOpenChange,
 }: {
   open: boolean;
-  focus: SettingsFocus;
   onOpenChange: (open: boolean) => void;
 }) {
   const t = useT();
   const vaultStatus = useAppStore((state) => state.vaultStatus);
-
-  useEffect(() => {
-    if (!open || focus !== "update") return;
-    document.getElementById(UPDATE_CARD_ANCHOR)?.scrollIntoView({ block: "start" });
-  }, [open, focus]);
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -57,5 +46,3 @@ export function SettingsSheet({
   );
 }
 
-/** 顶栏「新版本」徽标要求定位到的卡片锚点，见 views/settings/UpdateCard.tsx */
-const UPDATE_CARD_ANCHOR = "settings-update-card";

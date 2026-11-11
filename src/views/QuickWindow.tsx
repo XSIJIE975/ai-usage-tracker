@@ -11,6 +11,7 @@ import { Button } from "../components/ui/button";
 import { IconButton } from "../components/ui/icon-button";
 import { BrandIcon } from "../components/BrandIcon";
 import { ProviderCard } from "../components/ProviderCard";
+import { ScrollFadeHint } from "../components/ScrollFadeHint";
 import { NotificationCenterPanel } from "./NotificationCenterPanel";
 import { cn, formatClock } from "../lib/utils";
 import { selectOrderedInstances } from "../lib/instance";
@@ -85,6 +86,7 @@ export function QuickWindow() {
 
   const rootRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const mainRef = useRef<HTMLElement>(null);
   useFitWindowHeight(rootRef, contentRef);
 
   // 顶栏拖动与双击自管（不走 data-tauri-drag-region 的注入脚本，双击行为确定可控）：
@@ -172,7 +174,7 @@ export function QuickWindow() {
         </span>
       </div>
 
-      <main className="no-scrollbar min-h-0 flex-1 overflow-y-auto bg-canvas p-3">
+      <main ref={mainRef} className="no-scrollbar min-h-0 flex-1 overflow-y-auto bg-canvas p-3">
         {/* 高度测量的参照物：包裹层的自然高度不受视口钳制，内容超出上限时 main 内部滚动 */}
         <div ref={contentRef}>
           {!ready ? (
@@ -247,6 +249,8 @@ export function QuickWindow() {
         )}
         </div>
       </main>
+      {/* main 是根下最后一个子元素，渐隐贴根定位即贴 main 底缘 */}
+      <ScrollFadeHint viewportRef={mainRef} />
     </div>
   );
 }

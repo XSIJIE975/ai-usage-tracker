@@ -11,6 +11,7 @@ mod autostart;
 mod commands;
 mod db;
 mod instances;
+mod panel_window;
 mod tray_scheme;
 mod vault;
 
@@ -168,6 +169,15 @@ pub fn run() {
                     if window.label() == "main" {
                         tray_scheme::apply(window.app_handle());
                     }
+                    // 面板窗口（ADR-0045）：DPI 事件到达时 tao 已套用 Windows 建议矩形并
+                    // 更新缓存 scale，此刻再修一次——既纠正「唤出前已预修正的尺寸被建议
+                    // 矩形按旧比值二次换算打歪」，也以一次真实 WM_SIZE 逼 WebView2 按新
+                    // DPI 重排（可见状态跨屏拖动同修）
+                    if panel_window::PANEL_LABELS.contains(&window.label()) {
+                        if let Some(panel) = window.app_handle().get_webview_window(window.label()) {
+                            panel_window::ensure_on_screen(&panel);
+                        }
+                    }
                 }
                 _ => {}
             }
@@ -180,6 +190,10 @@ pub fn run() {
             commands::vault_credential_status,
             commands::get_settings,
             commands::save_settings,
+            commands::changelog,
+            commands::changelog_seen_get,
+            commands::changelog_seen_set,
+            commands::changelog_prior_install_exists,
             commands::list_instances,
             commands::create_instance,
             commands::update_instance,
@@ -369,6 +383,8 @@ pub fn toggle_quick(app: &AppHandle) {
         if visible {
             let _ = window.hide();
         } else {
+            // 唤出前修复显示状态（ADR-0045）：隐藏窗口收不到 DPI 消息、位置也可能越界
+            panel_window::ensure_on_screen(&window);
             let _ = window.show();
             let _ = window.emit("quick-shown", ());
             let _ = window.set_focus();
@@ -394,6 +410,9 @@ pub fn toggle_glance(app: &AppHandle, anchor: Option<(f64, f64, f64, f64, f64, f
             return;
         }
     }
+    // 先修复尺寸（ADR-0045）再锚定：anchor_position 按窗口 outer_size 定基准，
+    // 带着过期的物理尺寸锚定会把居中对齐算偏
+    panel_window::ensure_on_screen(&window);
     if let Some((cursor_x, cursor_y, icon_x, icon_y, icon_w, icon_h)) = anchor {
         if let Some(position) =
             tray_scheme::anchor_position(&window, (cursor_x, cursor_y), (icon_x, icon_y, icon_w, icon_h))

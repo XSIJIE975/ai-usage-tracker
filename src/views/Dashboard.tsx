@@ -1,11 +1,13 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ComponentPropsWithoutRef, RefObject } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import {
   AlertCircle,
   ArrowUpCircle,
   Bell,
   Gauge,
+  Loader2,
   Plus,
   RefreshCw,
   Settings,
@@ -44,7 +46,10 @@ import { BrandIcon } from "../components/BrandIcon";
 import { IconButton } from "../components/ui/icon-button";
 import { ProviderCard } from "../components/ProviderCard";
 import { NotificationCenterPanel } from "./NotificationCenterPanel";
-import { SettingsSheet, type SettingsFocus } from "./settings/SettingsSheet";
+import { SettingsSheet } from "./settings/SettingsSheet";
+import { ChangelogDialog } from "../components/ChangelogDialog";
+import { useChangelogDialogStore } from "../store/useChangelogDialogStore";
+import { loadChangelog, resolveChangelogPrompt } from "../lib/changelog";
 import { providerHasStats, StatsSheet } from "./stats/StatsSheet";
 import { WorkbuddyTasksSheet } from "./tasks/WorkbuddyTasksSheet";
 import { workbuddyApi, workbuddySiteOf } from "../providers/workbuddy";
@@ -163,11 +168,6 @@ export function Dashboard() {
   const reorderInstances = useAppStore((state) => state.reorderInstances);
   const storeLastRefreshedAt = useAppStore((state) => state.lastRefreshedAt);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsFocus, setSettingsFocus] = useState<SettingsFocus>("top");
-  const openSettings = (focus: SettingsFocus) => {
-    setSettingsFocus(focus);
-    setSettingsOpen(true);
-  };
   const t = useT();
   const language = useLanguage();
   const [themeMode, changeThemeMode] = useThemeModeSetting();
@@ -261,6 +261,46 @@ export function Dashboard() {
       void useUpdateStore.getState().check({ silent: true });
     }, 5_000);
     return () => window.clearTimeout(timer);
+  }, []);
+
+  // 更新日志对账（ADR-0044）：升级后首次启动弹「本次更新内容」，跨版本升级按区间
+  // 聚合（0.1.0 → 0.5.0 展示 0.2.0~0.5.0 全部）；首次安装播种记录、同版本/降级不弹。
+  // seen=null 且库文件在本次启动前已存在 = 弹窗功能之前的升级用户（库里没有已读
+  // 记录），按来源未知补弹当前版一条；全新安装（库是新建的）不打扰。
+  // 延迟一秒避开首屏渲染；失败静默留痕，绝不打扰启动
+  useEffect(() => {
+    if (!isTauri()) return;
+    let disposed = false;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const [current, seen, entries] = await Promise.all([
+            getVersion(),
+            invoke<string | null>("changelog_seen_get"),
+            loadChangelog(),
+          ]);
+          if (disposed || seen === current) return;
+          if (seen !== null) {
+            const prompted = resolveChangelogPrompt(seen, current, entries);
+            if (prompted.length > 0 && !disposed) {
+              useChangelogDialogStore.getState().openWhatsNew(seen, current);
+            }
+          } else if (await invoke<boolean>("changelog_prior_install_exists")) {
+            const prompted = resolveChangelogPrompt(null, current, entries);
+            if (prompted.length > 0 && !disposed) {
+              useChangelogDialogStore.getState().openWhatsNew(null, current);
+            }
+          }
+          await invoke("changelog_seen_set", { version: current });
+        } catch (error) {
+          console.warn("更新日志对账失败：", error);
+        }
+      })();
+    }, 1_000);
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+    };
   }, []);
 
   useEffect(() => {
@@ -442,16 +482,22 @@ export function Dashboard() {
             </PopoverContent>
           </Popover>
           {updateNotice && (
-            <Button
-              size="sm"
-              variant="outline"
-              className="border-brand/40 text-brand"
-              onClick={() => openSettings("update")}
-              title={t("前往设置安装新版本")}
-              aria-label={applyParams(t("新版本 v{version} 可用，前往设置安装"), { version: updateVersion ?? "" })}
+            <IconButton
+              onClick={() => useChangelogDialogStore.getState().openManual()}
+              title={applyParams(t("新版本 v{version} 可用，点击查看更新日志"), {
+                version: updateVersion ?? "",
+              })}
+              aria-label={applyParams(t("新版本 v{version} 可用，点击查看更新日志"), {
+                version: updateVersion ?? "",
+              })}
+              className="text-brand hover:bg-surface-2 hover:text-brand"
             >
-              <ArrowUpCircle className="h-3.5 w-3.5" /> {t("新版本")} v{updateVersion}
-            </Button>
+              {updateStatus === "downloading" ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <ArrowUpCircle className="h-4 w-4" />
+              )}
+            </IconButton>
           )}
           <div className="relative">
             <IconButton
@@ -488,7 +534,7 @@ export function Dashboard() {
           </IconButton>
           <ThemeQuickToggle mode={themeMode} onChange={changeThemeMode} />
           <IconButton
-            onClick={() => openSettings("top")}
+            onClick={() => setSettingsOpen(true)}
             title={t("设置")}
             aria-label={t("设置")}
           >
@@ -621,7 +667,8 @@ export function Dashboard() {
           if (!open) setTaskInstance(null);
         }}
       />
-      <SettingsSheet open={settingsOpen} focus={settingsFocus} onOpenChange={setSettingsOpen} />
+      <SettingsSheet open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <ChangelogDialog />
       <DeleteInstanceDialog
         instance={deleting}
         open={deleting !== null}

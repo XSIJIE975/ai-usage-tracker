@@ -6,7 +6,8 @@ import { cn } from "../../lib/utils";
 /**
  * 对话框规范（docs/DESIGN.md §6.9）：
  * Dialog 承载一屏放得下的短表单（如实例配置、重置卡），max-w-lg、内容超高时内部滚动；
- * 需要滚动的长内容改用 Sheet（ADR-0040）。
+ * 需要滚动的长内容改用 Sheet（ADR-0040）；查看型长内容（更新日志）是唯一例外，
+ * 走 Dialog 内部滚动（ADR-0044）。
  */
 const Dialog = DialogPrimitive.Root;
 const DialogTrigger = DialogPrimitive.Trigger;

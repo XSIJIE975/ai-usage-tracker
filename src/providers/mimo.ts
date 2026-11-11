@@ -237,7 +237,7 @@ export function parseMimoPeriodEnd(raw: unknown, now: number = Date.now()): Date
   const text = toText(raw);
   if (!text) return null;
   const plain = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/.exec(text);
-  if (!plain) return parseAmbiguous(text);
+  if (!plain) return parseAmbiguous(text, now);
   const ms = Date.UTC(
     Number(plain[1]),
     Number(plain[2]) - 1,
@@ -252,10 +252,12 @@ export function parseMimoPeriodEnd(raw: unknown, now: number = Date.now()): Date
   return asShanghai.getTime() > now ? asShanghai : null;
 }
 
-function parseAmbiguous(text: string): Date | null {
+/** 沿用调用方的锚点判「只认未来」：用 Date.now() 会让带时区后缀的串随真实日历腐烂
+ *  （无后缀串走 plain 路径，早已按注入的 now 判定） */
+function parseAmbiguous(text: string, now: number): Date | null {
   const ms = Date.parse(text);
   if (!Number.isFinite(ms)) return null;
-  return ms > Date.now() ? new Date(ms) : null;
+  return ms > now ? new Date(ms) : null;
 }
 
 /** 余额响应 → 金额与币种 */
