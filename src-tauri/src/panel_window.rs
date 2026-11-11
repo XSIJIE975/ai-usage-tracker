@@ -31,7 +31,10 @@ struct Rect {
 ///    ÷ 窗口缓存 scale——缓存 scale 恒与当前物理尺寸同代（每次物理尺寸落笔都用的当时
 ///    缓存值；隐藏窗口收不到 DPI 消息，显示设置变化后二者一起过期，比值仍是逻辑尺寸）。
 ///    ADR-0027 同款教训：换算必须用目标显示器的 scale，不能信窗口缓存值。
-/// 3. 位置钳回目标显示器工作区（面板比工作区还大时贴工作区左/上缘）。
+/// 3. 物理高度硬钳到目标显示器工作区高度以内（ADR-0046 防御纵深：前端高度自适应的
+///    换算若因缓存 scale 过期失准，把窗口写得盖住任务栏，该尺寸会存续到下次唤出，
+///    在此修复；高度是自适应维度，钳矮安全，宽度是固定布局不钳）。
+/// 4. 位置钳回目标显示器工作区（面板比工作区还大时贴工作区左/上缘）。
 ///
 /// 任一查询失败即整体放弃，走原样 show（修复只在可用时生效，不阻断唤出）。
 pub fn ensure_on_screen(window: &WebviewWindow) {
@@ -74,6 +77,7 @@ pub fn ensure_on_screen(window: &WebviewWindow) {
 
     let (new_width, new_height) = rescaled_size((size.width, size.height), scale, target.scale_factor());
     let work = target.work_area();
+    let new_height = capped_height(new_height, work.size.height);
     let work_rect = Rect {
         x: work.position.x,
         y: work.position.y,
@@ -136,6 +140,12 @@ fn rescaled_size(size: (u32, u32), from_scale: f64, to_scale: f64) -> (u32, u32)
     }
     let convert = |value: u32| (f64::from(value) / from_scale * to_scale).round() as u32;
     (convert(size.0), convert(size.1))
+}
+
+/// 面板物理高度硬上限：不得超过目标显示器工作区高度（ADR-0046 防御纵深）。
+/// 高度是前端自适应维度（按内容随时重算），钳矮安全；宽度是固定布局，不钳。
+fn capped_height(height: u32, work_height: u32) -> u32 {
+    height.min(work_height)
 }
 
 /// 位置钳回工作区：未越界一个像素不动；面板比工作区还宽/高时贴工作区左/上缘
@@ -208,6 +218,15 @@ mod tests {
         assert_eq!(rescaled_size((570, 480), 1.5, 1.5), (570, 480));
         // 源 scale 非法不换算
         assert_eq!(rescaled_size((570, 480), 0.0, 1.0), (570, 480));
+    }
+
+    #[test]
+    fn 高度硬上限不超工作区() {
+        // 前端自适应失灵把窗口写到 2400 物理、工作区 1040：钳回 1040
+        assert_eq!(capped_height(2400, 1040), 1040);
+        // 正常高度与恰好等于工作区的高度都不动
+        assert_eq!(capped_height(480, 1040), 480);
+        assert_eq!(capped_height(1040, 1040), 1040);
     }
 
     #[test]

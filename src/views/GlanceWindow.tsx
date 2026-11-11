@@ -5,6 +5,7 @@ import { useFitWindowHeight } from "../hooks/use-fit-window-height";
 import { usePanelAutoRefresh, usePanelWindow } from "../hooks/use-panel-window";
 import { useNow } from "../hooks/use-now";
 import { BrandIcon } from "../components/BrandIcon";
+import { ScrollFadeHint } from "../components/ScrollFadeHint";
 import { Button } from "../components/ui/button";
 import { IconButton } from "../components/ui/icon-button";
 import { Segmented } from "../components/ui/segmented";
@@ -78,6 +79,7 @@ export function GlanceWindow() {
 
   const rootRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const mainRef = useRef<HTMLElement>(null);
   useFitWindowHeight(rootRef, contentRef, { minHeight: 180, anchorEdge: "auto" });
 
   return (
@@ -119,74 +121,79 @@ export function GlanceWindow() {
         </div>
       </header>
 
-      {/* min-h-0：flex 子项默认不可小于内容高，内容超过窗口上限时必须让 main 收缩并内部滚动，
-          否则内容把 footer 挤出窗口、整体不可滚动 */}
-      <main className="no-scrollbar min-h-0 flex-1 overflow-y-auto bg-canvas p-2.5">
-        {/* 高度测量的参照物：包裹层的自然高度不受视口钳制，内容超出上限时 main 内部滚动 */}
-        <div ref={contentRef}>
-          {/* 通知中心内嵌展示（与快速面板同款）：点开就地查看，不跳主窗口 */}
-          {noticeOpen ? (
-            <div className="absolute inset-x-2 top-12 z-40">
-              <NotificationCenterPanel inline onClose={() => setNoticeOpen(false)} />
-            </div>
-          ) : null}
-          {!ready ? (
-            <div className="flex h-40 items-center justify-center">
-              <span className="h-5 w-5 animate-spin rounded-full border-2 border-line-strong border-t-brand" />
-            </div>
-          ) : !vaultStatus?.unlocked ? (
-            <div className="flex h-44 flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-line-strong bg-surface p-4 text-center">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-surface-2 text-fg-muted">
-                <Lock className="h-5 w-5" />
+      {/* 包裹层 relative：给渐隐提示定位用（main 底缘之上、footer 之下）；
+          min-h-0：flex 子项默认不可小于内容高，内容超过窗口上限时必须让包裹层收缩、
+          main 内部滚动，否则内容把 footer 挤出窗口、整体不可滚动 */}
+      <div className="relative min-h-0 flex-1">
+        <main ref={mainRef} className="no-scrollbar h-full overflow-y-auto bg-canvas p-2.5">
+          {/* 高度测量的参照物：包裹层的自然高度不受视口钳制，内容超出上限时 main 内部滚动 */}
+          <div ref={contentRef}>
+            {/* 通知中心内嵌展示（与快速面板同款）：点开就地查看，不跳主窗口。
+                定位基准是上方 relative 包裹层：top-1 即顶栏下方 4px，与贴根的 top-12 等价 */}
+            {noticeOpen ? (
+              <div className="absolute inset-x-2 top-1 z-40">
+                <NotificationCenterPanel inline onClose={() => setNoticeOpen(false)} />
               </div>
-              <p className="text-[13px] text-fg-secondary">
-                {vaultStatus?.needsMigration ? t("凭据库待迁移") : t("凭据库不可用")}
-              </p>
-              <Button size="sm" onClick={() => void openMain()}>
-                {t("打开主窗口")}
-              </Button>
-            </div>
-          ) : glanceItems.length === 0 && instances.length === 0 ? (
-            <EmptyHint
-              icon={<Gauge className="h-5 w-5" />}
-              text={t("还没有用量数据")}
-              action={
-                <Button size="sm" onClick={() => void refreshAll()}>
-                  {t("立即刷新")}
-                </Button>
-              }
-            />
-          ) : glanceItems.length === 0 ? (
-            // 有实例但范围/勾选把它们全部排除：不是「没有数据」，刷新无意义，应引导去设置
-            <EmptyHint
-              icon={<ListX className="h-5 w-5" />}
-              text={t("未选择展示的实例")}
-              description={t("可在设置的「速览面板」中勾选要在此展示的实例")}
-              action={
+            ) : null}
+            {!ready ? (
+              <div className="flex h-40 items-center justify-center">
+                <span className="h-5 w-5 animate-spin rounded-full border-2 border-line-strong border-t-brand" />
+              </div>
+            ) : !vaultStatus?.unlocked ? (
+              <div className="flex h-44 flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-line-strong bg-surface p-4 text-center">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-surface-2 text-fg-muted">
+                  <Lock className="h-5 w-5" />
+                </div>
+                <p className="text-[13px] text-fg-secondary">
+                  {vaultStatus?.needsMigration ? t("凭据库待迁移") : t("凭据库不可用")}
+                </p>
                 <Button size="sm" onClick={() => void openMain()}>
                   {t("打开主窗口")}
                 </Button>
-              }
-            />
-          ) : settings.glanceLayout === "cards" ? (
-            <GlanceCards
-              items={glanceItems}
-              translate={t}
-              language={language}
-              resetDisplay={resetDisplay}
-              now={now}
-            />
-          ) : (
-            <GlanceRows
-              items={glanceItems}
-              translate={t}
-              language={language}
-              resetDisplay={resetDisplay}
-              now={now}
-            />
-          )}
-        </div>
-      </main>
+              </div>
+            ) : glanceItems.length === 0 && instances.length === 0 ? (
+              <EmptyHint
+                icon={<Gauge className="h-5 w-5" />}
+                text={t("还没有用量数据")}
+                action={
+                  <Button size="sm" onClick={() => void refreshAll()}>
+                    {t("立即刷新")}
+                  </Button>
+                }
+              />
+            ) : glanceItems.length === 0 ? (
+              // 有实例但范围/勾选把它们全部排除：不是「没有数据」，刷新无意义，应引导去设置
+              <EmptyHint
+                icon={<ListX className="h-5 w-5" />}
+                text={t("未选择展示的实例")}
+                description={t("可在设置的「速览面板」中勾选要在此展示的实例")}
+                action={
+                  <Button size="sm" onClick={() => void openMain()}>
+                    {t("打开主窗口")}
+                  </Button>
+                }
+              />
+            ) : settings.glanceLayout === "cards" ? (
+              <GlanceCards
+                items={glanceItems}
+                translate={t}
+                language={language}
+                resetDisplay={resetDisplay}
+                now={now}
+              />
+            ) : (
+              <GlanceRows
+                items={glanceItems}
+                translate={t}
+                language={language}
+                resetDisplay={resetDisplay}
+                now={now}
+              />
+            )}
+          </div>
+        </main>
+        <ScrollFadeHint viewportRef={mainRef} />
+      </div>
 
       <footer className="flex shrink-0 items-center justify-between border-t border-line bg-surface-2/40 px-3 py-1.5">
         <button

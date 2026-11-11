@@ -28,7 +28,26 @@ export interface FitWindowHeightOptions {
  * 面板高度自适应：观测 main 内内容包裹层的「自然高度」（不受视口钳制），
  * 把窗口高度补间到 clamp(顶栏+状态条+内边距+内容高, minHeight, 工作区×80%)。
  * 内容超过上限时窗口封顶、main 内部滚动。跨显示器移动后按新 DPI 重算上限。
+ *
+ * 换算一律用目标显示器的 scale（ADR-0046）：窗口缓存 scale 在 DPI 变化后会过期
+ * （隐藏窗口收不到 WM_DPICHANGED），缓存偏高曾把 80% 上限放大到整个工作区、
+ * 面板盖住系统任务栏；偏低则面板偏矮。窗口缓存 scale 仅作显示器查询失败时的兜底。
  */
+
+/** 目标高度 = clamp(minHeight, 工作区高度÷显示器scale×80%, 内容自然高)。
+ * 显示器不可得时不设上限——高度换算退窗口缓存 scale（animateHeight 内），
+ * 越界由 Rust 侧唤出前的工作区硬上限兜底（panel_window::ensure_on_screen）。 */
+export function clampPanelHeight(
+  desiredLogical: number,
+  minHeight: number,
+  monitor: Pick<Monitor, "workArea" | "scaleFactor"> | null,
+): number {
+  // workArea 为物理像素，目标高度为逻辑像素，需按缩放比换算上限
+  const maxLogical = monitor
+    ? Math.floor((monitor.workArea.size.height / (monitor.scaleFactor || 1)) * 0.8)
+    : Number.POSITIVE_INFINITY;
+  return Math.max(minHeight, Math.min(maxLogical, desiredLogical));
+}
 export function useFitWindowHeight(
   rootRef: RefObject<HTMLElement | null>,
   contentRef: RefObject<HTMLElement | null>,
@@ -52,9 +71,10 @@ export function useFitWindowHeight(
         （贴底平移顶边，贴顶只改尺寸、仅越界时钳制——macOS 顶栏从此不再逐帧 setPosition）。
         新目标到来时 token 失配即中止旧补间，从当前实际高度续走，不会来回跳。
         隐藏窗口中 rAF 暂停，重新显示后 t 超时一帧内落到终值，不会停在半途 */
-    const animateHeight = async (targetLogical: number, monitor: Monitor) => {
+    const animateHeight = async (targetLogical: number, monitor: Monitor | null) => {
       const token = ++animToken;
-      const scale = await panel.scaleFactor().catch(() => 1);
+      // ADR-0046：换算 scale 取目标显示器实时值；窗口缓存 scale 仅在显示器查询失败时兜底
+      const scale = monitor?.scaleFactor || (await panel.scaleFactor().catch(() => 1));
       const [inner, outer, position] = await Promise.all([
         panel.innerSize().catch(() => null),
         panel.outerSize().catch(() => null),
@@ -63,7 +83,7 @@ export function useFitWindowHeight(
       if (disposed || token !== animToken || !inner || !outer || !position) return;
       // 贴哪条边在补间开始时判定一次（用补间前的静止位置），不逐帧判定：
       // 底边锚定的逐帧 setPosition 会让判定输入本身动起来
-      const edge = anchorMode
+      const edge = anchorMode && monitor
         ? snappedEdge(
             { x: position.x, y: position.y, width: outer.width, height: outer.height },
             {
@@ -81,8 +101,11 @@ export function useFitWindowHeight(
       const frameChrome = outer.height - inner.height;
       const x = position.x;
       const bottom = position.y + outer.height;
-      const minY = monitor.workArea.position.y;
-      const maxY = monitor.workArea.position.y + monitor.workArea.size.height;
+      // edge 非空 ⇔ monitor 非空；工作区边界只在贴边分支用到，查不到显示器时占位值不参与计算
+      const workTop = monitor?.workArea.position.y ?? 0;
+      const workBottom = monitor
+        ? monitor.workArea.position.y + monitor.workArea.size.height
+        : 0;
       const start = performance.now();
       const easeOut = (t: number) => 1 - Math.pow(1 - t, 3);
       const step = (now: number) => {
@@ -90,15 +113,15 @@ export function useFitWindowHeight(
         const t = Math.min(1, (now - start) / TWEEN_MS);
         const height = Math.round(startInner + delta * easeOut(t));
         void panel.setSize(new PhysicalSize(inner.width, height)).catch(() => undefined);
-        if (edge === "bottom") {
-          const y = Math.max(minY, bottom - height - frameChrome);
+        if (edge === "bottom" && monitor) {
+          const y = Math.max(workTop, bottom - height - frameChrome);
           void panel.setPosition(new PhysicalPosition(x, y)).catch(() => undefined);
-        } else if (edge === "top") {
+        } else if (edge === "top" && monitor) {
           // 顶边不动；仅在长高越出工作区底部时上移钳制
-          const y = Math.min(position.y, maxY - height - frameChrome);
+          const y = Math.min(position.y, workBottom - height - frameChrome);
           if (y < position.y - 0.5) {
             void panel
-              .setPosition(new PhysicalPosition(x, Math.max(minY, Math.round(y))))
+              .setPosition(new PhysicalPosition(x, Math.max(workTop, Math.round(y))))
               .catch(() => undefined);
           }
         }
@@ -122,13 +145,8 @@ export function useFitWindowHeight(
       const chrome = root.clientHeight - main.clientHeight;
       const contentHeight = Math.round(content.getBoundingClientRect().height);
       const desired = Math.round(chrome + padV + contentHeight);
-      const monitor = await currentMonitor();
-      if (!monitor) return;
-      // workArea 为物理像素，目标高度为逻辑像素，需按缩放比换算上限
-      const maxLogical = Math.floor(
-        (monitor.workArea.size.height / (monitor.scaleFactor || 1)) * 0.8,
-      );
-      const next = Math.max(minHeight, Math.min(maxLogical, desired));
+      const monitor = await currentMonitor().catch(() => null);
+      const next = clampPanelHeight(desired, minHeight, monitor);
       if (lastApplied >= 0 && Math.abs(next - lastApplied) <= HEIGHT_EPSILON) return;
       lastApplied = next;
       await animateHeight(next, monitor);
