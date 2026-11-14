@@ -18,6 +18,7 @@ import { AboutCard } from "./AboutCard";
 import { UpdateCard } from "./UpdateCard";
 import { QuickPanelShortcutSetting } from "./QuickPanelShortcutSetting";
 import { StartupSettings } from "./StartupSettings";
+import { IslandSettings } from "./IslandSettings";
 import { TraySettings } from "./TraySettings";
 import { useT } from "../../i18n";
 import { SavedHint, useSaveFlash } from "./save-flash";
@@ -173,6 +174,8 @@ export function GeneralSettings() {
           <QuickPanelShortcutSetting />
         </CardContent>
       </Card>
+
+      <IslandSettings />
 
       <TraySettings />
 

@@ -405,6 +405,14 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* 灵动岛窗口（ADR-0047）：画布除胶囊/面板外必须完全透出桌面。body 的画布底色
+   会把整个窗口矩形涂成不透明——岛窗口由 IslandWindow 在 <html> 上打 island-canvas
+   标记豁免该底色（每个 Tauri 窗口是独立文档，不影响其余窗口） */
+html.island-canvas,
+html.island-canvas body {
+  background: transparent;
+}
+
 button,
 input {
   font: inherit;

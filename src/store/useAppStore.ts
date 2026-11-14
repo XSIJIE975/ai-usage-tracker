@@ -34,6 +34,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   glanceLayout: "list",
   glanceInstanceScope: "all",
   glanceInstanceIds: [],
+  // 灵动岛（ADR-0047）：默认关闭，与后端 db.rs 的默认值同源
+  islandEnabled: false,
 };
 
 /** 主题对账只在每个窗口的首次设置加载后做一次：中途重复对账会和保存中的写入竞态 */

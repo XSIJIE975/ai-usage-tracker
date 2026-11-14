@@ -9,16 +9,20 @@ import { applyTheme } from "../lib/theme";
 import type { AppSettings } from "../types/ipc";
 
 export interface PanelWindowConfig {
-  /** 唤起事件名（quick-shown / glance-shown）：Rust 侧显示窗口前发出 */
+  /** 唤起事件名（quick-shown / glance-shown / island-shown）：Rust 侧显示窗口前发出 */
   shownEvent: string;
-  /** 收起窗口的后端命令（hide_quick_window / hide_glance_window） */
-  hideCommand: string;
+  /** 收起窗口的后端命令（hide_quick_window / hide_glance_window）；persistent 模式可省略 */
+  hideCommand?: string;
   /** 失焦自动隐藏对应的设置键；缺省 = 无条件失焦自动隐藏（速览面板不提供该开关） */
   autoHideKey?: "quickAutoHide";
   /** 焦点回到窗口时的守卫：返回 false 跳过本次数据同步（快速面板的拖动回焦不算「用户回来看数据」） */
   onFocusGained?: () => boolean;
   /** Esc 按下的前置处理：返回 true 表示已消费（如快速面板先关闭通知面板） */
   onEscape?: () => boolean;
+  /** 常驻模式（灵动岛 ADR-0047）：窗口永不获焦，失焦隐藏与 Esc 收起都没有意义，全部跳过；
+   *  panelVisible 恒为 true——快照收敛（ADR-0019）照常回流，自动刷新由调用方按自身
+   *  启用状态另行门控（岛的 webview 在岛禁用时仍存活，不该驱动抓取） */
+  persistent?: boolean;
 }
 
 /**
@@ -41,11 +45,11 @@ export interface PanelWindowConfig {
  * 不同步、失焦不隐藏、高度不自适应即此因）。
  */
 export function usePanelWindow(config: PanelWindowConfig) {
-  const { shownEvent, hideCommand, autoHideKey } = config;
+  const { shownEvent, hideCommand, autoHideKey, persistent } = config;
   const loadInitial = useAppStore((state) => state.loadInitial);
   const refreshAll = useAppStore((state) => state.refreshAll);
   const [ready, setReady] = useState(false);
-  const [panelVisible, setPanelVisible] = useState(false);
+  const [panelVisible, setPanelVisible] = useState(Boolean(persistent));
 
   // 回调经 ref 透传：事件管道只在挂载时建立一次，组件每渲染重写 ref 即可拿到最新闭包
   const focusGuardRef = useRef(config.onFocusGained);
@@ -53,7 +57,7 @@ export function usePanelWindow(config: PanelWindowConfig) {
   const escapeRef = useRef(config.onEscape);
   escapeRef.current = config.onEscape;
   // 可见性同样经 ref 透传：事件管道只在挂载时建立一次，而快照收敛（ADR-0019）要读「当时」的可见性
-  const panelVisibleRef = useRef(false);
+  const panelVisibleRef = useRef(Boolean(persistent));
   panelVisibleRef.current = panelVisible;
 
   // 轻量同步（ADR-0023 零抓取）：只重读本地状态（IPC 读库），不发起任何供应商网络请求。
@@ -74,6 +78,7 @@ export function usePanelWindow(config: PanelWindowConfig) {
 
   const hideWindow = useCallback(async () => {
     setPanelVisible(false);
+    if (!hideCommand) return;
     await invoke(hideCommand).catch(() => undefined);
   }, [hideCommand]);
 
@@ -95,8 +100,10 @@ export function usePanelWindow(config: PanelWindowConfig) {
 
       try {
         const window = getCurrentWindow();
-        track(
-          await window.onFocusChanged(({ payload: focused }) => {
+        // 常驻模式（灵动岛）注册焦点监听没有意义：窗口永不获焦，也不会因此隐藏
+        if (!persistent) {
+          track(
+            await window.onFocusChanged(({ payload: focused }) => {
             if (focused) {
               if (focusGuardRef.current && !focusGuardRef.current()) return;
               void syncFromBackend();
@@ -120,14 +127,15 @@ export function usePanelWindow(config: PanelWindowConfig) {
                   cursor.y <= position.y + size.height;
                 if (!inside) {
                   setPanelVisible(false);
-                  await invoke(hideCommand);
+                  if (hideCommand) await invoke(hideCommand);
                 }
               } catch {
                 // 查询失败时保守处理：不隐藏
               }
             })();
           }),
-        );
+          );
+        }
         // 凭据库状态/凭据变化：只做轻量同步（ADR-0023 零抓取）。抓取依赖凭据可用性，
         // 且解锁方（主窗口）刷出的结果会经 refresh-completed 收敛回来，这里不抢跑
         track(await listen("vault-status-changed", () => void syncFromBackendLight()));
@@ -194,10 +202,12 @@ export function usePanelWindow(config: PanelWindowConfig) {
       disposed = true;
       for (const unlisten of unlisteners) unlisten();
     };
-  }, [syncFromBackend, syncFromBackendLight, shownEvent, hideCommand, autoHideKey]);
+  }, [syncFromBackend, syncFromBackendLight, shownEvent, hideCommand, autoHideKey, persistent]);
 
-  // Esc：onEscape 先行（如先关闭通知面板），未消费则收起整个窗口
+  // Esc：onEscape 先行（如先关闭通知面板），未消费则收起整个窗口。
+  // 常驻模式（灵动岛）跳过：窗口永不获焦，收不到键盘事件
   useEffect(() => {
+    if (persistent) return;
     const handler = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       if (escapeRef.current && escapeRef.current()) return;
@@ -205,7 +215,7 @@ export function usePanelWindow(config: PanelWindowConfig) {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [hideWindow]);
+  }, [persistent, hideWindow]);
 
   return { ready, panelVisible, setPanelVisible, syncFromBackend, hideWindow };
 }

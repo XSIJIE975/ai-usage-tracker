@@ -124,17 +124,20 @@ function GlanceCard({
  * 刻意维持单环（ADR-0017 实现修正）：速览卡片右侧明细行已逐窗列读数，嵌套环在此是
  * 纯重复；且环心数字住在内环孔里，双层孔径 ~14px 连三位数字都放不下（实测 "100" 被裁成
  * "0"），数字与各层档位色还会互相打架。多层环只属于没有文字兜底的托盘图标与设置页方案预览卡。
+ * 灵动岛胶囊（ADR-0047）以更小尺寸复用，字号随之收紧。
  */
-function UsageRing({
+export function UsageRing({
   percent,
   alert,
   label,
   size = 44,
+  fontSize = 13,
 }: {
   percent: number;
   alert: boolean;
   label?: string;
   size?: number;
+  fontSize?: number;
 }) {
   const stroke = 4;
   const radius = (size - stroke) / 2;
@@ -166,7 +169,7 @@ function UsageRing({
         />
       </svg>
       <div className="absolute inset-0 flex items-center justify-center">
-        <span className="tnum text-[13px] font-semibold leading-none" style={{ color }}>
+        <span className="tnum font-semibold leading-none" style={{ color, fontSize }}>
           {displayPercentInteger(percent)}
         </span>
       </div>

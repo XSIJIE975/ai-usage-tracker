@@ -11,6 +11,7 @@ mod autostart;
 mod commands;
 mod db;
 mod instances;
+mod island_window;
 mod panel_window;
 mod tray_scheme;
 mod vault;
@@ -73,6 +74,8 @@ pub fn run() {
             });
             // 托盘呈现状态（图标方案/计量快照/语言）独立于 AppState，由 tray_scheme 模块消费
             app.manage(tray_scheme::TrayState::default());
+            // 灵动岛运行态（ADR-0047）：控制线程进程内只起一次，enabled 驱动采样/休眠
+            app.manage(island_window::IslandRuntime::default());
 
             // 注册设置中配置的快速面板全局快捷键；失败不阻断启动
             let app_state = app.state::<AppState>();
@@ -100,10 +103,15 @@ pub fn run() {
                 // 窗口标题统一走 app_title（内含开发实例 (dev) 后缀，ADR-0018）；
                 // 语言切换后 refresh_tray_menu 会用同一函数重放，两处不可再各写一套
                 let title = commands::app_title(&language);
-                for label in ["main", "quick", "glance"] {
+                for label in ["main", "quick", "glance", "island"] {
                     if let Some(window) = app.get_webview_window(label) {
                         let _ = window.set_title(&title);
                     }
+                }
+                // 灵动岛（ADR-0047）：已开启则启动控制线程并显示。静默启动（--silent）
+                // 不拦岛——岛是用户 opt-in 的常驻氛围面，不是弹窗，与主窗口的显示策略无关
+                if settings.get("islandEnabled").and_then(Value::as_bool).unwrap_or(false) {
+                    island_window::apply_island_enabled(app.handle(), true);
                 }
                 if let Some(shortcut) = settings.get("quickPanelShortcut").and_then(Value::as_str) {
                     if !shortcut.is_empty() {
@@ -141,6 +149,13 @@ pub fn run() {
             if let Some(glance) = app.get_webview_window("glance") {
                 if let Err(error) = glance.hide() {
                     eprintln!("隐藏速览面板窗口失败：{error}");
+                }
+            }
+            // 灵动岛窗口同样默认隐藏；未启用（或设置读取失败）时保持隐藏，
+            // 启用路径由上方 islandEnabled 接线的 apply_island_enabled 处理
+            if !app.state::<island_window::IslandRuntime>().enabled() {
+                if let Some(island) = app.get_webview_window("island") {
+                    let _ = island.hide();
                 }
             }
 
@@ -231,6 +246,7 @@ pub fn run() {
             commands::hide_quick_window,
             commands::toggle_quick_window,
             commands::hide_glance_window,
+            island_window::set_island_enabled,
             commands::register_quick_shortcut,
             commands::refresh_tray_menu,
             autostart::set_autostart,

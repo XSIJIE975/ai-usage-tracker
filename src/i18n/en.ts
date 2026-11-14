@@ -911,4 +911,11 @@ export const en: Record<string, string> = {
   "发布版本后会出现在这里。": "Entries appear here after a release is published.",
   "更新日志加载失败": "Failed to load the changelog",
   "重启应用后可重试。": "Restart the app to retry.",
+
+  // ── 灵动岛（ADR-0047）──
+  "灵动岛": "Dynamic Island",
+  "屏幕顶部的常驻胶囊：悬停展开查看各实例额度。": "A compact capsule docked at the top of the screen; hover to expand the quota list.",
+  "显示灵动岛": "Show dynamic island",
+  "开启后屏幕顶部居中出现常驻胶囊：平时显示时间与最紧额度，鼠标悬停展开完整列表，点击胶囊打开主窗口。": "When on, a compact capsule sits at the top center of the screen: it shows the time and the tightest quota, expands into the full list on hover, and opens the main window when clicked.",
+  "与托盘速览互补：岛常驻可见，速览按需弹出。": "Complements the tray glance: the island stays visible, the glance opens on demand.",
 };

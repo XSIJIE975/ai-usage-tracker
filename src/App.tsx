@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { QuickWindow } from "./views/QuickWindow";
 import { GlanceWindow } from "./views/GlanceWindow";
+import { IslandWindow } from "./views/IslandWindow";
 import { MainWindow } from "./views/MainWindow";
 
 export default function App() {
@@ -14,5 +15,6 @@ export default function App() {
   if (!windowLabel) return null;
   if (windowLabel === "quick") return <QuickWindow />;
   if (windowLabel === "glance") return <GlanceWindow />;
+  if (windowLabel === "island") return <IslandWindow />;
   return <MainWindow />;
 }

@@ -334,7 +334,9 @@ impl Db {
             "resetTimeDisplay": "relative",
             "interfaceLanguage": "auto",
             "autoStart": false,
-            "silentStart": false
+            "silentStart": false,
+            // 灵动岛（ADR-0047）：默认关闭，opt-in 后常驻屏幕顶部；存量库缺键时由此补齐
+            "islandEnabled": false
         });
         let row = self.conn.query_row(
             "SELECT value FROM settings WHERE key = 'app_settings'",

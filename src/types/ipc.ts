@@ -238,6 +238,8 @@ export interface AppSettings {
   glanceInstanceScope: "all" | "custom";
   /** 自选实例列表（scope 为 custom 时生效） */
   glanceInstanceIds: string[];
+  /** 灵动岛（ADR-0047）：屏幕顶部常驻胶囊，悬停展开额度列表；默认关闭 opt-in */
+  islandEnabled: boolean;
 }
 
 export interface StoredNotification {

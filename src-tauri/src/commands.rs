@@ -891,12 +891,12 @@ pub fn refresh_tray_menu(app: AppHandle, language: String) -> Result<(), String>
         *state.language.lock().expect("tray language lock poisoned") = language.clone();
     }
     crate::tray_scheme::apply(&app);
-            let title = app_title(&language);
-            for label in ["main", "quick", "glance"] {
-                if let Some(window) = app.get_webview_window(label) {
-                    let _ = window.set_title(&title);
-                }
-            }
+    let title = app_title(&language);
+    for label in ["main", "quick", "glance", "island"] {
+        if let Some(window) = app.get_webview_window(label) {
+            let _ = window.set_title(&title);
+        }
+    }
     Ok(())
 }
 
