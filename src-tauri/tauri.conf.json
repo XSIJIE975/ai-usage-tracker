@@ -46,7 +46,7 @@
       {
         "label": "island",
         "title": "AI 用量助手",
-        "width": 460,
+        "width": 500,
         "height": 340,
         "decorations": false,
         "transparent": true,

@@ -70,10 +70,12 @@ export function IslandPanelContent({
     // 行卡片（bg-surface）落在 canvas 上才立得住——surface 套 surface 会成「框中框」
     <div className="flex h-full flex-col">
       <header className="relative flex h-9 shrink-0 items-center justify-between border-b border-line bg-surface-2/60 px-3">
-        {/* 拖动把手区（岛仔式）：标题栏整块可拖，悬停 0.3s 浮现一根小横条 + 底色，
-            与左右两侧按钮互不重叠——按钮 z-index 更高且自己消费 pointer 事件 */}
+        {/* 拖动把手：**只有中间那根指示条自己可拖**（约 40×16 的命中区），
+            标题栏其余部分不响应拖动——否则「点标题」也会开始拖动，与打开主窗口等
+            点击操作抢手势。悬停 0.3s 指示条由 2px 淡出条展开为 24px 实条。
+            命中区比视觉条略大（40×16）以便瞄准，但仍限制在标题栏中部。 */}
         <div
-          className="absolute inset-x-10 inset-y-0 flex cursor-grab touch-none items-center justify-center active:cursor-grabbing"
+          className="absolute left-1/2 top-1/2 flex h-4 w-10 -translate-x-1/2 -translate-y-1/2 cursor-grab touch-none items-center justify-center active:cursor-grabbing"
           role="separator"
           aria-label={translate("拖动调整位置")}
           title={translate("按住拖动位置")}
@@ -97,12 +99,19 @@ export function IslandPanelContent({
             )}
           />
         </div>
-        <div className="pointer-events-none relative z-10 flex min-w-0 items-center gap-2">
+        {/* 标题区不再是拖动区（拖动只归中间指示条）：恢复成「点击打开主窗口」，
+            与左右按钮同层，避免手势定义含糊 */}
+        <button
+          type="button"
+          onClick={onOpenMain}
+          title={translate("打开主窗口")}
+          className="relative z-10 flex min-w-0 items-center gap-2 rounded pr-2 text-left transition-colors hover:text-fg"
+        >
           <BrandIcon size={18} className="rounded-[4px]" />
           <span className="truncate text-[12px] font-semibold text-fg">
             {translate("AI 用量助手")}
           </span>
-        </div>
+        </button>
         <div className="relative z-10 flex shrink-0 items-center gap-0.5">
           <Segmented
             size="sm"

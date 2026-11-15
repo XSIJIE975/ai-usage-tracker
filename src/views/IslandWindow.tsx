@@ -5,7 +5,7 @@ import { TriangleAlert } from "lucide-react";
 import { usePanelAutoRefresh, usePanelWindow } from "../hooks/use-panel-window";
 import { useNow } from "../hooks/use-now";
 import { buildGlanceInstances, type GlanceInstance } from "../components/glance/data";
-import { IslandPillContent, IslandPillSideContent, useIslandClock } from "../components/island/IslandPill";
+import { IslandPillContent, useIslandClock } from "../components/island/IslandPill";
 import { IslandPanelContent } from "../components/island/IslandPanel";
 import {
   BANNER_MS,
@@ -14,33 +14,36 @@ import {
   CLOSE_TUNING,
   OPEN_TUNING,
   PANEL_FADE,
+  PANEL_FLARE,
+  PANEL_FLARE_H,
   PANEL_H,
-  PANEL_W,
+  PANEL_OUTER_W,
+  PANEL_RADIUS,
   PILL_FADE,
+  PILL_FLARE,
+  PILL_FLARE_H,
   PILL_H,
+  PILL_RADIUS,
   PILL_TOP,
   PILL_W,
-  SIDE_CANVAS_H,
-  SIDE_PANEL_H,
-  SIDE_PANEL_W,
-  SIDE_PILL_H,
-  SIDE_PILL_W,
-  type IslandDock,
 } from "../components/island/constants";
+import { islandOutlinePath } from "../components/island/shape";
 import { Spring, clamp01, lerp, smoothstep } from "../lib/spring";
-import { cn } from "../lib/utils";
 import { useAppStore } from "../store/useAppStore";
 import { useAlertStore } from "../store/useAlertStore";
 import { useLanguage, useT } from "../i18n";
 
 
 /**
- * 灵动岛窗口（ADR-0047）：常驻屏幕顶部工作区居中的透明胶囊，悬停驻留展开、离开收起。
+ * 灵动岛窗口（ADR-0047）：**从屏幕顶边长出来的**常驻面板，悬停驻留展开、离开收起。
+ * 轮廓不是圆角矩形：顶边与工作区顶边齐平，两侧在顶边向外翻出肩部、再收敛到竖直侧边
+ * （几何见 components/island/shape.ts）——视觉上它是显示屏的一部分，而不是浮在桌面上的
+ * 一颗胶囊。描边沿同一条轮廓绘制、顶部敞开；投影用 drop-shadow 跟随轮廓 alpha。
  * 展开判定在 Rust 控制器（src-tauri/src/island_window.rs）——本视图只听 island-expanded /
  * island-collapsed 事件驱动形变弹簧；点击穿透也由 Rust 按「光标在命中区」整窗切换。
  * 窗口固定画布（CANVAS_W × CANVAS_H）永不 resize，展开/收起是画布内的 DOM 形变。
  *
- * P1：胶囊可水平拖动换位（位移喂 Rust 换算偏移比例，松手回存设置 islandOffsetX，
+ * P1：胶囊可沿顶边拖动换位（位移喂 Rust 换算偏移比例，松手回存设置 islandOffsetX，
  * 拖动期间 Rust 侧抑制展开）；额度告警激活时胶囊临时加宽为横幅（命中区同步放宽），
  * 数秒后自动收回，点击打开主窗口。
  */
@@ -64,10 +67,6 @@ export function IslandWindow() {
   const resetDisplay = useAppStore((state) => state.settings.resetTimeDisplay);
   const now = useNow();
   const islandEnabled = settings.islandEnabled;
-  // 拖动贴边时 Rust 会改停靠边（松手才回存设置）：本地 state 让形态立刻跟上，
-  // 设置里已有的值作为初值/兜底
-  const [liveDock, setLiveDock] = useState<IslandDock>(settings.islandDock);
-  const dock = liveDock;
 
   // persistent 模式：无失焦隐藏/无 Esc（岛永不获焦），panelVisible 恒真使快照照常回流
   const { ready } = usePanelWindow({ shownEvent: "island-shown", persistent: true });
@@ -98,12 +97,14 @@ export function IslandWindow() {
 
   // ---- 形变弹簧：进度 0=收起 1=展开 + 横幅宽度弹簧，直接写 DOM 不走 React 渲染 ----
   const morphRef = useRef<HTMLDivElement>(null);
+  // 内容区（轮廓本体，左右让出肩部）与两条 SVG 路径：尺寸/曲线都逐帧同步写入
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const surfacePathRef = useRef<SVGPathElement>(null);
+  const rimPathRef = useRef<SVGPathElement>(null);
   const pillLayerRef = useRef<HTMLDivElement>(null);
   const panelLayerRef = useRef<HTMLDivElement>(null);
   const progressRef = useRef(new Spring(0, CLOSE_TUNING));
   const pillWidthRef = useRef(new Spring(PILL_W, BANNER_TUNING));
-  // 当前停靠边：帧循环读它决定形变轴向（设置变更时同步）
-  const dockRef = useRef<IslandDock>(settings.islandDock);
   const frameRef = useRef<number | null>(null);
   const lastFrameAtRef = useRef<number>(0);
   // 帧循环点火口：tick 住在挂载效应的闭包里，外部（横幅/拖动后的宽度变化）经此点火
@@ -148,10 +149,6 @@ export function IslandWindow() {
   // 首次绘制前的几何全靠这里的 apply() 写入——useEffect 在首帧绘制后才跑，会闪出一帧
   // 未定位的空画布
   useLayoutEffect(() => {
-    // 上次写入的圆角：只在明显变化时改样式，避免逐帧触发重绘（effect 内局部变量，
-    // 不随 React 重渲染重置）
-    let lastRadius = 16;
-
     function kick() {
       if (frameRef.current != null) return;
       lastFrameAtRef.current = performance.now();
@@ -177,42 +174,50 @@ export function IslandWindow() {
 
     function apply(p: number, pillW: number) {
       const morph = morphRef.current;
+      const body = bodyRef.current;
       const pill = pillLayerRef.current;
       const panel = panelLayerRef.current;
       if (!morph) return;
       const progress = clamp01(p);
-      // 收起/展开的起止尺寸随停靠边变化：
-      // - 顶部：胶囊 196×40 → 面板 424×284（横向）
-      // - 侧边：胶囊 36×132 → 面板 424×284（竖向贴边，宽度向屏内长出）
-      const side = dockRef.current !== "top";
-      const fromW = side ? SIDE_PILL_W : pillW;
-      const fromH = side ? SIDE_PILL_H : PILL_H;
-      const toW = side ? SIDE_PANEL_W : PANEL_W;
-      const toH = side ? SIDE_PANEL_H : PANEL_H;
-      const width = lerp(fromW, toW, progress);
-      const height = lerp(fromH, toH, progress);
+      // 形变：胶囊（160×32，横幅期间更宽）→ 面板（含肩部 456×284）。
+      // 宽度/高度/肩部/圆角一起插值——轮廓始终是一条连续曲线，不做形态交叉淡入
+      const width = lerp(pillW, PANEL_OUTER_W, progress);
+      const height = lerp(PILL_H, PANEL_H, progress);
+      const flare = lerp(PILL_FLARE, PANEL_FLARE, progress);
+      const flareHeight = lerp(PILL_FLARE_H, PANEL_FLARE_H, progress);
+      const radius = lerp(PILL_RADIUS, PANEL_RADIUS, progress);
       // 用 width/height 而非 transform:scale——scale 会连内容一起压扁。
       morph.style.width = `${width.toFixed(2)}px`;
       morph.style.height = `${height.toFixed(2)}px`;
-      // 圆角：顶部胶囊半高起、侧边胶囊半宽起，都收敛到面板 16px
-      const fromRadius = side ? SIDE_PILL_W / 2 : PILL_H / 2;
-      const radius = lerp(fromRadius, 16, progress);
-      if (Math.abs(radius - lastRadius) > 0.5) {
-        morph.style.borderRadius = `${radius.toFixed(1)}px`;
-        lastRadius = radius;
-      }
-      // 位置：侧边贴所在边、竖直居中；顶部水平居中。全部写内联样式（元素不受 React 控制）
-      if (side) {
-        const right = dockRef.current === "right";
-        morph.style.left = right ? "auto" : "6px";
-        morph.style.right = right ? "6px" : "auto";
-        morph.style.marginInline = "0";
-        morph.style.top = `${(SIDE_CANVAS_H - height) / 2}px`;
-      } else {
-        morph.style.left = "0";
-        morph.style.right = "0";
-        morph.style.marginInline = "auto";
-        morph.style.top = `${PILL_TOP}px`;
+      // 位置：水平居中（拖动时偏移由窗口自身移动实现，画布内始终居中）；
+      // 顶边贴住画布顶（= 工作区顶）。全部写内联样式（元素不受 React 控制）
+      morph.style.left = "0";
+      morph.style.right = "0";
+      morph.style.marginInline = "auto";
+      morph.style.top = `${PILL_TOP}px`;
+
+      // 表面轮廓：顶部外翻肩部 + 竖直侧边 + 底部圆角。
+      // 描边用内收 0.5px 的同一曲线（1px stroke 因此完整落在表面内侧），
+      // 且不闭合——顶边贴着屏幕边缘，不画线
+      surfacePathRef.current?.setAttribute(
+        "d",
+        islandOutlinePath(width, height, flare, flareHeight, radius),
+      );
+      rimPathRef.current?.setAttribute(
+        "d",
+        islandOutlinePath(width, height, flare, flareHeight, radius, {
+          inset: 0.5,
+          close: false,
+        }),
+      );
+
+      // 内容区 = 轮廓本体（左右各让出肩部宽度）；底部圆角与轮廓同心，
+      // 顶部直角藏在屏幕边缘。肩部区域只露表面，不被内容覆盖
+      if (body) {
+        body.style.left = `${flare.toFixed(2)}px`;
+        body.style.right = `${flare.toFixed(2)}px`;
+        body.style.borderBottomLeftRadius = `${radius.toFixed(2)}px`;
+        body.style.borderBottomRightRadius = `${radius.toFixed(2)}px`;
       }
       if (pill) {
         pill.style.opacity = String(1 - smoothstep(PILL_FADE[0], PILL_FADE[1], progress));
@@ -237,34 +242,9 @@ export function IslandWindow() {
     // 挂载即画一次当前状态：保证首帧尺寸/圆角/透明度与弹簧初值一致，
     // 不依赖事件到达（否则窗口刚显示时会停在 JSX 的初始样式上）
     apply(progressRef.current.pos, pillWidthRef.current.pos);
-    // 向 Rust 运行时问一次权威停靠边：store 的 settings 初值是默认 "top"，落库值要等
-    // loadInitial 完成，而 island-dock-changed 只在真正换边时才发——若落库是 left/right，
-    // 前端会一直按顶边画形（侧边画布上横排胶囊，位置/形态全错且永不自愈）
-    void invoke<string>("get_island_dock")
-      .then((next) => {
-        const dockNow = next as IslandDock;
-        if (dockNow === dockRef.current) return;
-        dockRef.current = dockNow;
-        setLiveDock(dockNow);
-        apply(progressRef.current.pos, pillWidthRef.current.pos);
-      })
-      .catch(() => undefined);
     const unlisteners = [
       listen("island-expanded", () => setTarget(true)),
       listen("island-collapsed", () => setTarget(false)),
-      // 拖动贴边换边：Rust 侧已换好画布尺寸与停靠边，前端立刻重画一帧
-      //（dockRef 在下次渲染时才更新，这里直接同步）
-      listen<string>("island-dock-changed", () => {
-        void invoke<string>("get_island_dock")
-          .then((next) => {
-            const dockNow = next as IslandDock;
-            // ref 供帧循环立即重画；state 让 JSX 换成对应的胶囊内容（竖排/横排）
-            dockRef.current = dockNow;
-            setLiveDock(dockNow);
-            apply(progressRef.current.pos, pillWidthRef.current.pos);
-          })
-          .catch(() => undefined);
-      }),
     ];
     return () => {
       kickRef.current = () => undefined;
@@ -275,31 +255,6 @@ export function IslandWindow() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 事件管道只建一次；回调经 ref 访问最新状态
   }, []);
-
-  // settings.islandDock 变化时同步 dockRef/liveDock：settings-changed 由 usePanelWindow
-  // 处理（只写 store），不会动本组件的 liveDock；若不同步，主窗口侧的设置落库（或
-  // loadInitial 补齐落库值）会让「设置里的停靠边」与「正在画的形」长期分叉。
-  // 分歧时不盲信设置值，向 Rust 运行时问权威值——拖动换边后回存失败（saveSettings
-  // 抛错被吞）时设置是旧的，Rust 的 dock 才是事实源。拖动中 Rust 实时换边不会触发
-  // 本 effect（settings 未变），island-dock-changed 已单独同步。
-  // islandEnabled 也在依赖里：启动时岛是禁用的话，Rust 运行时的 dock 一直停在默认
-  // top，此后用户重新启用（set_island_enabled 会先从库里读 dock 设好运行时、再由
-  // 设置页落设置），islandDock 设置值不变、dock-changed 也不发——必须借这次重渲染
-  // 重新对账，否则侧边停靠的岛会按顶边形态画。
-  const islandDockSetting = settings.islandDock;
-  const islandEnabledSetting = settings.islandEnabled;
-  useEffect(() => {
-    if (dockRef.current === islandDockSetting) return;
-    void invoke<string>("get_island_dock")
-      .then((next) => {
-        const dockNow = next as IslandDock;
-        if (dockNow === dockRef.current) return;
-        dockRef.current = dockNow;
-        setLiveDock(dockNow);
-        kickRef.current();
-      })
-      .catch(() => undefined);
-  }, [islandDockSetting, islandEnabledSetting]);
 
   // 逐实例监听激活边沿（anyAlert 的 false→true 会漏掉「已有一条告警时又来一条」）；
   // 主窗口是唯一评估方（ADR-0022），本窗口只消费广播
@@ -350,17 +305,9 @@ export function IslandWindow() {
     try {
       const offset = await invoke<number>("end_island_drag");
       if (!persist) return;
-      // 停靠边可能在拖动中因贴边而切换：与偏移一起回存，
-      // 否则重启后岛会回到旧边、偏移却按新轴解释
-      const dock = await invoke<string>("get_island_dock").catch(() => null);
       const current = useAppStore.getState().settings;
-      const nextDock = (dock as "top" | "left" | "right" | null) ?? current.islandDock;
-      if (current.islandOffsetX !== offset || current.islandDock !== nextDock) {
-        await useAppStore.getState().saveSettings({
-          ...current,
-          islandOffsetX: offset,
-          islandDock: nextDock,
-        });
+      if (current.islandOffsetX !== offset) {
+        await useAppStore.getState().saveSettings({ ...current, islandOffsetX: offset });
       }
     } catch {
       // 回存失败不影响本次拖动效果，下次拖动会重新落
@@ -369,106 +316,116 @@ export function IslandWindow() {
 
   return (
     <div className="relative h-screen w-screen select-none overflow-hidden bg-transparent">
-      {/* morph 容器：胶囊/面板共用的外形层（尺寸、圆角、边框、底色、阴影）。
-          位置与尺寸由帧循环的 apply() 按停靠边逐帧写入；这里刻意不带 React style——
-          首帧几何由挂载效应（useLayoutEffect 里的 apply()）在绘制前写入，见上方注释。
-          阴影收紧（0 6px 18px）：面板距画布边缘仅 10–50px，大扩散阴影会被窗口裁成方形残影。 */}
-      <div
-        ref={morphRef}
-        className="absolute overflow-hidden bg-surface/90 shadow-island ring-1 ring-island-edge ring-inset"
-        // 尺寸/位置/圆角全部由帧循环 apply() 逐帧写入。这里刻意不给 style：
-        // React 每次重渲染都会用它覆盖掉帧循环刚写的值，拖动/动画中表现为「卡住不动」。
-      >
-        {/* 收起态内容：横幅优先于常规胶囊；点击打开主窗口（收起态不提供拖动，
-            与岛仔一致——先悬停展开，再拖顶部的把手）。
-            容器布局按整幅面板排，胶囊内容按自身尺寸居中——外层 scale 缩回时
-            正好落到顶部居中的胶囊位置，内容不发生重排 */}
-        {/* 胶囊层：内容行高固定 40px（胶囊视觉高度），容器变高时保持垂直居中不拉伸。
-            宽度铺满容器——横幅加宽时内容随之铺开 */}
+      {/* morph 容器：胶囊/面板共用的外形层。位置与尺寸由帧循环的 apply() 逐帧写入；
+          这里刻意不带 React style——首帧几何由挂载效应（useLayoutEffect 里的 apply()）
+          在绘制前写入，React 重渲染也不会覆盖帧循环。
+          顶边贴着画布顶（= 工作区顶），轮廓顶部有外翻肩部：岛从屏幕边缘长出来，
+          所以投影只向下投，画布上方的部分本来就落在屏幕外，不会被裁出残影。 */}
+      <div ref={morphRef} className="absolute">
+        {/* 表面层：肩部轮廓 + 竖直侧边 + 底部圆角（路径逐帧由 apply() 写入）。
+            投影用 filter 的 drop-shadow 跟随轮廓 alpha——box-shadow 只能画矩形/
+            圆角矩形，画不出肩部。本层不参与命中，点击交给上面的内容层 */}
         <div
-          ref={pillLayerRef}
-          className="absolute inset-0 flex items-center justify-center"
+          aria-hidden
+          className="pointer-events-none absolute inset-0"
+          style={{ filter: "var(--island-filter-shadow)" }}
         >
-          <div className="h-10 w-full shrink-0">
-            {banner != null ? (
-              <button
-                type="button"
-                onClick={() => void openMain()}
-                className="h-full w-full cursor-pointer bg-transparent"
-                title={t("打开主窗口")}
-              >
-                <div
-                  className={cn(
-                    "flex h-full w-full items-center justify-center gap-2",
-                    dock === "top" ? "px-3" : "flex-col px-1 py-2",
-                  )}
+          <svg className="absolute inset-0 h-full w-full">
+            <defs>
+              <linearGradient id="island-surface-fill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" style={{ stopColor: "var(--island-fill-top)" }} />
+                <stop offset="1" style={{ stopColor: "var(--island-fill-bottom)" }} />
+              </linearGradient>
+            </defs>
+            <path ref={surfacePathRef} fill="url(#island-surface-fill)" />
+          </svg>
+        </div>
+
+        {/* 内容区 = 轮廓本体（左右各让出肩部宽度）。底部圆角靠同心的 inner radius
+            裁切；肩部区域只露表面，不被内容覆盖。
+            收起态内容：横幅优先于常规胶囊；点击打开主窗口（收起态不提供拖动，
+            与岛仔一致——先悬停展开，再拖顶部的把手） */}
+        <div ref={bodyRef} className="absolute inset-y-0 overflow-hidden">
+          {/* 胶囊层：固定 32px 行高并锚在顶部，展开时内容不会随容器变高而下坠。
+              宽度铺满本体——横幅加宽时内容随之铺开 */}
+          <div
+            ref={pillLayerRef}
+            className="absolute inset-x-0 top-0 flex h-8 items-center justify-center"
+          >
+            <div className="h-full w-full shrink-0">
+              {banner != null ? (
+                <button
+                  type="button"
+                  onClick={() => void openMain()}
+                  className="h-full w-full cursor-pointer bg-transparent"
+                  title={t("打开主窗口")}
                 >
-                  <TriangleAlert className="h-3.5 w-3.5 shrink-0 text-warning" />
-                  <span
-                    className={cn(
-                      "min-w-0 text-[12px] font-medium text-fg",
-                      dock === "top" ? "truncate" : "line-clamp-3 text-center text-[10px]",
-                    )}
-                    title={banner}
-                  >
-                    {banner}
-                  </span>
-                </div>
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => void openMain()}
-                aria-label={t("打开主窗口")}
-                title={t("打开主窗口")}
-                className="h-full w-full cursor-pointer bg-transparent focus-visible:outline-none"
-              >
-                {dock === "top" ? (
+                  <div className="flex h-full w-full items-center justify-center gap-2 px-3">
+                    <TriangleAlert className="h-3.5 w-3.5 shrink-0 text-warning" />
+                    <span
+                      className="min-w-0 truncate text-[12px] font-medium text-fg"
+                      title={banner}
+                    >
+                      {banner}
+                    </span>
+                  </div>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void openMain()}
+                  aria-label={t("打开主窗口")}
+                  title={t("打开主窗口")}
+                  className="h-full w-full cursor-pointer bg-transparent focus-visible:outline-none"
+                >
                   <IslandPillContent
                     time={clock}
                     tightest={overallTightest}
                     alertActive={anyAlert}
                     translate={t}
                   />
-                ) : (
-                  <IslandPillSideContent
-                    time={clock}
-                    tightest={overallTightest}
-                    alertActive={anyAlert}
-                    translate={t}
-                  />
-                )}
-              </button>
-            )}
+                </button>
+              )}
+            </div>
+          </div>
+          {/* 展开态内容：铺满本体、绝对定位在左上，随容器尺寸裁剪。
+              容器展开到面板尺寸时它正好完整可见；收起时被 overflow-hidden 裁掉 */}
+          <div
+            ref={panelLayerRef}
+            className="pointer-events-none absolute inset-0 opacity-0"
+          >
+            <IslandPanelContent
+              items={glanceItems}
+              vaultUnlocked={vaultStatus?.unlocked ?? false}
+              refreshing={refreshing}
+              translate={t}
+              language={language}
+              resetDisplay={resetDisplay}
+              now={now}
+              layout={settings.islandLayout}
+              onLayoutChange={(layout) => {
+                void useAppStore.getState().saveSettings({
+                  ...useAppStore.getState().settings,
+                  islandLayout: layout,
+                });
+              }}
+              onOpenMain={() => void openMain()}
+              onRefresh={() => void refreshAll()}
+              onDragStart={beginDrag}
+              onDragEnd={(persist) => void finishDrag(persist)}
+            />
           </div>
         </div>
-        {/* 展开态内容：铺满容器、绝对定位在左上，随容器尺寸裁剪。
-            容器展开到面板尺寸时它正好完整可见；收起时被 overflow-hidden 裁掉 */}
-        <div
-          ref={panelLayerRef}
-          className="pointer-events-none absolute inset-0 opacity-0"
+
+        {/* 描边层：必须画在内容之上——面板内容会铺满本体（bg-canvas 不透明），
+            画在内容下面的描边会被整条盖住。路径顶部敞开：顶边贴着屏幕边缘，
+            画一条线会在屏幕顶上留一道缝；描边路径内收 0.5px，1px 线完整落在表面内 */}
+        <svg
+          aria-hidden
+          className="pointer-events-none absolute inset-0 z-20 h-full w-full"
         >
-          <IslandPanelContent
-            items={glanceItems}
-            vaultUnlocked={vaultStatus?.unlocked ?? false}
-            refreshing={refreshing}
-            translate={t}
-            language={language}
-            resetDisplay={resetDisplay}
-            now={now}
-            layout={settings.islandLayout}
-            onLayoutChange={(layout) => {
-              void useAppStore.getState().saveSettings({
-                ...useAppStore.getState().settings,
-                islandLayout: layout,
-              });
-            }}
-            onOpenMain={() => void openMain()}
-            onRefresh={() => void refreshAll()}
-            onDragStart={beginDrag}
-            onDragEnd={(persist) => void finishDrag(persist)}
-          />
-        </div>
+          <path ref={rimPathRef} fill="none" className="stroke-island-edge" strokeWidth={1} />
+        </svg>
       </div>
     </div>
   );

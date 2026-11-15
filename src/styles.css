@@ -167,10 +167,18 @@
   /* 阴影 */
   --shadow-card: 0 1px 2px rgb(25 28 38 / 0.04), 0 2px 8px rgb(25 28 38 / 0.05);
   --shadow-pop: 0 4px 12px rgb(25 28 38 / 0.08), 0 12px 32px rgb(25 28 38 / 0.12);
-  /* 灵动岛表面（ADR-0047）：岛浮在桌面之上而不是应用底色上，浅色主题下白胶囊
-     需要比页面内卡片更明确的描边与更淡的投影，否则边界糊在浅色壁纸上 */
-  --shadow-island: 0 4px 14px rgb(25 28 38 / 0.13), 0 1px 3px rgb(25 28 38 / 0.10);
-  --island-edge: rgb(25 28 38 / 0.10);
+  /* 灵动岛表面（ADR-0047）：轮廓是「顶部外翻肩部 + 竖直侧边 + 底部圆角」
+     （几何见 components/island/shape.ts）。box-shadow 只能画矩形/圆角矩形，
+     画不出这种轮廓，所以投影改用 filter 的 drop-shadow 跟随表面 alpha——
+     这里存的是 filter 片段，使用处是 style={{ filter: "var(--island-filter-shadow)" }}。
+     表面本身用极轻的纵向渐变，给肩部和底部一点体积感。
+     投影模糊半径不超过 12px：面板两侧各留 22px 画布余量，超了会被窗口
+     边缘硬裁出方形残影（首版实测） */
+  --island-fill-top: #ffffff;
+  --island-fill-bottom: #f0f2f7;
+  --island-filter-shadow:
+    drop-shadow(0 1px 2px rgb(25 28 38 / 0.10)) drop-shadow(0 6px 12px rgb(25 28 38 / 0.14));
+  --island-edge: rgb(25 28 38 / 0.12);
 
   /* 焦点环 */
   --ring: rgb(90 72 226 / 0.35);
@@ -237,9 +245,14 @@
 
   --shadow-card: 0 1px 2px rgb(0 0 0 / 0.32), 0 2px 8px rgb(0 0 0 / 0.24);
   --shadow-pop: 0 4px 12px rgb(0 0 0 / 0.4), 0 16px 40px rgb(0 0 0 / 0.48);
-  /* 深色下岛需要更实的投影才浮得起来（透明窗口背后是桌面，不是应用底色） */
-  --shadow-island: 0 6px 18px rgb(0 0 0 / 0.40);
-  --island-edge: rgb(255 255 255 / 0.08);
+  /* 深色下岛需要更实的投影才浮得起来（透明窗口背后是桌面，不是应用底色）；
+     深色主题里描边是白色的低透明度，作用同浅色：把边界画成一条实线。
+     模糊半径同样受 12px / 22px 画布余量限制 */
+  --island-fill-top: #1c202b;
+  --island-fill-bottom: #12151d;
+  --island-filter-shadow:
+    drop-shadow(0 2px 3px rgb(0 0 0 / 0.45)) drop-shadow(0 6px 12px rgb(0 0 0 / 0.38));
+  --island-edge: rgb(255 255 255 / 0.09);
 
   --ring: rgb(129 131 248 / 0.45);
   --selection: rgb(129 131 248 / 0.28);
@@ -302,8 +315,11 @@
 
     --shadow-card: 0 1px 2px rgb(0 0 0 / 0.32), 0 2px 8px rgb(0 0 0 / 0.24);
     --shadow-pop: 0 4px 12px rgb(0 0 0 / 0.4), 0 16px 40px rgb(0 0 0 / 0.48);
-    --shadow-island: 0 6px 18px rgb(0 0 0 / 0.40);
-    --island-edge: rgb(255 255 255 / 0.08);
+    --island-fill-top: #1c202b;
+    --island-fill-bottom: #12151d;
+    --island-filter-shadow:
+      drop-shadow(0 2px 3px rgb(0 0 0 / 0.45)) drop-shadow(0 6px 12px rgb(0 0 0 / 0.38));
+    --island-edge: rgb(255 255 255 / 0.09);
 
     --ring: rgb(129 131 248 / 0.45);
     --selection: rgb(129 131 248 / 0.28);
@@ -367,7 +383,6 @@
 
   --shadow-card: var(--shadow-card);
   --shadow-pop: var(--shadow-pop);
-  --shadow-island: var(--shadow-island);
   --color-island-edge: var(--island-edge);
 
   --color-focus-ring: var(--ring);

@@ -245,8 +245,6 @@ export interface AppSettings {
   islandOffsetX: number;
   /** 灵动岛展开面板形态：list 紧凑行列表 / cards 迷你卡片（与速览面板同款两种形态） */
   islandLayout: "list" | "cards";
-  /** 灵动岛停靠边：top 屏幕顶部横向胶囊 / left、right 贴边竖向胶囊（ADR-0047 P2） */
-  islandDock: "top" | "left" | "right";
 }
 
 export interface StoredNotification {

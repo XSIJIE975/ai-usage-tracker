@@ -5,7 +5,14 @@ import { useAppStore } from "../../store/useAppStore";
 import { useAlertStore } from "../../store/useAlertStore";
 import { buildGlanceInstances } from "../../components/glance/data";
 import { IslandPillContent, useIslandClock } from "../../components/island/IslandPill";
-import { PILL_H, PILL_W } from "../../components/island/constants";
+import {
+  PILL_FLARE,
+  PILL_FLARE_H,
+  PILL_H,
+  PILL_RADIUS,
+  PILL_W,
+} from "../../components/island/constants";
+import { islandOutlinePath } from "../../components/island/shape";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import { HintTooltip } from "../../components/ui/tooltip";
 import { Label } from "../../components/ui/label";
@@ -13,6 +20,13 @@ import { Segmented } from "../../components/ui/segmented";
 import { Switch } from "../../components/ui/switch";
 import { useLanguage, useT } from "../../i18n";
 import { SavedHint, useSaveFlash } from "./save-flash";
+
+/** 预览的静态轮廓：与 IslandWindow 帧循环用同一个生成函数，所见即所得 */
+const PILL_OUTLINE = islandOutlinePath(PILL_W, PILL_H, PILL_FLARE, PILL_FLARE_H, PILL_RADIUS);
+const PILL_RIM = islandOutlinePath(PILL_W, PILL_H, PILL_FLARE, PILL_FLARE_H, PILL_RADIUS, {
+  inset: 0.5,
+  close: false,
+});
 
 /**
  * 灵动岛设置卡（ADR-0047）：开关 + 实时胶囊预览。
@@ -97,13 +111,47 @@ export function IslandSettings() {
           />
         </div>
 
-        {/* 实时预览：与岛上胶囊同一组件渲染，数据即时反映 */}
-        <div className="flex items-center justify-center rounded-lg border border-dashed border-line-strong bg-canvas px-4 py-5">
-          <div
-            className="flex items-center overflow-hidden rounded-full border border-line bg-surface shadow-pop"
-            style={{ width: PILL_W, height: PILL_H }}
-          >
-            <IslandPillContent time={clock} tightest={tightest} alertActive={anyAlert} translate={t} />
+        {/* 实时预览：与岛上胶囊同一组件、同一条轮廓（肩部 + 底部圆角），数据即时反映。
+            顶部不留内边距——胶囊顶边贴着预览框上缘，演示「从屏幕边缘长出来」的形态 */}
+        <div className="flex items-start justify-center rounded-lg border border-dashed border-line-strong bg-canvas px-4 pb-5">
+          <div className="relative" style={{ width: PILL_W, height: PILL_H }}>
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-0"
+              style={{ filter: "var(--island-filter-shadow)" }}
+            >
+              <svg className="absolute inset-0 h-full w-full">
+                <defs>
+                  <linearGradient id="island-preview-fill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" style={{ stopColor: "var(--island-fill-top)" }} />
+                    <stop offset="1" style={{ stopColor: "var(--island-fill-bottom)" }} />
+                  </linearGradient>
+                </defs>
+                <path d={PILL_OUTLINE} fill="url(#island-preview-fill)" />
+              </svg>
+            </div>
+            <div
+              className="absolute inset-y-0 overflow-hidden"
+              style={{
+                left: PILL_FLARE,
+                right: PILL_FLARE,
+                borderBottomLeftRadius: PILL_RADIUS,
+                borderBottomRightRadius: PILL_RADIUS,
+              }}
+            >
+              <IslandPillContent
+                time={clock}
+                tightest={tightest}
+                alertActive={anyAlert}
+                translate={t}
+              />
+            </div>
+            <svg
+              aria-hidden
+              className="pointer-events-none absolute inset-0 h-full w-full"
+            >
+              <path d={PILL_RIM} fill="none" className="stroke-island-edge" strokeWidth={1} />
+            </svg>
           </div>
         </div>
 
@@ -127,20 +175,14 @@ export function IslandSettings() {
 
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-center gap-1.5">
-            <Label>{t("停靠位置")}</Label>
+            <Label>{t("位置")}</Label>
             <HintTooltip
               tip={t(
-                "拖动岛的顶部把手靠近屏幕任意一边即可吸附过去：贴顶为横向胶囊，贴左右两侧为竖向胶囊，展开面板朝屏幕内侧伸出。",
+                "岛贴在屏幕顶边，看起来像是从屏幕边缘垂下来的一个页签。悬停展开后按住标题栏中间的指示条可左右拖动换位，松手自动吸附在屏内。",
               )}
             />
           </div>
-          <span className="shrink-0 text-[13px] text-fg-muted">
-            {settings.islandDock === "top"
-              ? t("屏幕顶部")
-              : settings.islandDock === "left"
-                ? t("贴左侧")
-                : t("贴右侧")}
-          </span>
+          <span className="shrink-0 text-[13px] text-fg-muted">{t("屏幕顶边（可左右拖动）")}</span>
         </div>
       </CardContent>
     </Card>

@@ -2,39 +2,43 @@
  * 灵动岛几何常量（逻辑点，ADR-0047）。
  * 与 Rust 侧 src-tauri/src/island_window.rs 的同名常量互为镜像——
  * 命中区/窗口定位在 Rust 按这组值判定，前端按同一组值布局，改动必须两端同步。
+ *
+ * 轮廓（shape.ts）不是圆角矩形：顶边与屏幕工作区顶边齐平，两侧在顶边向外翻出
+ * 「肩部」（flare），再在 flareH 内沿 wing = flare·(1-t)^2.4 收敛到本体侧边，
+ * 最后以底部圆角收口。岛因此看起来是从屏幕边缘长出来的，而不是浮在桌面上。
  */
 
-/** 画布（窗口）尺寸：即展开态的最大占位，窗口永不 resize */
-export const CANVAS_W = 460;
+/** 画布（窗口）尺寸：即展开态的最大占位（含肩部与投影余量），窗口永不 resize */
+export const CANVAS_W = 500;
 export const CANVAS_H = 340;
 
-/** 收起胶囊：固定宽高（右侧 24px 是拖动握把），与画布顶边的空隙 */
-export const PILL_W = 196;
-export const PILL_H = 40;
-export const PILL_TOP = 6;
+/** 收起胶囊：**顶边与画布顶边齐平**。
+ *  PILL_W 是肩部最宽处（含两侧 flare），本体（内容区）宽 = PILL_W - 2 * PILL_FLARE。
+ *  高度对齐岛仔的收起药丸（163×30）：32px 只比额度环高 8px，读起来是屏幕边缘的
+ *  一条窄带，而不是一颗有厚度的胶囊 */
+export const PILL_W = 160;
+export const PILL_H = 32;
+export const PILL_TOP = 0;
+/** 肩部：顶部向外翻出的宽度与收敛高度（曲线见 shape.ts）。
+ *  12/10 在 32px 高度上约占三分之一，深色壁纸上也能看出「宽度向屏幕边缘张开」 */
+export const PILL_FLARE = 12;
+export const PILL_FLARE_H = 10;
+/** 底部圆角取高度的一半：收起态底部是半圆，与肩部同族 */
+export const PILL_RADIUS = PILL_H / 2;
 
-/** 展开面板：固定尺寸，内容超出由面板内部滚动。
- *  宽高刻意比画布各留出 18/50px——外阴影必须完整落在画布内，被窗口边缘裁切
+/** 展开面板：本体（内容区）固定 424 × 284，肩部再向外翻出 PANEL_FLARE。
+ *  宽高刻意比画布留出边距——外阴影必须完整落在画布内，被窗口边缘裁切
  *  会在四周形成方形残影（首版实测） */
 export const PANEL_W = 424;
 export const PANEL_H = 284;
+export const PANEL_FLARE = 16;
+export const PANEL_FLARE_H = 14;
+/** 展开态底部圆角：比收起态略大，形变时与肩部一起插值 */
+export const PANEL_RADIUS = 22;
+/** 展开态轮廓总宽度（含肩部）——形变弹簧的终点，不是内容宽度 */
+export const PANEL_OUTER_W = PANEL_W + PANEL_FLARE * 2;
 
-// ---- 侧边停靠（ADR-0047 P2）：左右贴边的竖向胶囊，面板向屏内滑出 ----
-/** 侧边停靠时的画布（窗口）尺寸——与 tauri 窗口声明一致 */
-export const SIDE_CANVAS_W = 500;
-export const SIDE_CANVAS_H = 600;
-/** 竖排胶囊：贴边厚度 40 × 沿屏高度 96，与屏幕边缘留 6。
- *  高度收在 96——时间两行 + 环已占满，再长只是空白（首版 132 实测太空旷） */
-export const SIDE_PILL_W = 40;
-export const SIDE_PILL_H = 96;
-export const SIDE_PILL_GAP = 6;
-/** 侧边展开面板：向屏内伸出的宽度与沿屏高度 */
-export const SIDE_PANEL_W = 424;
-export const SIDE_PANEL_H = 284;
-
-export type IslandDock = "top" | "left" | "right";
-
-/** 告警横幅：胶囊临时加宽到的宽度（P1），命中区由 Rust 随之放宽 */
+/** 告警横幅：胶囊临时加宽到的总宽度（P1），命中区由 Rust 随之放宽 */
 export const BANNER_W = 300;
 /** 横幅自动收回时长 */
 export const BANNER_MS = 6000;

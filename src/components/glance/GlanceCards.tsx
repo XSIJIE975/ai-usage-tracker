@@ -132,14 +132,16 @@ export function UsageRing({
   label,
   size = 44,
   fontSize = 13,
+  stroke = 4,
 }: {
   percent: number;
   alert: boolean;
   label?: string;
   size?: number;
   fontSize?: number;
+  /** 环宽：默认 4（速览卡）；灵动岛 26px 小环传 3，避免环壁糊住环心数字 */
+  stroke?: number;
 }) {
-  const stroke = 4;
   const radius = (size - stroke) / 2;
   const circumference = 2 * Math.PI * radius;
   const clamped = Math.min(100, Math.max(percent, 0));
