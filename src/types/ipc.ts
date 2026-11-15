@@ -240,6 +240,9 @@ export interface AppSettings {
   glanceInstanceIds: string[];
   /** 灵动岛（ADR-0047）：屏幕顶部常驻胶囊，悬停展开额度列表；默认关闭 opt-in */
   islandEnabled: boolean;
+  /** 灵动岛水平偏移比例（-1 最左 .. 0 居中 .. 1 最右，P1）：胶囊拖动松手时回存，
+   *  换屏/改缩放后按比例换算保持相对位置；偏移边界保证展开面板始终留在屏内 */
+  islandOffsetX: number;
 }
 
 export interface StoredNotification {

@@ -76,6 +76,9 @@ pub fn run() {
             app.manage(tray_scheme::TrayState::default());
             // 灵动岛运行态（ADR-0047）：控制线程进程内只起一次，enabled 驱动采样/休眠
             app.manage(island_window::IslandRuntime::default());
+            // 前台切换钩子（P1）：须在主线程安装（WINEVENT_OUTOFCONTEXT 要求泵消息），
+            // 失败只降级「切走不收起」，不阻断启动
+            island_window::install_foreground_hook();
 
             // 注册设置中配置的快速面板全局快捷键；失败不阻断启动
             let app_state = app.state::<AppState>();
@@ -247,6 +250,10 @@ pub fn run() {
             commands::toggle_quick_window,
             commands::hide_glance_window,
             island_window::set_island_enabled,
+            island_window::begin_island_drag,
+            island_window::end_island_drag,
+            island_window::get_island_offset,
+            island_window::set_island_banner_width,
             commands::register_quick_shortcut,
             commands::refresh_tray_menu,
             autostart::set_autostart,

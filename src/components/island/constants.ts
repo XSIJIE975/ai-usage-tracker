@@ -8,8 +8,8 @@
 export const CANVAS_W = 460;
 export const CANVAS_H = 340;
 
-/** 收起胶囊：固定宽高，与画布顶边的空隙 */
-export const PILL_W = 176;
+/** 收起胶囊：固定宽高（右侧 24px 是拖动握把），与画布顶边的空隙 */
+export const PILL_W = 196;
 export const PILL_H = 40;
 export const PILL_TOP = 6;
 
@@ -19,9 +19,18 @@ export const PILL_TOP = 6;
 export const PANEL_W = 424;
 export const PANEL_H = 284;
 
-/** 展开动画的弹簧参数（进度 0=收起 1=展开） */
-export const OPEN_TUNING = { stiffness: 260, zeta: 0.92 };
-export const CLOSE_TUNING = { stiffness: 320, zeta: 0.95 };
+/** 告警横幅：胶囊临时加宽到的宽度（P1），命中区由 Rust 随之放宽 */
+export const BANNER_W = 300;
+/** 横幅自动收回时长 */
+export const BANNER_MS = 6000;
+
+/** 展开动画的弹簧参数（进度 0=收起 1=展开）。
+ *  对齐岛仔 OPEN_W/OPEN_H (330, 0.70) 与 CLOSE (620, 1.0)：展开略欠阻尼有弹性、
+ *  收起临界阻尼干脆收死——这个"张开有韧性、收起不拖泥带水"的反差是流畅感的关键 */
+export const OPEN_TUNING = { stiffness: 330, zeta: 0.7 };
+export const CLOSE_TUNING = { stiffness: 620, zeta: 1.0 };
+/** 横幅加宽/收回的弹簧参数（欠阻尼，与展开同族手感） */
+export const BANNER_TUNING = { stiffness: 330, zeta: 0.8 };
 
 /** 内容交叉淡入的进度区间（对齐岛仔 reveal 曲线） */
 export const PILL_FADE = [0.55, 0.92] as const;

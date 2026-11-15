@@ -914,6 +914,8 @@ export const en: Record<string, string> = {
 
   // ── 灵动岛（ADR-0047）──
   "灵动岛": "Dynamic Island",
+  "拖动调整位置": "Drag to reposition",
+  "按住拖动位置": "Hold and drag to reposition",
   "屏幕顶部的常驻胶囊：悬停展开查看各实例额度。": "A compact capsule docked at the top of the screen; hover to expand the quota list.",
   "显示灵动岛": "Show dynamic island",
   "开启后屏幕顶部居中出现常驻胶囊：平时显示时间与最紧额度，鼠标悬停展开完整列表，点击胶囊打开主窗口。": "When on, a compact capsule sits at the top center of the screen: it shows the time and the tightest quota, expands into the full list on hover, and opens the main window when clicked.",
