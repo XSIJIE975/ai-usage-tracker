@@ -34,7 +34,7 @@
 
 **8. 前台切换自动收起（仅 Windows）。** 主线程安装 `SetWinEventHook(EVENT_SYSTEM_FOREGROUND)`（`WINEVENT_OUTOFCONTEXT` 要求安装线程泵消息，Tauri 主线程事件循环满足；回调只置原子位），控制线程消费：切到别的进程立即收起并锁定（对齐岛仔 hover_lock），光标离开命中区前不再自动展开。安装失败仅降级「切走不收起」。
 
-**9. 全屏避让（仅 Windows）。** 控制线程每秒用 `GetForegroundWindow`+`GetWindowRect` 判定前台窗口矩形与岛所在屏整屏边界重合（最大化普通窗口是工作区、不会相等），进入即整岛隐藏、机器复位，退出恢复。其余平台无此判定，行为降级。
+**9. 全屏避让（仅 Windows）。** 控制线程每秒用 `GetForegroundWindow`+`GetWindowRect` 判定前台窗口矩形与岛所在屏整屏边界重合（最大化普通窗口是工作区、不会相等），进入即整岛隐藏、机器复位，退出恢复。桌面外壳必须放行：回到桌面（点桌面 / Win+D）时前台是 `Progman`/`WorkerW`，矩形同样盖满整屏，不排除会把岛藏到只剩回软件界面才可见（岛仔在桌面常驻可见）。其余平台无此判定，行为降级。
 
 **10. 告警横幅 = 胶囊临时加宽。** 逐实例监听 `alert-state-changed` 激活边沿（anyAlert 的 false→true 会漏掉叠告警），胶囊宽度弹簧到 300 显示「实例名 · 额度告警」，6s 自动收回；命中区经 `set_island_banner_width` 随之放宽（Rust 侧钳在画布内），点击打开主窗口；展开面板时横幅取消（面板行已有告警呈现）。
 

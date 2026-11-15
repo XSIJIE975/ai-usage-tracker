@@ -983,6 +983,11 @@ fn foreground_covers_monitor(monitor: (i32, i32, i32, i32)) -> bool {
         if hwnd.0.is_null() || !IsWindowVisible(hwnd).as_bool() {
             return false;
         }
+        // 回到桌面（点桌面 / Win+D）时前台是桌面外壳，矩形盖满整屏但不是全屏应用：
+        // 必须放行，否则岛在桌面上永远消失，只有回软件界面才恢复
+        if is_desktop_shell_hwnd(hwnd) {
+            return false;
+        }
         let mut rect = RECT::default();
         if GetWindowRect(hwnd, &mut rect).is_err() {
             return false;
@@ -1000,6 +1005,26 @@ fn foreground_covers_monitor(_monitor: (i32, i32, i32, i32)) -> bool {
     false
 }
 
+/// 前台窗口是否为桌面外壳：`Progman` 是桌面本体，`WorkerW` 是壁纸层（部分壁纸
+/// 工具接管后 Win+D 的前台会落到它）。两者矩形盖满整屏，不排除会被全屏避让误判。
+#[cfg(windows)]
+fn is_desktop_shell_hwnd(hwnd: windows::Win32::Foundation::HWND) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::GetClassNameW;
+
+    // 类名上限 256 字符；这里只需比对两个短名，截断不影响判定
+    let mut buf = [0u16; 32];
+    let len = unsafe { GetClassNameW(hwnd, &mut buf) };
+    if len <= 0 {
+        return false;
+    }
+    is_desktop_shell_class(&String::from_utf16_lossy(&buf[..len as usize]))
+}
+
+/// 桌面外壳类名判定（纯函数便于单测）。
+fn is_desktop_shell_class(class: &str) -> bool {
+    matches!(class, "Progman" | "WorkerW")
+}
+
 /// 物理矩形相等（全屏判定用；右/下为闭端点）。
 pub fn rect_equals(a: (i32, i32, i32, i32), b: (i32, i32, i32, i32)) -> bool {
     a == b
@@ -1011,6 +1036,17 @@ mod tests {
 
     fn at(ms: u64) -> Instant {
         Instant::now() + Duration::from_millis(ms)
+    }
+
+    #[test]
+    fn desktop_shell_classes_are_excluded_from_fullscreen_avoidance() {
+        // 桌面外壳：矩形盖满整屏但必须放行
+        assert!(is_desktop_shell_class("Progman"));
+        assert!(is_desktop_shell_class("WorkerW"));
+        // 全屏应用/普通窗口类名不能被误放行
+        assert!(!is_desktop_shell_class("Chrome_WidgetWin_1"));
+        assert!(!is_desktop_shell_class("DALITopLevel"));
+        assert!(!is_desktop_shell_class(""));
     }
 
     #[test]
