@@ -243,6 +243,8 @@ export interface AppSettings {
   /** 灵动岛水平偏移比例（-1 最左 .. 0 居中 .. 1 最右，P1）：胶囊拖动松手时回存，
    *  换屏/改缩放后按比例换算保持相对位置；偏移边界保证展开面板始终留在屏内 */
   islandOffsetX: number;
+  /** 灵动岛展开面板形态：list 紧凑行列表 / cards 迷你卡片（与速览面板同款两种形态） */
+  islandLayout: "list" | "cards";
 }
 
 export interface StoredNotification {

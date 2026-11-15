@@ -167,6 +167,10 @@
   /* 阴影 */
   --shadow-card: 0 1px 2px rgb(25 28 38 / 0.04), 0 2px 8px rgb(25 28 38 / 0.05);
   --shadow-pop: 0 4px 12px rgb(25 28 38 / 0.08), 0 12px 32px rgb(25 28 38 / 0.12);
+  /* 灵动岛表面（ADR-0047）：岛浮在桌面之上而不是应用底色上，浅色主题下白胶囊
+     需要比页面内卡片更明确的描边与更淡的投影，否则边界糊在浅色壁纸上 */
+  --shadow-island: 0 4px 14px rgb(25 28 38 / 0.13), 0 1px 3px rgb(25 28 38 / 0.10);
+  --island-edge: rgb(25 28 38 / 0.10);
 
   /* 焦点环 */
   --ring: rgb(90 72 226 / 0.35);
@@ -233,6 +237,9 @@
 
   --shadow-card: 0 1px 2px rgb(0 0 0 / 0.32), 0 2px 8px rgb(0 0 0 / 0.24);
   --shadow-pop: 0 4px 12px rgb(0 0 0 / 0.4), 0 16px 40px rgb(0 0 0 / 0.48);
+  /* 深色下岛需要更实的投影才浮得起来（透明窗口背后是桌面，不是应用底色） */
+  --shadow-island: 0 6px 18px rgb(0 0 0 / 0.40);
+  --island-edge: rgb(255 255 255 / 0.08);
 
   --ring: rgb(129 131 248 / 0.45);
   --selection: rgb(129 131 248 / 0.28);
@@ -295,6 +302,8 @@
 
     --shadow-card: 0 1px 2px rgb(0 0 0 / 0.32), 0 2px 8px rgb(0 0 0 / 0.24);
     --shadow-pop: 0 4px 12px rgb(0 0 0 / 0.4), 0 16px 40px rgb(0 0 0 / 0.48);
+    --shadow-island: 0 6px 18px rgb(0 0 0 / 0.40);
+    --island-edge: rgb(255 255 255 / 0.08);
 
     --ring: rgb(129 131 248 / 0.45);
     --selection: rgb(129 131 248 / 0.28);
@@ -358,6 +367,8 @@
 
   --shadow-card: var(--shadow-card);
   --shadow-pop: var(--shadow-pop);
+  --shadow-island: var(--shadow-island);
+  --color-island-edge: var(--island-edge);
 
   --color-focus-ring: var(--ring);
 

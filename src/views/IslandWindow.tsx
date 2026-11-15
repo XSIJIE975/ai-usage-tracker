@@ -100,6 +100,9 @@ export function IslandWindow() {
 
   // ---- 告警横幅：激活边沿触发，自动收回；展开面板时取消（面板内已有告警呈现） ----
   const [banner, setBanner] = useState<string | null>(null);
+  // 本次会话内已弹过横幅的实例：同一实例反复跨阈值不再重复打扰
+  //（告警本身仍由通知中心与托盘红点持续投影，岛只承担「一次性提示」角色）
+  const bannerShownRef = useRef<Set<string>>(new Set());
 
   function hideBanner() {
     if (bannerTimerRef.current != null) window.clearTimeout(bannerTimerRef.current);
@@ -214,6 +217,9 @@ export function IslandWindow() {
     if (!islandEnabled) return;
     const promise = listen<{ instanceId: string; active: boolean }>("alert-state-changed", (event) => {
       if (!event.payload.active) return;
+      // 同一实例本次会话只弹一次：连续越阈值/多规则同时触发时不再连环打断
+      if (bannerShownRef.current.has(event.payload.instanceId)) return;
+      bannerShownRef.current.add(event.payload.instanceId);
       const item = glanceItemsRef.current.find((entry) => entry.id === event.payload.instanceId);
       showBanner(item ? `${item.label} ${t("额度告警")}` : t("额度告警"));
     });
@@ -266,7 +272,7 @@ export function IslandWindow() {
           阴影收紧（0 6px 18px）：面板距画布边缘仅 10–50px，大扩散阴影会被窗口裁成方形残影。 */}
       <div
         ref={morphRef}
-        className="absolute left-0 right-0 mx-auto overflow-hidden bg-surface/90 ring-1 ring-line ring-inset shadow-[0_6px_18px_rgba(0,0,0,0.40)]"
+        className="absolute left-0 right-0 mx-auto overflow-hidden bg-surface/90 shadow-island ring-1 ring-island-edge ring-inset"
         style={{
           top: PILL_TOP,
           width: PILL_W,
@@ -331,6 +337,13 @@ export function IslandWindow() {
             language={language}
             resetDisplay={resetDisplay}
             now={now}
+            layout={settings.islandLayout}
+            onLayoutChange={(layout) => {
+              void useAppStore.getState().saveSettings({
+                ...useAppStore.getState().settings,
+                islandLayout: layout,
+              });
+            }}
             onOpenMain={() => void openMain()}
             onRefresh={() => void refreshAll()}
             onDragStart={beginDrag}

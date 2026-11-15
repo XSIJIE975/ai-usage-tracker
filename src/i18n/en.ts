@@ -916,6 +916,8 @@ export const en: Record<string, string> = {
   "灵动岛": "Dynamic Island",
   "拖动调整位置": "Drag to reposition",
   "按住拖动位置": "Hold and drag to reposition",
+  "展开面板样式": "Expanded panel layout",
+  "悬停展开后的实例列表展示方式，与速览面板的两种形态一致。": "How instances are shown once the island expands — the same two layouts as the glance panel.",
   "屏幕顶部的常驻胶囊：悬停展开查看各实例额度。": "A compact capsule docked at the top of the screen; hover to expand the quota list.",
   "显示灵动岛": "Show dynamic island",
   "开启后屏幕顶部居中出现常驻胶囊：平时显示时间与最紧额度，鼠标悬停展开完整列表，点击胶囊打开主窗口。": "When on, a compact capsule sits at the top center of the screen: it shows the time and the tightest quota, expands into the full list on hover, and opens the main window when clicked.",

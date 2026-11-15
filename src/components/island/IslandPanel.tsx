@@ -1,8 +1,10 @@
 import { useRef, useState } from "react";
-import { Gauge, LoaderCircle, Lock, RefreshCw } from "lucide-react";
+import { Gauge, LayoutGrid, List, LoaderCircle, Lock, RefreshCw } from "lucide-react";
 import { BrandIcon } from "../BrandIcon";
 import { ScrollFadeHint } from "../ScrollFadeHint";
 import { IconButton } from "../ui/icon-button";
+import { Segmented } from "../ui/segmented";
+import { GlanceCards } from "../glance/GlanceCards";
 import { GlanceRows } from "../glance/GlanceRows";
 import type { GlanceInstance } from "../glance/data";
 import type { ResetDisplay } from "../glance/GlanceLines";
@@ -11,7 +13,8 @@ import type { Language } from "../../i18n";
 import type { Translate } from "../glance/data";
 
 /**
- * 灵动岛展开态面板内容（ADR-0047）：标题行 + 实例行列表（复用速览面板的行组件）。
+ * 灵动岛展开态面板内容（ADR-0047）：标题行 + 实例列表。
+ * 形态与速览面板同款两种（list 行列表 / cards 迷你卡片），复用同一套展示组件。
  * 固定尺寸（PANEL_W × PANEL_H），实例多时内部滚动；与胶囊内容同住在 morph 容器里，
  * 由外层按展开进度交叉淡入。
  */
@@ -23,6 +26,8 @@ export function IslandPanelContent({
   language,
   resetDisplay,
   now,
+  layout,
+  onLayoutChange,
   onOpenMain,
   onRefresh,
   onDragStart,
@@ -35,6 +40,9 @@ export function IslandPanelContent({
   language: Language;
   resetDisplay: ResetDisplay;
   now: number;
+  /** 面板形态（设置项 islandLayout） */
+  layout: "list" | "cards";
+  onLayoutChange: (layout: "list" | "cards") => void;
   onOpenMain: () => void;
   onRefresh: () => void;
   /** 顶部拖动把手：按下拿起、松开落位（拖动位移由 Rust 侧按光标屏幕坐标换算） */
@@ -92,6 +100,15 @@ export function IslandPanelContent({
           </span>
         </div>
         <div className="relative z-10 flex shrink-0 items-center gap-0.5">
+          <Segmented
+            size="sm"
+            value={layout}
+            onChange={onLayoutChange}
+            options={[
+              { value: "list", label: "", icon: <List className="h-3.5 w-3.5" /> },
+              { value: "cards", label: "", icon: <LayoutGrid className="h-3.5 w-3.5" /> },
+            ]}
+          />
           <IconButton
             onClick={onRefresh}
             disabled={refreshing}
@@ -119,6 +136,15 @@ export function IslandPanelContent({
               <span className="text-[12px]">{translate("还没有用量数据")}</span>
             </div>
           ) : (
+            layout === "cards" ? (
+            <GlanceCards
+              items={items}
+              translate={translate}
+              language={language}
+              resetDisplay={resetDisplay}
+              now={now}
+            />
+            ) : (
             <GlanceRows
               items={items}
               translate={translate}
@@ -126,6 +152,7 @@ export function IslandPanelContent({
               resetDisplay={resetDisplay}
               now={now}
             />
+            )
           )}
         </main>
         <ScrollFadeHint viewportRef={mainRef} />

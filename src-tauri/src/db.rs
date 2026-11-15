@@ -338,7 +338,8 @@ impl Db {
             // 灵动岛（ADR-0047）：默认关闭，opt-in 后常驻屏幕顶部；存量库缺键时由此补齐。
             // 偏移比例（-1 最左 .. 0 居中 .. 1 最右）由胶囊拖动松手时回存
             "islandEnabled": false,
-            "islandOffsetX": 0.0
+            "islandOffsetX": 0.0,
+            "islandLayout": "list"
         });
         let row = self.conn.query_row(
             "SELECT value FROM settings WHERE key = 'app_settings'",

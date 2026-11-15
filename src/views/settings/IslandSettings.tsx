@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { LayoutGrid, List } from "lucide-react";
 import { useAppStore } from "../../store/useAppStore";
 import { useAlertStore } from "../../store/useAlertStore";
 import { buildGlanceInstances } from "../../components/glance/data";
@@ -8,6 +9,7 @@ import { PILL_H, PILL_W } from "../../components/island/constants";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import { HintTooltip } from "../../components/ui/tooltip";
 import { Label } from "../../components/ui/label";
+import { Segmented } from "../../components/ui/segmented";
 import { Switch } from "../../components/ui/switch";
 import { useLanguage, useT } from "../../i18n";
 import { SavedHint, useSaveFlash } from "./save-flash";
@@ -103,6 +105,24 @@ export function IslandSettings() {
           >
             <IslandPillContent time={clock} tightest={tightest} alertActive={anyAlert} translate={t} />
           </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-1.5">
+            <Label>{t("展开面板样式")}</Label>
+            <HintTooltip tip={t("悬停展开后的实例列表展示方式，与速览面板的两种形态一致。")} />
+          </div>
+          <Segmented
+            size="sm"
+            value={settings.islandLayout}
+            onChange={(value) =>
+              void saveSettings({ ...useAppStore.getState().settings, islandLayout: value })
+            }
+            options={[
+              { value: "list", label: t("列表"), icon: <List className="h-3.5 w-3.5" /> },
+              { value: "cards", label: t("卡片"), icon: <LayoutGrid className="h-3.5 w-3.5" /> },
+            ]}
+          />
         </div>
       </CardContent>
     </Card>
