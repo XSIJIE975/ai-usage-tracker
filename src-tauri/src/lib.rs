@@ -254,6 +254,8 @@ pub fn run() {
             island_window::end_island_drag,
             island_window::get_island_offset,
             island_window::set_island_banner_width,
+            island_window::set_island_dock,
+            island_window::get_island_dock,
             commands::register_quick_shortcut,
             commands::refresh_tray_menu,
             autostart::set_autostart,

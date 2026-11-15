@@ -38,6 +38,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   islandEnabled: false,
   islandOffsetX: 0,
   islandLayout: "list",
+  islandDock: "top",
 };
 
 /** 主题对账只在每个窗口的首次设置加载后做一次：中途重复对账会和保存中的写入竞态 */

@@ -19,6 +19,21 @@ export const PILL_TOP = 6;
 export const PANEL_W = 424;
 export const PANEL_H = 284;
 
+// ---- 侧边停靠（ADR-0047 P2）：左右贴边的竖向胶囊，面板向屏内滑出 ----
+/** 侧边停靠时的画布（窗口）尺寸——与 tauri 窗口声明一致 */
+export const SIDE_CANVAS_W = 500;
+export const SIDE_CANVAS_H = 600;
+/** 竖排胶囊：贴边厚度 40 × 沿屏高度 96，与屏幕边缘留 6。
+ *  高度收在 96——时间两行 + 环已占满，再长只是空白（首版 132 实测太空旷） */
+export const SIDE_PILL_W = 40;
+export const SIDE_PILL_H = 96;
+export const SIDE_PILL_GAP = 6;
+/** 侧边展开面板：向屏内伸出的宽度与沿屏高度 */
+export const SIDE_PANEL_W = 424;
+export const SIDE_PANEL_H = 284;
+
+export type IslandDock = "top" | "left" | "right";
+
 /** 告警横幅：胶囊临时加宽到的宽度（P1），命中区由 Rust 随之放宽 */
 export const BANNER_W = 300;
 /** 横幅自动收回时长 */

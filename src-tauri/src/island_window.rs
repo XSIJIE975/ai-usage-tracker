@@ -32,6 +32,13 @@ pub const CANVAS_W: f64 = 460.0;
 /// 画布高度仅作几何镜像文档：窗口高度由 tauri.conf.json 的静态声明持有，定位只用到宽度
 #[allow(dead_code)]
 pub const CANVAS_H: f64 = 340.0;
+/// 拖动换边的判定：光标距目标边 ≤ 此值（逻辑点）才吸附过去。
+const SWITCH_EDGE_DISTANCE: f64 = 64.0;
+/// 换边还需「明显比当前边更近」的余量——角落处防止横竖形态来回跳变。
+const SWITCH_EDGE_MARGIN: f64 = 24.0;
+/// 光标必须先离开当前边的吸附带（逻辑点）才允许换边——岛贴边时光标天然离当前边很近，
+/// 只比距离会让「沿边滑动」被误判成换边。
+const SWITCH_RELEASE_DISTANCE: f64 = 110.0;
 /// 收起胶囊：固定宽 196 × 高 40（右侧 24 是拖动握把），与屏幕顶边留 6 空隙。
 pub const PILL_W: f64 = 196.0;
 pub const PILL_H: f64 = 40.0;
@@ -43,6 +50,44 @@ pub const PANEL_H: f64 = 284.0;
 /// 命中区在内容矩形外的扩展边距。
 pub const HIT_MARGIN_X: f64 = 12.0;
 pub const HIT_MARGIN_Y: f64 = 8.0;
+
+// ---- 侧边停靠（ADR-0047 P2）----
+/// 侧边停靠时的画布尺寸：与窗口静态声明一致（竖向画布）。
+pub const SIDE_CANVAS_W: f64 = 500.0;
+pub const SIDE_CANVAS_H: f64 = 600.0;
+/// 侧边收起态竖向胶囊：贴边厚度 36，沿屏幕竖直方向长 132。
+pub const SIDE_PILL_W: f64 = 40.0;
+pub const SIDE_PILL_H: f64 = 96.0;
+/// 侧边胶囊与屏幕边缘的空隙（对应顶部胶囊的 PILL_TOP）。
+pub const SIDE_PILL_GAP: f64 = 6.0;
+/// 侧边展开面板：沿竖直方向的高度与向屏内伸出的宽度。
+pub const SIDE_PANEL_W: f64 = 424.0;
+pub const SIDE_PANEL_H: f64 = 284.0;
+
+/// 停靠边。Top 为默认的屏幕顶部水平胶囊；Left/Right 为左右贴边的竖向胶囊。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Dock {
+    #[default]
+    Top,
+    Left,
+    Right,
+}
+
+impl Dock {
+    #[allow(dead_code)]
+    pub fn is_side(self) -> bool {
+        !matches!(self, Dock::Top)
+    }
+
+    /// 设置值 → 枚举；未知值按 Top（默认值兜底，避免坏配置把岛放到屏幕外）。
+    pub fn from_str(value: &str) -> Self {
+        match value {
+            "left" => Dock::Left,
+            "right" => Dock::Right,
+            _ => Dock::Top,
+        }
+    }
+}
 
 /// 悬停驻留多久后展开（防路过误触；对齐岛仔 HOVER_INTENT）。
 const HOVER_INTENT: Duration = Duration::from_millis(200);
@@ -73,25 +118,79 @@ pub type Rect = (f64, f64, f64, f64);
 /// 收起态命中矩形：胶囊（或横幅）外扩边距；顶部边距越过画布顶（6 - 8 < 0）取 0，
 /// 即胶囊与屏幕顶边之间的空隙也算命中——光标推到屏幕最顶也要能唤出（对应岛仔 PILL_GAP）。
 /// `banner_w` 为告警横幅显示时的胶囊逻辑宽度（无横幅传 0），命中区随之放宽。
+#[cfg(test)]
 pub fn collapsed_hit(banner_w: f64) -> Rect {
-    // 横幅宽度钳在画布内：命中区不允许超出窗口矩形（越界部分既点不到也拦不到消息）
-    let content_w = PILL_W.max(banner_w).min(CANVAS_W);
-    (
-        (CANVAS_W - content_w) / 2.0 - HIT_MARGIN_X,
-        0.0,
-        content_w + HIT_MARGIN_X * 2.0,
-        PILL_TOP + PILL_H + HIT_MARGIN_Y,
-    )
+    collapsed_hit_docked(Dock::Top, banner_w)
 }
 
 /// 展开态命中矩形：面板外扩边距，同样从画布顶算起。
+#[cfg(test)]
 pub fn expanded_hit() -> Rect {
-    (
-        (CANVAS_W - PANEL_W) / 2.0 - HIT_MARGIN_X,
-        0.0,
-        PANEL_W + HIT_MARGIN_X * 2.0,
-        PILL_TOP + PANEL_H + HIT_MARGIN_Y,
-    )
+    expanded_hit_docked(Dock::Top)
+}
+
+/// 收起态命中矩形（按停靠边）。侧边停靠时胶囊贴画布左/右边缘、竖直居中，
+/// 命中区同样向外扩边距，并让贴边一侧越过画布边界取 0（光标推到屏幕边缘也能唤出）。
+pub fn collapsed_hit_docked(dock: Dock, banner_w: f64) -> Rect {
+    match dock {
+        Dock::Top => {
+            // 横幅宽度钳在画布内：命中区不允许超出窗口矩形（越界部分既点不到也拦不到消息）
+            let content_w = PILL_W.max(banner_w).min(CANVAS_W);
+            (
+                (CANVAS_W - content_w) / 2.0 - HIT_MARGIN_X,
+                0.0,
+                content_w + HIT_MARGIN_X * 2.0,
+                PILL_TOP + PILL_H + HIT_MARGIN_Y,
+            )
+        }
+        dock => {
+            // 竖向胶囊：贴边 6px，沿竖直方向居中；命中区在竖直方向外扩
+            let (left, right) = side_capsule_x(dock, SIDE_CANVAS_W);
+            (
+                left.max(0.0) - if matches!(dock, Dock::Right) { HIT_MARGIN_X } else { 0.0 },
+                (SIDE_CANVAS_H - SIDE_PILL_H) / 2.0 - HIT_MARGIN_Y,
+                (right - left) + HIT_MARGIN_X,
+                SIDE_PILL_H + HIT_MARGIN_Y * 2.0,
+            )
+        }
+    }
+}
+
+/// 展开态命中矩形（按停靠边）：侧边停靠时面板从贴边向屏内伸出。
+pub fn expanded_hit_docked(dock: Dock) -> Rect {
+    match dock {
+        Dock::Top => (
+            (CANVAS_W - PANEL_W) / 2.0 - HIT_MARGIN_X,
+            0.0,
+            PANEL_W + HIT_MARGIN_X * 2.0,
+            PILL_TOP + PANEL_H + HIT_MARGIN_Y,
+        ),
+        dock => {
+            let (left, right) = side_panel_x(dock, SIDE_CANVAS_W);
+            (
+                left.max(0.0) - if matches!(dock, Dock::Right) { HIT_MARGIN_X } else { 0.0 },
+                (SIDE_CANVAS_H - SIDE_PANEL_H) / 2.0 - HIT_MARGIN_Y,
+                (right - left) + HIT_MARGIN_X,
+                SIDE_PANEL_H + HIT_MARGIN_Y * 2.0,
+            )
+        }
+    }
+}
+
+/// 侧边胶囊在画布内的水平区间（贴边 6px 空隙）。
+fn side_capsule_x(dock: Dock, canvas_w: f64) -> (f64, f64) {
+    match dock {
+        Dock::Right => (canvas_w - SIDE_PILL_GAP - SIDE_PILL_W, canvas_w - SIDE_PILL_GAP),
+        _ => (SIDE_PILL_GAP, SIDE_PILL_GAP + SIDE_PILL_W),
+    }
+}
+
+/// 侧边展开面板在画布内的水平区间：贴边，向屏内伸出 SIDE_PANEL_W。
+fn side_panel_x(dock: Dock, canvas_w: f64) -> (f64, f64) {
+    match dock {
+        Dock::Right => (canvas_w - SIDE_PANEL_W, canvas_w),
+        _ => (0.0, SIDE_PANEL_W),
+    }
 }
 
 pub fn union_rect(a: Rect, b: Rect) -> Rect {
@@ -109,12 +208,119 @@ pub fn rect_contains(rect: Rect, x: f64, y: f64) -> bool {
 /// 画布在目标屏工作区顶部的物理坐标。水平偏移 `offset`（-1 最左 .. 0 居中 .. 1 最右）
 /// 按可移动范围的比例换算——换屏、改系统缩放后仍保持相同的相对位置（对齐岛仔 island_travel）。
 /// 可移动范围为 0（屏幕不比画布宽）时只能居中；偏移非法值按 0 处理。
+#[cfg(test)]
 pub fn canvas_origin(work_left: i32, work_top: i32, work_width: u32, scale: f64, offset: f64) -> (i32, i32) {
-    let canvas_w = (CANVAS_W * scale).round();
-    let travel = ((work_width as f64 - canvas_w) / 2.0).max(0.0);
+    canvas_origin_docked(Dock::Top, work_left, work_top, work_width, 0, scale, offset)
+}
+
+/// 画布原点（按停靠边）。顶部停靠时 offset 走水平轴；侧边停靠时走竖直轴
+/// （-1 最上 .. 0 居中 .. 1 最下），水平方向贴所在边的画布左/右缘。
+#[allow(clippy::too_many_arguments)]
+pub fn canvas_origin_docked(
+    dock: Dock,
+    work_left: i32,
+    work_top: i32,
+    work_width: u32,
+    work_height: u32,
+    scale: f64,
+    offset: f64,
+) -> (i32, i32) {
     let offset = if offset.is_finite() { offset.clamp(-1.0, 1.0) } else { 0.0 };
-    let x = work_left as f64 + travel * (1.0 + offset);
-    (x.round() as i32, work_top)
+    match dock {
+        Dock::Top => {
+            let travel = travel_px(dock, work_width as f64, scale);
+            (
+                (work_left as f64 + travel * (1.0 + offset)).round() as i32,
+                work_top,
+            )
+        }
+        dock => {
+            // 侧边：画布横向贴住所在边（左边缘贴工作区左、右边缘贴工作区右），
+            // 竖直方向按 offset 在可移动范围内滑动
+            // 可移动范围只由**面板半高**决定（不是画布高）——画布只是窗口容器，
+            // 拿它算会额外吃掉几百像素，表现为「离屏幕上下端有一段碰不到」
+            // （对齐岛仔：travel = 屏幕高/2 - 面板半高，与拖动投影共用 `travel_px`）。
+            let canvas_w = (SIDE_CANVAS_W * scale).round();
+            let travel = travel_px(dock, work_height as f64, scale);
+            let center_y = work_top as f64 + work_height as f64 / 2.0 + travel * offset;
+            let y = center_y - (SIDE_CANVAS_H * scale) / 2.0;
+            let x = match dock {
+                Dock::Right => work_left as f64 + work_width as f64 - canvas_w,
+                _ => work_left as f64,
+            };
+            (x.round() as i32, y.round() as i32)
+        }
+    }
+}
+
+/// 沿边可滑动范围（物理像素，≥0）：岛中心相对工作区中心的正负最大位移。
+/// 「拖动定位」与「停靠定位」共用这一个函数——两侧 travel 口径一致，
+/// 比例与像素来回投影才不会漂移。顶部由画布宽决定（画布整体留在屏内）；
+/// 侧边由面板半高决定（画布只是窗口容器，拿它算会额外吃掉几百像素，
+/// 表现为「离屏幕上下端有一段碰不到」，对齐岛仔 travel = 屏幕高/2 - 面板半高）。
+fn travel_px(dock: Dock, work_len: f64, scale: f64) -> f64 {
+    let body = match dock {
+        Dock::Top => (CANVAS_W * scale).round(),
+        _ => SIDE_PANEL_H * scale,
+    };
+    ((work_len - body) / 2.0).max(0.0)
+}
+
+/// 把「期望的像素位置」换算成该停靠边下的偏移比例（只取沿边轴）。
+/// 拖动时先用它把像素位置投影回比例，再过 `canvas_origin_docked` —— 于是
+/// 岛永远贴边，而沿边方向 1:1 跟手（两函数共用 `travel_px`，往返无漂移）。
+/// travel 为 0（几何未就绪、屏幕不比岛体宽/高）时返回 0（居中）——旧实现此处
+/// `.max(1.0)` 再钳位，几何为全零时会把岛钉死在边的端点上。
+fn offset_from_desired(dock: Dock, geometry: &Geometry, desired_x: f64, desired_y: f64) -> f64 {
+    let scale = geometry.scale;
+    let travel = match dock {
+        Dock::Top => travel_px(dock, geometry.work_width as f64, scale),
+        _ => travel_px(dock, geometry.work_height as f64, scale),
+    };
+    if travel <= 0.0 {
+        return 0.0;
+    }
+    let (center, work_center) = match dock {
+        Dock::Top => (
+            desired_x + (CANVAS_W * scale).round() / 2.0,
+            geometry.work_left as f64 + geometry.work_width as f64 / 2.0,
+        ),
+        _ => (
+            desired_y + SIDE_CANVAS_H * scale / 2.0,
+            geometry.work_top as f64 + geometry.work_height as f64 / 2.0,
+        ),
+    };
+    ((center - work_center) / travel).clamp(-1.0, 1.0)
+}
+
+/// 把窗口原点反算成偏移比例（-1..1），供松手持久化。原点就是「期望位置」的
+/// 像素形式，直接复用同一套投影，保证吸附结果与拖动落点一致。
+fn offset_from_origin(dock: Dock, geometry: &Geometry, origin: (i32, i32)) -> f64 {
+    offset_from_desired(dock, geometry, origin.0 as f64, origin.1 as f64)
+}
+
+/// 拖动一拍的目标原点（纯函数，控制线程与单测共用同一份逻辑）：
+/// 期望位置 = 按下时的窗口原点 + 光标位移（绝对像素搬运，不走比例模型，
+/// 快速拖动不脱节），再投影回「垂直于边的轴锚死在边线、沿边轴限制在合法区间」
+/// ——岛不可能浮到屏幕中间，沿边方向 1:1 跟手。
+fn drag_target_origin(
+    dock: Dock,
+    geometry: &Geometry,
+    grab_origin: (i64, i64),
+    grab_cursor: (i64, i64),
+    cursor: (f64, f64),
+) -> (i32, i32) {
+    let desired_x = grab_origin.0 as f64 + (cursor.0 - grab_cursor.0 as f64);
+    let desired_y = grab_origin.1 as f64 + (cursor.1 - grab_cursor.1 as f64);
+    canvas_origin_docked(
+        dock,
+        geometry.work_left,
+        geometry.work_top,
+        geometry.work_width,
+        geometry.work_height,
+        geometry.scale,
+        offset_from_desired(dock, geometry, desired_x, desired_y),
+    )
 }
 
 /// 展开/收起状态机。纯逻辑，与窗口 API 解耦以便单测。
@@ -213,17 +419,21 @@ impl IslandMachine {
     }
 
     /// 当前命中矩形：展开态取面板、收起态取胶囊（含横幅宽度），动画期取两态并集。
+    #[cfg(test)]
     pub fn hit_rect(&self, now: Instant, banner_w: f64) -> Rect {
+        self.hit_rect_docked(now, Dock::Top, banner_w)
+    }
+
+    /// 当前命中矩形（按停靠边）：侧边停靠时胶囊贴边竖排、面板向屏内伸出。
+    pub fn hit_rect_docked(&self, now: Instant, dock: Dock, banner_w: f64) -> Rect {
+        let collapsed = collapsed_hit_docked(dock, banner_w);
+        let expanded = expanded_hit_docked(dock);
         let crossing = self.animating(now);
         match (self.expanded, crossing) {
-            (true, true) if !self.animating_from_expanded => {
-                union_rect(expanded_hit(), collapsed_hit(banner_w))
-            }
-            (true, _) => expanded_hit(),
-            (false, true) if self.animating_from_expanded => {
-                union_rect(expanded_hit(), collapsed_hit(banner_w))
-            }
-            (false, _) => collapsed_hit(banner_w),
+            (true, true) if !self.animating_from_expanded => union_rect(expanded, collapsed),
+            (true, _) => expanded,
+            (false, true) if self.animating_from_expanded => union_rect(expanded, collapsed),
+            (false, _) => collapsed,
         }
     }
 
@@ -273,8 +483,22 @@ pub struct IslandRuntime {
     /// 起点在 Rust 侧记录——前端若用 `clientX`（相对窗口）算位移，窗口跟随移动时
     /// 相对坐标会互相抵消，只剩抖动（daozai 源码同款注释）。
     drag_origin_x: AtomicI64,
-    drag_origin_offset: AtomicU32,
+    drag_origin_y: AtomicI64,
+    /// 按下时的窗口左上角（物理像素）：拖动期间 origin = 此值 + 光标位移
+    drag_window_x: AtomicI64,
+    drag_window_y: AtomicI64,
+    /// 抓取偏移（光标 - 窗口原点），换边换画布尺寸后仍保持同一抓取点
+    drag_grab_dx: AtomicI64,
+    drag_grab_dy: AtomicI64,
     banner_w: AtomicU32,
+    /// 停靠边：0=Top 1=Left 2=Right（AtomicU8 语义用 u8 槽，避免额外依赖）。
+    dock: std::sync::atomic::AtomicU8,
+    /// 控制线程最近一次成功写入窗口的画布原点（物理像素）+ 有效性。
+    /// `begin_island_drag` 的拖动起点优先取它：`outer_position()` 是异步派发后的
+    /// 系统回读，快速连拖/刚启用时可能比写入值旧一拍，会把按下起点记错。
+    applied_x: AtomicI64,
+    applied_y: AtomicI64,
+    applied_valid: AtomicBool,
 }
 
 impl IslandRuntime {
@@ -311,18 +535,51 @@ impl IslandRuntime {
         self.dragging.load(Ordering::Relaxed)
     }
 
-    fn begin_drag(&self, cursor_x: i64) {
-        self.drag_origin_x.store(cursor_x, Ordering::Relaxed);
-        // 从当前显示位置起拖：视觉上无跳变（弹簧尚未收敛时也不跳）
-        store_f32(&self.drag_origin_offset, self.display_offset());
+    /// `cursor_pos` 为按下时的光标屏幕坐标（物理像素）。顶部停靠取 X、侧边取 Y
+    /// 作拖动轴——两轴都记下来，切换停靠边后仍能用同一起点换算。
+    /// 记录拖动起点：光标位置 + 窗口原点 + 抓取偏移（光标在窗口内的相对位置）。
+    /// 抓取偏移是「跟手」的关键——窗口原点永远等于 光标 - 抓取偏移，
+    /// 换画布尺寸后按新尺寸重算原点，光标仍抓在岛的同一处。
+    fn begin_drag_at(&self, cursor: (i64, i64), window_origin: (i32, i32)) {
+        self.drag_origin_x.store(cursor.0, Ordering::Relaxed);
+        self.drag_origin_y.store(cursor.1, Ordering::Relaxed);
+        self.drag_window_x.store(window_origin.0 as i64, Ordering::Relaxed);
+        self.drag_window_y.store(window_origin.1 as i64, Ordering::Relaxed);
+        self.drag_grab_dx.store(cursor.0 - window_origin.0 as i64, Ordering::Relaxed);
+        self.drag_grab_dy.store(cursor.1 - window_origin.1 as i64, Ordering::Relaxed);
         self.dragging.store(true, Ordering::Relaxed);
     }
 
-    fn drag_origin(&self) -> (i64, f32) {
+    fn drag_window_origin(&self) -> (i64, i64) {
+        (
+            self.drag_window_x.load(Ordering::Relaxed),
+            self.drag_window_y.load(Ordering::Relaxed),
+        )
+    }
+
+    fn drag_cursor_origin(&self) -> (i64, i64) {
         (
             self.drag_origin_x.load(Ordering::Relaxed),
-            load_f32(&self.drag_origin_offset),
+            self.drag_origin_y.load(Ordering::Relaxed),
         )
+    }
+
+    /// 记录最近一次成功写入窗口的原点（控制线程定位与启用/换边路径共用）。
+    /// 这是窗口真实位置的唯一事实源：`set_position` 是异步派发，事后用
+    /// `outer_position()` 回读可能拿到旧一拍的值。
+    fn note_applied_origin(&self, origin: (i32, i32)) {
+        self.applied_x.store(origin.0 as i64, Ordering::Relaxed);
+        self.applied_y.store(origin.1 as i64, Ordering::Relaxed);
+        self.applied_valid.store(true, Ordering::Relaxed);
+    }
+
+    fn last_applied_origin(&self) -> Option<(i32, i32)> {
+        self.applied_valid.load(Ordering::Relaxed).then(|| {
+            (
+                self.applied_x.load(Ordering::Relaxed) as i32,
+                self.applied_y.load(Ordering::Relaxed) as i32,
+            )
+        })
     }
 
     fn set_banner_w(&self, width: f32) {
@@ -331,6 +588,23 @@ impl IslandRuntime {
 
     fn banner_w(&self) -> f32 {
         load_f32(&self.banner_w)
+    }
+
+    fn set_dock(&self, dock: Dock) {
+        let value = match dock {
+            Dock::Top => 0,
+            Dock::Left => 1,
+            Dock::Right => 2,
+        };
+        self.dock.store(value, Ordering::Relaxed);
+    }
+
+    fn dock(&self) -> Dock {
+        match self.dock.load(Ordering::Relaxed) {
+            1 => Dock::Left,
+            2 => Dock::Right,
+            _ => Dock::Top,
+        }
     }
 }
 
@@ -375,17 +649,27 @@ impl Glide {
 pub fn apply_island_enabled(app: &AppHandle, enabled: bool) {
     let runtime = app.state::<IslandRuntime>();
     if enabled {
-        // 偏移从设置库取事实源（读失败回居中，不阻断启用）
-        let offset = app
+        // 偏移与停靠边从设置库取事实源（读失败回默认值，不阻断启用）
+        let settings = app
             .state::<crate::AppState>()
             .db
             .lock()
             .ok()
-            .and_then(|db| db.get_settings().ok())
+            .and_then(|db| db.get_settings().ok());
+        let offset = settings
+            .as_ref()
             .and_then(|settings| settings.get("islandOffsetX").and_then(|value| value.as_f64()))
             .unwrap_or(0.0) as f32;
+        let dock = settings
+            .as_ref()
+            .and_then(|settings| settings.get("islandDock").and_then(|value| value.as_str()))
+            .map(Dock::from_str)
+            .unwrap_or_default();
         runtime.set_target_offset(offset);
         runtime.snap_display();
+        runtime.set_dock(dock);
+        // 侧边停靠要换画布尺寸（竖向）；顶部与侧边的窗口尺寸不同，切换时真实改尺寸
+        apply_canvas_size(app, dock);
     }
     runtime.enabled.store(enabled, Ordering::Relaxed);
     if enabled && !runtime.started.swap(true, Ordering::Relaxed) {
@@ -397,14 +681,20 @@ pub fn apply_island_enabled(app: &AppHandle, enabled: bool) {
     if enabled {
         // 同步定位 + 显示，让设置开关即时有反馈；控制线程随后接管采样
         if let Some(geometry) = read_geometry(app) {
-            let origin = canvas_origin(
+            let origin = canvas_origin_docked(
+                runtime.dock(),
                 geometry.work_left,
                 geometry.work_top,
                 geometry.work_width,
+                geometry.work_height,
                 geometry.scale,
                 runtime.display_offset() as f64,
             );
-            let _ = window.set_position(PhysicalPosition::new(origin.0, origin.1));
+            // 写入成功即登记 applied 缓存：控制线程首拍之前用户就能按下拖动，
+            // begin_island_drag 要靠它拿到正确的起点
+            if window.set_position(PhysicalPosition::new(origin.0, origin.1)).is_ok() {
+                runtime.note_applied_origin(origin);
+            }
         }
         let _ = window.show();
         let _ = app.emit("island-shown", ());
@@ -450,12 +740,31 @@ fn display_refresh_hz() -> Option<u32> {
     None
 }
 
+/// 按停靠边设置窗口物理尺寸：顶部用横向画布、侧边用竖向画布。
+/// 岛的窗口尺寸是唯一的「真实几何」——画布尺寸变化时也要同步物理窗口，
+/// 否则透明画布与命中区会错位（命中区按画布坐标算，窗口却没这么大）。
+fn apply_canvas_size(app: &AppHandle, dock: Dock) {
+    let Some(window) = app.get_webview_window("island") else {
+        return;
+    };
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let (w, h) = match dock {
+        Dock::Top => (CANVAS_W, CANVAS_H),
+        _ => (SIDE_CANVAS_W, SIDE_CANVAS_H),
+    };
+    let size = tauri::PhysicalSize::new((w * scale).round() as u32, (h * scale).round() as u32);
+    if let Err(error) = window.set_size(size) {
+        eprintln!("灵动岛切换画布尺寸失败：{error}");
+    }
+}
+
 /// 主屏几何快照：工作区顶点 + 宽度（定位基准）与整屏边界（全屏判定基准）。
 #[derive(Debug, Default, Clone, Copy)]
 struct Geometry {
     work_left: i32,
     work_top: i32,
     work_width: u32,
+    work_height: u32,
     monitor: (i32, i32, i32, i32),
     scale: f64,
 }
@@ -470,9 +779,31 @@ fn read_geometry(app: &AppHandle) -> Option<Geometry> {
         work_left: work.position.x,
         work_top: work.position.y,
         work_width: work.size.width,
+        work_height: work.size.height,
         monitor: (position.x, position.y, position.x + size.width as i32, position.y + size.height as i32),
         scale: monitor.scale_factor(),
     })
+}
+
+/// 把窗口定位到 origin：set_position 成功才更新两处缓存——线程本地的
+/// `applied_origin`（命中区基准）与 runtime 的 applied 缓存（拖动起点事实源）。
+/// 相同原点跳过写入；失败不更新缓存，下一拍重试。
+fn place_origin<R: tauri::Runtime>(
+    window: &tauri::WebviewWindow<R>,
+    runtime: &IslandRuntime,
+    applied: &mut Option<(i32, i32)>,
+    origin: (i32, i32),
+) -> bool {
+    if *applied == Some(origin) {
+        return true;
+    }
+    if window.set_position(PhysicalPosition::new(origin.0, origin.1)).is_ok() {
+        *applied = Some(origin);
+        runtime.note_applied_origin(origin);
+        true
+    } else {
+        false
+    }
 }
 
 fn spawn_controller(app: AppHandle) {
@@ -488,8 +819,10 @@ fn spawn_controller(app: AppHandle) {
             let mut hidden_for_fullscreen = false;
             // 上一拍是否处于拖动：捕捉「拖动结束」边沿以清驻留计时
             let mut dragging_prev = false;
-            // 几何缓存：定位由本线程独占，无需每拍查询窗口
-            let mut geometry = Geometry::default();
+            // 几何缓存：定位由本线程独占，无需每拍查询窗口。
+            // 启动即读一次——之前要等 PLACE_CHECK（1 秒）才首次读取，期间是全零默认值：
+            // travel 退化、比例被钳到端点，启用后第一秒内拖动会把岛钉死在边的端点上
+            let mut geometry = read_geometry(&app).unwrap_or_default();
             // 已应用的画布原点：期望原点（几何 × 显示偏移）每拍与之比对，不同即重定位。
             // 这是「命中区与可见位置永远一致」的保证——拖动改偏移后，窗口与命中区
             // 在同一拍（≤16ms）一起移动，不会出现命中区先走、胶囊滞留原地的错位
@@ -509,6 +842,7 @@ fn spawn_controller(app: AppHandle) {
                     machine = IslandMachine::default();
                     ignoring = None;
                     hidden_for_fullscreen = false;
+                    applied_origin = None;
                     std::thread::sleep(POLL_DISABLED);
                     continue;
                 }
@@ -524,6 +858,19 @@ fn spawn_controller(app: AppHandle) {
                     }
                     // 刷新率随几何一起复核：用户切到 144/240Hz 后拖动跟手性立即提升
                     drag_interval = refresh_interval(display_refresh_hz());
+                }
+                // 几何必须有效才定位/拖动：work 区尺寸为 0 说明初始读取失败或显示器
+                // 暂不可用，此时 travel 换算全部退化（比例会被钳到端点）。立即重试而非
+                // 干等下一个 PLACE_CHECK；仍失败则本拍整段跳过——窗口停在原地，绝不会
+                // 被推到错误的边端点上
+                if geometry.work_width == 0 || geometry.work_height == 0 {
+                    if let Some(next) = read_geometry(&app) {
+                        geometry = next;
+                    }
+                    if geometry.work_width == 0 || geometry.work_height == 0 {
+                        std::thread::sleep(POLL_DISABLED);
+                        continue;
+                    }
                 }
                 // 全屏避让：前台全屏窗口盖住岛所在屏（整屏边界相等）时整岛隐藏，
                 // 离开后恢复。窗口隐藏期间机器复位、原点作废，恢复显示从头判定
@@ -546,26 +893,98 @@ fn spawn_controller(app: AppHandle) {
                 }
                 // 光标采样一次，拖动换算与命中判定共用
                 let cursor = app.cursor_position().ok();
+                let dock = runtime.dock();
                 let dragging = runtime.dragging();
                 // ---- 拖动：用光标屏幕 X 与按下时的起点算目标偏移（不取窗口相对坐标，
                 // 窗口跟随移动时相对坐标会互相抵消只剩抖动）----
                 if dragging {
-                    if let (Some(x), Some(_)) = (cursor.map(|c| c.x), Some(())) {
-                        let (drag_origin_x, drag_origin_offset) = runtime.drag_origin();
-                        let travel = ((geometry.work_width as f64 - (CANVAS_W * geometry.scale).round()) / 2.0)
-                            .max(1.0);
-                        let raw = drag_origin_offset as f64
-                            + (x - drag_origin_x as f64) / travel;
-                        // 居中轻微吸附（对齐岛仔 DRAG_MAGNET）：靠近 0 就吸附过去
-                        let snapped = if raw.abs() < 0.02 { 0.0 } else { raw };
-                        let clamped = snapped.clamp(-1.0, 1.0);
-                        runtime.set_target_offset(clamped as f32);
-                        glide_target = clamped;
+                    if let Some(c) = cursor {
+                        // ---- 拖动：窗口位置 = 按下位置 + 光标位移（不走比例模型）----
+                        // 比例模型需要「位置→比例→位置」两次换算，且换边归中会瞬移，
+                        // 快速拖动时鼠标与窗口明显脱节。这里直接搬绝对像素：
+                        // 记下按下时的窗口原点与光标，之后每拍 origin = start_origin + delta。
+                        let (start_x, start_y) = runtime.drag_window_origin();
+                        let (start_cx, start_cy) = runtime.drag_cursor_origin();
+                        let desired_x = start_x as f64 + (c.x - start_cx as f64);
+                        let desired_y = start_y as f64 + (c.y - start_cy as f64);
+
+                        // 1) 边缘吸附判定（沿用岛仔的 64px/24px 阈值）：
+                        //    只看光标离哪条边最近，切换时只改形态与停靠边，不动位置
+                        let scale = geometry.scale;
+                        let to_left = (c.x - geometry.work_left as f64).max(0.0) / scale;
+                        let to_right =
+                            (geometry.work_left as f64 + geometry.work_width as f64 - c.x).max(0.0) / scale;
+                        let to_top = (c.y - geometry.work_top as f64).max(0.0) / scale;
+                        let nearest = [(Dock::Top, to_top), (Dock::Left, to_left), (Dock::Right, to_right)]
+                            .into_iter()
+                            .min_by(|a, b| a.1.total_cmp(&b.1))
+                            .unwrap();
+                        let current_distance = match runtime.dock() {
+                            Dock::Top => to_top,
+                            Dock::Left => to_left,
+                            Dock::Right => to_right,
+                        };
+                        // 岛本身贴边，光标在岛上时天然离当前边很近——只比距离会误切。
+                        // 额外要求「光标已离开当前停靠边的吸附带」：顶部停靠时要往下拉出
+                        // 一段距离才可能切到侧边，反之亦然（对齐岛仔的角落缓冲思路）。
+                        let released_current = current_distance > SWITCH_RELEASE_DISTANCE;
+                        if nearest.0 != runtime.dock()
+                            && nearest.1 <= SWITCH_EDGE_DISTANCE
+                            && nearest.1 + SWITCH_EDGE_MARGIN < current_distance
+                            && released_current
+                        {
+                            // 切换形态：换画布尺寸并重设拖动起点，让「当前窗口位置」连续。
+                            // 不做偏移归中——位置由像素增量决定，归中会瞬移。
+                            runtime.set_dock(nearest.0);
+                            apply_canvas_size(&app, nearest.0);
+                            // 换尺寸后画布原点会变（左右贴边/竖向画布），重取一次
+                            let new_origin = canvas_origin_docked(
+                                nearest.0,
+                                geometry.work_left,
+                                geometry.work_top,
+                                geometry.work_width,
+                                geometry.work_height,
+                                geometry.scale,
+                                offset_from_desired(nearest.0, &geometry, desired_x, desired_y),
+                            );
+                            let _ = place_origin(&window, &runtime, &mut applied_origin, new_origin);
+                            // 起点重置为「此刻」：后续增量从当前位置继续累加
+                            runtime.begin_drag_at((c.x as i64, c.y as i64), new_origin);
+                            let _ = app.emit("island-dock-changed", ());
+                        } else {
+                            // 贴边锚定 + 单轴跟手：
+                            // 顶部停靠固定贴工作区顶、只跟水平；左/右停靠固定贴侧边、只跟竖直。
+                            // 另一个轴永远锚在边线上——岛不可能浮到屏幕中间。
+                            // 换算走纯函数 drag_target_origin（与单测同一份逻辑），
+                            // 内部共用 canvas_origin_docked 的 travel 口径，贴边与沿边
+                            // 滑动遵循同一套边界规则。
+                            let anchored = drag_target_origin(
+                                runtime.dock(),
+                                &geometry,
+                                (start_x, start_y),
+                                (start_cx, start_cy),
+                                (c.x, c.y),
+                            );
+                            let _ = place_origin(&window, &runtime, &mut applied_origin, anchored);
+                        }
+                        // 拖动期间不推进 glide（位置由像素直接决定），松手时才反算比例
                     }
                 } else if dragging_prev {
-                    // 松手：目标保持落点，弹簧自然收敛；清驻留计时防「早已悬停超时」立即展开
+                    // 松手：把窗口位置吸附到「当前停靠边」的合法区间（贴边/居中约束），
+                    // 再反算成偏移比例持久化。拖动期间是自由跟手，吸附只发生在这一刻。
+                    // 这一拍必须更新 glide_target/target_offset——它们还停在拖动前的旧值，
+                    // 不更新的话下一拍常规定位会把窗口拉回拖动起点（拖了等于没拖）
                     machine.reset_hover();
-                    glide_target = runtime.target_offset() as f64;
+                    if let Some(applied) = applied_origin {
+                        let dock_now = runtime.dock();
+                        let ratio = offset_from_origin(dock_now, &geometry, applied);
+                        runtime.set_target_offset(ratio as f32);
+                        // 让 glide 从「当前实际位置」平滑滑到吸附后的合法位置
+                        glide.snap(ratio);
+                        glide_target = ratio;
+                        runtime.set_display_offset(ratio as f32);
+                        applied_origin = None; // 交还给常规定位逻辑
+                    }
                 }
                 dragging_prev = dragging;
                 // 弹簧推进：跟随目标（拖动中即光标位置，静止时即落点）
@@ -575,25 +994,42 @@ fn spawn_controller(app: AppHandle) {
                 if (glide.pos - glide_target).abs() < 1e-4 && glide.vel.abs() < 1e-3 {
                     glide.snap(glide_target);
                 }
+                // 拖动期间位置完全由上面的像素增量决定，这里不能再按 glide 覆盖
+                //（否则每拍把窗口拉回比例算出的位置，正是「拖动不跟手」的直接原因）。
+                // 松手后 dragging 转 false，才恢复「按比例 + 弹簧」的常规定位。
                 runtime.set_display_offset(glide.pos as f32);
-                let origin = canvas_origin(
-                    geometry.work_left,
-                    geometry.work_top,
-                    geometry.work_width,
-                    geometry.scale,
-                    glide.pos,
-                );
-                if applied_origin != Some(origin)
-                    && window.set_position(PhysicalPosition::new(origin.0, origin.1)).is_ok()
-                {
-                    applied_origin = Some(origin);
-                }
+                let origin = if dragging {
+                    // 拖动中：以已应用的原点为准（命中区必须跟实际窗口位置一致）
+                    applied_origin.unwrap_or_else(|| {
+                        canvas_origin_docked(
+                            dock,
+                            geometry.work_left,
+                            geometry.work_top,
+                            geometry.work_width,
+                            geometry.work_height,
+                            geometry.scale,
+                            glide.pos,
+                        )
+                    })
+                } else {
+                    let planned = canvas_origin_docked(
+                        dock,
+                        geometry.work_left,
+                        geometry.work_top,
+                        geometry.work_width,
+                        geometry.work_height,
+                        geometry.scale,
+                        glide.pos,
+                    );
+                    let _ = place_origin(&window, &runtime, &mut applied_origin, planned);
+                    planned
+                };
                 let banner_w = runtime.banner_w() as f64;
                 let inside = cursor
                     .map(|cursor| {
                         let lx = (cursor.x - origin.0 as f64) / geometry.scale;
                         let ly = (cursor.y - origin.1 as f64) / geometry.scale;
-                        rect_contains(machine.hit_rect(now, banner_w), lx, ly)
+                        rect_contains(machine.hit_rect_docked(now, dock, banner_w), lx, ly)
                     })
                     .unwrap_or(false);
                 let mut transition = machine.observe(now, inside, dragging);
@@ -652,17 +1088,43 @@ pub fn set_island_enabled(app: AppHandle, enabled: bool) -> Result<(), String> {
 #[tauri::command]
 pub fn begin_island_drag(app: AppHandle) -> Result<(), String> {
     let runtime = app.state::<IslandRuntime>();
-    let cursor_x = app.cursor_position().map(|position| position.x as i64).unwrap_or(0);
-    runtime.begin_drag(cursor_x);
+    let cursor = app.cursor_position().ok();
+    // 窗口原点只在按下时记一次：拖动期间位置 = 此原点 + 光标位移，
+    // 不在每拍反查窗口（那会引入一帧延迟，表现为「拖动跟不上鼠标」）。
+    // 优先取控制线程最近写入的 applied 缓存——窗口位置的唯一事实源；
+    // outer_position() 是异步派发后的系统回读，快速连拖/刚启用时可能比写入值
+    // 旧一拍，会把按下起点记错（拖动瞬间跳动）。缓存缺失才兜底回读
+    let origin = runtime
+        .last_applied_origin()
+        .or_else(|| {
+            app.get_webview_window("island")
+                .and_then(|window| window.outer_position().ok())
+                .map(|position| (position.x, position.y))
+        })
+        .unwrap_or((0, 0));
+    runtime.begin_drag_at(
+        (
+            cursor.map(|position| position.x as i64).unwrap_or(0),
+            cursor.map(|position| position.y as i64).unwrap_or(0),
+        ),
+        origin,
+    );
     Ok(())
 }
 
 /// 结束拖动：目标即落点，控制线程弹簧收敛后自然停稳。
 /// 返回落点偏移比例，前端回存设置 `islandOffsetX`。
+/// 落点直接按「控制线程最近写入的原点」同步反算：控制线程的松手吸附要等下一拍，
+/// 这里若只回读 target_offset 会拿到拖动前的旧值，前端就把旧位置存回了设置，
+/// 表现为「拖了等于没拖、位置永远回不去」。
 #[tauri::command]
 pub fn end_island_drag(app: AppHandle) -> Result<f32, String> {
     let runtime = app.state::<IslandRuntime>();
     runtime.set_dragging(false);
+    if let (Some(geometry), Some(origin)) = (read_geometry(&app), runtime.last_applied_origin()) {
+        let ratio = offset_from_origin(runtime.dock(), &geometry, origin);
+        runtime.set_target_offset(ratio as f32);
+    }
     Ok(runtime.target_offset())
 }
 
@@ -676,6 +1138,47 @@ pub fn get_island_offset(app: AppHandle) -> Result<f32, String> {
 #[tauri::command]
 pub fn set_island_banner_width(app: AppHandle, width: f32) -> Result<(), String> {
     app.state::<IslandRuntime>().set_banner_w(width);
+    Ok(())
+}
+
+/// 当前停靠边（拖动结束回存设置用）：前端与偏移一起持久化，
+/// 否则重启后岛回到旧边、偏移却按新轴解释。
+#[tauri::command]
+pub fn get_island_dock(app: AppHandle) -> Result<String, String> {
+    Ok(match app.state::<IslandRuntime>().dock() {
+        Dock::Top => "top".into(),
+        Dock::Left => "left".into(),
+        Dock::Right => "right".into(),
+    })
+}
+
+/// 切换停靠边（top / left / right）：换画布尺寸（横向↔竖向）、按新边重新定位。
+/// 偏移比例保留——同一比例在新轴上语义一致（-1 最前 .. 0 居中 .. 1 最后）。
+#[tauri::command]
+pub fn set_island_dock(app: AppHandle, dock: String) -> Result<(), String> {
+    let dock = Dock::from_str(&dock);
+    let runtime = app.state::<IslandRuntime>();
+    if runtime.dock() == dock {
+        return Ok(());
+    }
+    runtime.set_dock(dock);
+    apply_canvas_size(&app, dock);
+    // 立即按新边定位一次，不必等控制线程下一拍
+    if let (Some(geometry), Some(window)) = (read_geometry(&app), app.get_webview_window("island")) {
+        let origin = canvas_origin_docked(
+            dock,
+            geometry.work_left,
+            geometry.work_top,
+            geometry.work_width,
+            geometry.work_height,
+            geometry.scale,
+            runtime.display_offset() as f64,
+        );
+        if window.set_position(PhysicalPosition::new(origin.0, origin.1)).is_ok() {
+            runtime.note_applied_origin(origin);
+        }
+    }
+    let _ = app.emit("island-dock-changed", ());
     Ok(())
 }
 
@@ -1015,6 +1518,52 @@ mod tests {
     }
 
     #[test]
+    fn side_dock_hug_the_edges_and_center_vertically() {
+        // 左停靠：画布贴工作区左缘；右停靠：贴右缘
+        assert_eq!(canvas_origin_docked(Dock::Left, 0, 0, 1920, 1080, 1.0, 0.0), (0, (1080 - 600) / 2));
+        assert_eq!(
+            canvas_origin_docked(Dock::Right, 0, 0, 1920, 1080, 1.0, 0.0),
+            (1920 - 500, (1080 - 600) / 2)
+        );
+        // 竖直偏移：travel = 屏幕高/2 - 面板半高 = 540 - 142 = 398。
+        // offset=-1 时岛中心贴到 y=142（面板上缘正好在 0），画布顶 = 142 - 300 = -158；
+        // offset=+1 时画布顶 = -158 + 2*398 = 638。画布比屏幕高、会露出屏外，
+        // 但露出的部分本来就透明（岛体在屏内），这是「上下都能拖到头」的代价与收益。
+        assert_eq!(canvas_origin_docked(Dock::Left, 0, 0, 1920, 1080, 1.0, -1.0).1, -158);
+        assert_eq!(canvas_origin_docked(Dock::Left, 0, 0, 1920, 1080, 1.0, 1.0).1, 638);
+        // 顶部停靠不受高度影响（走水平轴）
+        assert_eq!(canvas_origin_docked(Dock::Top, 0, 0, 1920, 1080, 1.0, 0.0), (730, 0));
+    }
+
+    #[test]
+    fn side_hit_rects_stay_inside_the_canvas() {
+        for dock in [Dock::Left, Dock::Right] {
+            let collapsed = collapsed_hit_docked(dock, 0.0);
+            let expanded = expanded_hit_docked(dock);
+            // 竖向胶囊竖直居中、贴边
+            assert!(collapsed.1 >= 0.0 && collapsed.1 + collapsed.3 <= SIDE_CANVAS_H + HIT_MARGIN_Y);
+            // 面板向屏内伸出，宽度覆盖 SIDE_PANEL_W
+            assert!(expanded.2 >= SIDE_PANEL_W, "{dock:?} 面板命中宽度不足：{}", expanded.2);
+            // 命中区不越出画布左右边界（贴边一侧可到 0，另一侧不超出画布宽）
+            assert!(collapsed.0 >= -HIT_MARGIN_X && expanded.0 + expanded.2 <= SIDE_CANVAS_W + HIT_MARGIN_X);
+        }
+        // 右停靠时胶囊靠右：左边界应远大于 0
+        let right = collapsed_hit_docked(Dock::Right, 0.0);
+        assert!(right.0 > SIDE_CANVAS_W / 2.0, "右停靠胶囊应贴右缘");
+        let left = collapsed_hit_docked(Dock::Left, 0.0);
+        assert!(left.0 < SIDE_CANVAS_W / 2.0, "左停靠胶囊应贴左缘");
+    }
+
+    #[test]
+    fn dock_parsing_falls_back_to_top() {
+        assert_eq!(Dock::from_str("left"), Dock::Left);
+        assert_eq!(Dock::from_str("right"), Dock::Right);
+        assert_eq!(Dock::from_str("top"), Dock::Top);
+        assert_eq!(Dock::from_str("garbage"), Dock::Top);
+        assert!(!Dock::Top.is_side() && Dock::Left.is_side() && Dock::Right.is_side());
+    }
+
+    #[test]
     fn canvas_origin_offset_moves_by_travel_ratio_and_clamps() {
         // travel = (1920-460)/2 = 730；offset -1 → 左缘 0，+1 → 右缘 1460
         assert_eq!(canvas_origin(0, 0, 1920, 1.0, -1.0), (0, 0));
@@ -1029,5 +1578,117 @@ mod tests {
         //（canvas 物理宽 690，travel 1575；offset ±1 时画布恰好贴到屏缘）
         assert_eq!(canvas_origin(0, 0, 3840, 1.5, -1.0), (0, 0));
         assert_eq!(canvas_origin(0, 0, 3840, 1.5, 1.0), (3150, 0));
+    }
+
+    fn work_geometry() -> Geometry {
+        Geometry {
+            work_left: 0,
+            work_top: 0,
+            work_width: 1920,
+            work_height: 1080,
+            monitor: (0, 0, 1920, 1080),
+            scale: 1.0,
+        }
+    }
+
+    #[test]
+    fn drag_target_origin_follows_cursor_one_to_one_along_top_edge() {
+        let geometry = work_geometry();
+        // 居中按下：画布原点 (730, 0)，光标在画布上任意处
+        let grab_origin = (730i64, 0i64);
+        let grab_cursor = (900i64, 20i64);
+        for delta in [5i64, 37, -64, 120, -9, 300, -260] {
+            let cursor = ((grab_cursor.0 + delta) as f64, (grab_cursor.1 + 3) as f64);
+            let origin = drag_target_origin(Dock::Top, &geometry, grab_origin, grab_cursor, cursor);
+            let expected = (grab_origin.0 + delta) as i32;
+            assert!(
+                (origin.0 - expected).abs() <= 1,
+                "顶部停靠水平必须 1:1 跟手：delta {delta} → x {}（期望 {expected}±1）",
+                origin.0
+            );
+            // 另一轴锚死在工作区顶：光标竖直方向动了也不允许岛脱离顶边
+            assert_eq!(origin.1, geometry.work_top, "顶部停靠竖直必须锚在工作区顶");
+        }
+    }
+
+    #[test]
+    fn drag_target_origin_clamps_to_edge_without_floating() {
+        let geometry = work_geometry();
+        // 拖过头：钳在画布贴工作区左/右缘，岛整体不出屏
+        let left = drag_target_origin(Dock::Top, &geometry, (730, 0), (900, 20), (-3000.0, 40.0));
+        assert_eq!(left.0, 0, "左端应贴工作区左缘");
+        assert_eq!(left.1, 0);
+        let right = drag_target_origin(Dock::Top, &geometry, (730, 0), (900, 20), (9000.0, 40.0));
+        assert_eq!(right.0, 1460, "右端应贴工作区右缘（travel 730 × 2）");
+        // 光标拉到屏幕中下方，岛仍然贴顶——不可能浮到屏幕中间
+        let pulled_down = drag_target_origin(Dock::Top, &geometry, (730, 0), (900, 20), (1000.0, 900.0));
+        assert_eq!(pulled_down.0, 830);
+        assert_eq!(pulled_down.1, 0);
+    }
+
+    #[test]
+    fn drag_side_dock_tracks_vertical_one_to_one_and_stays_glued_to_side() {
+        let geometry = work_geometry();
+        // 左停靠居中：画布原点 (0, 240)，竖直方向 1:1 跟手、水平贴左缘
+        let grab_origin = (0i64, 240i64);
+        let grab_cursor = (20i64, 400i64);
+        for delta in [-120i64, -40, 0, 55, 210, 350] {
+            let cursor = ((grab_cursor.0 + 7) as f64, (grab_cursor.1 + delta) as f64);
+            let origin = drag_target_origin(Dock::Left, &geometry, grab_origin, grab_cursor, cursor);
+            let expected = (grab_origin.1 + delta) as i32;
+            assert!(
+                (origin.1 - expected).abs() <= 1,
+                "侧边停靠竖直必须 1:1 跟手：delta {delta} → y {}（期望 {expected}±1）",
+                origin.1
+            );
+            assert_eq!(origin.0, 0, "左停靠必须贴工作区左缘，光标横移也不脱离");
+        }
+        // 右停靠贴右缘（画布宽 500）
+        let origin = drag_target_origin(Dock::Right, &geometry, (1420, 240), (1900, 400), (1905.0, 430.0));
+        assert_eq!(origin.0, 1420);
+        assert_eq!(origin.1, 270);
+        // 上下拖过头：钳在面板可及范围（travel 398 → 画布顶 -158 / 638），岛中心不出屏
+        let top = drag_target_origin(Dock::Left, &geometry, (0, 240), (20, 400), (20.0, -2000.0));
+        assert_eq!(top.1, -158);
+        let bottom = drag_target_origin(Dock::Left, &geometry, (0, 240), (20, 400), (20.0, 4000.0));
+        assert_eq!(bottom.1, 638);
+    }
+
+    #[test]
+    fn offset_projection_round_trips_pixel_origins() {
+        // 非 1.0 缩放（画布物理宽 690 非整十）也要成立：拖动投影与停靠定位共用
+        // travel_px，比例↔像素往返不得漂移——漂移会在拖动中表现为位置回弹
+        let geometry = Geometry { scale: 1.5, ..work_geometry() };
+        for dock in [Dock::Top, Dock::Left, Dock::Right] {
+            for offset in [-1.0, -0.6, 0.0, 0.4, 1.0] {
+                let origin = canvas_origin_docked(dock, 0, 0, 1920, 1080, 1.5, offset);
+                let back = offset_from_desired(dock, &geometry, origin.0 as f64, origin.1 as f64);
+                assert!(
+                    (back - offset).abs() < 2e-3,
+                    "{dock:?} offset {offset} 经像素往返后得 {back}（容差 0.5px 换算）"
+                );
+                // 松手持久化走的 offset_from_origin 必须与拖动投影同一口径
+                assert_eq!(
+                    offset_from_origin(dock, &geometry, origin),
+                    back,
+                    "{dock:?} 松手反算与拖动投影口径不一致"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn degenerate_travel_centers_instead_of_clamping_to_edge_endpoints() {
+        // 几何未就绪（全零）或屏幕不比岛体宽：travel 为 0，比例必须回 0（居中）。
+        // 旧实现在这里 .max(1.0) 后钳位，全零几何会把期望位置压成 ±1 → 岛钉死在端点
+        assert_eq!(travel_px(Dock::Top, 0.0, 0.0), 0.0);
+        let empty = Geometry::default();
+        assert_eq!(offset_from_desired(Dock::Top, &empty, 12_345.0, 0.0), 0.0);
+        assert_eq!(offset_from_desired(Dock::Right, &empty, 0.0, -99_999.0), 0.0);
+        let narrow = Geometry { work_width: 400, ..work_geometry() };
+        assert_eq!(travel_px(Dock::Top, 400.0, 1.0), 0.0);
+        assert_eq!(offset_from_desired(Dock::Top, &narrow, 2_000.0, 0.0), 0.0);
+        // 侧边 travel 只由面板半高决定：屏幕高 1080、面板 284 → 398
+        assert_eq!(travel_px(Dock::Left, 1080.0, 1.0), 398.0);
     }
 }

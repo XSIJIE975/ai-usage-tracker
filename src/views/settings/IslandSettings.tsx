@@ -124,6 +124,24 @@ export function IslandSettings() {
             ]}
           />
         </div>
+
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-1.5">
+            <Label>{t("停靠位置")}</Label>
+            <HintTooltip
+              tip={t(
+                "拖动岛的顶部把手靠近屏幕任意一边即可吸附过去：贴顶为横向胶囊，贴左右两侧为竖向胶囊，展开面板朝屏幕内侧伸出。",
+              )}
+            />
+          </div>
+          <span className="shrink-0 text-[13px] text-fg-muted">
+            {settings.islandDock === "top"
+              ? t("屏幕顶部")
+              : settings.islandDock === "left"
+                ? t("贴左侧")
+                : t("贴右侧")}
+          </span>
+        </div>
       </CardContent>
     </Card>
   );

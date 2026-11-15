@@ -339,7 +339,9 @@ impl Db {
             // 偏移比例（-1 最左 .. 0 居中 .. 1 最右）由胶囊拖动松手时回存
             "islandEnabled": false,
             "islandOffsetX": 0.0,
-            "islandLayout": "list"
+            "islandLayout": "list",
+            // 停靠边（ADR-0047 P2）：top 屏幕顶部横向胶囊 / left、right 贴边竖向胶囊
+            "islandDock": "top"
         });
         let row = self.conn.query_row(
             "SELECT value FROM settings WHERE key = 'app_settings'",

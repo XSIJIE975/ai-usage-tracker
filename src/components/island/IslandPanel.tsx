@@ -85,6 +85,10 @@ export function IslandPanelContent({
             leaveGrip();
           }}
           onPointerCancel={() => onDragEnd(false)}
+          // 安全网：pointer capture 异常丢失（系统抢占/pointercancel 后续）时也必须
+          // 调 end_island_drag，否则 Rust 侧 dragging 一直为真、展开被永久抑制。
+          // 正常 pointerup 已先清掉 dragRef，这里再触发是幂等 no-op
+          onLostPointerCapture={() => onDragEnd(false)}
         >
           <span
             className={cn(
